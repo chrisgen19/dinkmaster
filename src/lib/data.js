@@ -40,7 +40,8 @@ export async function getState() {
     team2: m.players.filter((mp) => mp.team === 2).map((mp) => mp.playerId),
     score1: m.score1,
     score2: m.score2,
-    timestamp: new Date(m.createdAt).toLocaleString(),
+    // ISO string; formatted in the client so it uses the viewer's locale/timezone.
+    timestamp: new Date(m.createdAt).toISOString(),
   }));
 
   // Expand canonical partnership rows into the symmetric matrix the UI reads.

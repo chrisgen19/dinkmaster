@@ -50,6 +50,7 @@ model CourtSlot {
   player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
   @@unique([courtId, playerId])
+  @@unique([playerId]) // a player can only be on one court at a time
   @@index([courtId])
 }
 

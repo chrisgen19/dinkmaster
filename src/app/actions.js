@@ -58,12 +58,12 @@ export async function addPlayers(namesString) {
 
   if (names.length === 0) return { state: await getState() };
 
-  let order = await maxQueueOrder();
-  await prisma.$transaction(
-    names.map((name) =>
-      prisma.player.create({ data: { name, queueOrder: ++order } }),
-    ),
-  );
+  await prisma.$transaction(async (tx) => {
+    let order = await maxQueueOrder(tx);
+    for (const name of names) {
+      await tx.player.create({ data: { name, queueOrder: ++order } });
+    }
+  });
 
   return { state: await getState() };
 }
@@ -197,13 +197,12 @@ export async function endMatch(courtId, score1, score2, autoMix) {
 
   const team1 = court.slots.filter((s) => s.team === 1);
   const team2 = court.slots.filter((s) => s.team === 2);
-  const finishedIds = court.slots.map((s) => s.playerId);
-
-  const base = await maxQueueOrder();
-  // Recycle finished players back into the rack in randomized order.
-  const recycled = [...court.slots].sort(() => Math.random() - 0.5);
 
   await prisma.$transaction(async (tx) => {
+    const base = await maxQueueOrder(tx);
+    // Recycle finished players back into the rack in randomized order.
+    const recycled = [...court.slots].sort(() => Math.random() - 0.5);
+
     await tx.match.create({
       data: {
         courtName: court.name,

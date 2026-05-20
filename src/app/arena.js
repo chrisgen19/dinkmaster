@@ -628,7 +628,7 @@ export default function Arena({ initialState }) {
                       <div key={match.id} className="border border-slate-100 rounded-xl bg-slate-50/50 p-4 hover:bg-slate-50 transition-colors">
                         <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold mb-3">
                           <span>{match.courtName}</span>
-                          <span>{match.timestamp}</span>
+                          <span>{new Date(match.timestamp).toLocaleString()}</span>
                         </div>
 
                         <div className="grid grid-cols-9 items-center gap-2">
