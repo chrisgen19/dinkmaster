@@ -8,7 +8,7 @@ import { prisma } from '@/lib/prisma';
  *   players: Array<{id:string,name:string,gamesPlayed:number,wins:number,losses:number}>,
  *   queue: string[],
  *   courts: Array<{id:string,name:string,status:string,team1:string[],team2:string[]}>,
- *   matchHistory: Array<{id:string,courtName:string,team1:string[],team2:string[],score1:number,score2:number,timestamp:string}>,
+ *   matchHistory: Array<{id:string,courtName:string,team1:Array<{id:string,name:string}>,team2:Array<{id:string,name:string}>,score1:number,score2:number,timestamp:string}>,
  *   history: Record<string, Record<string, number>>
  * }>}
  */
@@ -33,11 +33,15 @@ export async function getState() {
     team2: c.slots.filter((s) => s.team === 2).map((s) => s.playerId),
   }));
 
+  // Use the snapshotted names so history survives player deletion.
+  const teamSnapshot = (m, team) =>
+    m.players.filter((mp) => mp.team === team).map((mp) => ({ id: mp.playerId, name: mp.playerName }));
+
   const matchHistory = matches.map((m) => ({
     id: m.id,
     courtName: m.courtName,
-    team1: m.players.filter((mp) => mp.team === 1).map((mp) => mp.playerId),
-    team2: m.players.filter((mp) => mp.team === 2).map((mp) => mp.playerId),
+    team1: teamSnapshot(m, 1),
+    team2: teamSnapshot(m, 2),
     score1: m.score1,
     score2: m.score2,
     // ISO string; formatted in the client so it uses the viewer's locale/timezone.

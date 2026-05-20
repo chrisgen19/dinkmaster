@@ -638,7 +638,7 @@ export default function Arena({ initialState }) {
                           }`}>
                             <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">Team A</div>
                             <div className="text-xs font-semibold text-slate-700 truncate">
-                              {match.team1.map(id => players.find(x => x.id === id)?.name.split(' ')[0] || 'Unknown').join(' & ')}
+                              {match.team1.map(p => p.name.split(' ')[0]).join(' & ')}
                             </div>
                             {team1Won && <span className="inline-block mt-1.5 text-[8px] font-black text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded uppercase">Win</span>}
                           </div>
@@ -657,7 +657,7 @@ export default function Arena({ initialState }) {
                           }`}>
                             <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">Team B</div>
                             <div className="text-xs font-semibold text-slate-700 truncate">
-                              {match.team2.map(id => players.find(x => x.id === id)?.name.split(' ')[0] || 'Unknown').join(' & ')}
+                              {match.team2.map(p => p.name.split(' ')[0]).join(' & ')}
                             </div>
                             {team2Won && <span className="inline-block mt-1.5 text-[8px] font-black text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded uppercase">Win</span>}
                           </div>

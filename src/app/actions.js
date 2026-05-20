@@ -163,21 +163,37 @@ export async function fillCourt(courtId) {
   matchups.sort((a, b) => (a.weight !== b.weight ? a.weight - b.weight : Math.random() - 0.5));
   const best = matchups[0];
 
-  await prisma.$transaction(async (tx) => {
-    await tx.court.update({ where: { id: courtId }, data: { status: 'playing' } });
-    await tx.courtSlot.createMany({
-      data: [
-        ...best.team1.map((playerId) => ({ courtId, playerId, team: 1 })),
-        ...best.team2.map((playerId) => ({ courtId, playerId, team: 2 })),
-      ],
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Re-check vacancy inside the tx so the same court isn't double-filled.
+      const fresh = await tx.court.findUnique({ where: { id: courtId } });
+      if (!fresh || fresh.status !== 'vacant') {
+        throw new Error('COURT_NOT_VACANT');
+      }
+      await tx.court.update({ where: { id: courtId }, data: { status: 'playing' } });
+      await tx.courtSlot.createMany({
+        data: [
+          ...best.team1.map((playerId) => ({ courtId, playerId, team: 1 })),
+          ...best.team2.map((playerId) => ({ courtId, playerId, team: 2 })),
+        ],
+      });
+      await bumpPartnership(tx, best.team1[0], best.team1[1]);
+      await bumpPartnership(tx, best.team2[0], best.team2[1]);
+      await tx.player.updateMany({
+        where: { id: { in: [p0, p1, p2, p3] } },
+        data: { gamesPlayed: { increment: 1 }, queueOrder: null },
+      });
     });
-    await bumpPartnership(tx, best.team1[0], best.team1[1]);
-    await bumpPartnership(tx, best.team2[0], best.team2[1]);
-    await tx.player.updateMany({
-      where: { id: { in: [p0, p1, p2, p3] } },
-      data: { gamesPlayed: { increment: 1 }, queueOrder: null },
-    });
-  });
+  } catch (err) {
+    // P2002 = unique violation: another court just claimed one of these players.
+    if (err?.code === 'P2002' || err?.message === 'COURT_NOT_VACANT') {
+      return {
+        error: 'Those players were just stacked onto another court. Please try again.',
+        state: await getState(),
+      };
+    }
+    throw err;
+  }
 
   return { state: await getState() };
 }
