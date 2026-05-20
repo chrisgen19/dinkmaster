@@ -1,0 +1,92 @@
+// DINKMASTER schema — pickleball arena: players, queue, courts, matches, partnerships.
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// A registered player. `queueOrder` is the position in the paddle rack
+/// (null when the player is on a court or otherwise not waiting).
+model Player {
+  id          String   @id @default(cuid())
+  name        String
+  gamesPlayed Int      @default(0)
+  wins        Int      @default(0)
+  losses      Int      @default(0)
+  queueOrder  Int? // null = not in queue; ascending = rack order
+  createdAt   DateTime @default(now())
+
+  courtSlots CourtSlot[]
+
+  @@index([queueOrder])
+}
+
+/// A physical court. `position` orders the courts in the UI.
+model Court {
+  id        String   @id @default(cuid())
+  name      String
+  status    String   @default("vacant") // "vacant" | "playing"
+  position  Int
+  createdAt DateTime @default(now())
+
+  slots CourtSlot[]
+
+  @@index([position])
+}
+
+/// One player assigned to a team on a court during a live match.
+model CourtSlot {
+  id       String @id @default(cuid())
+  courtId  String
+  playerId String
+  team     Int // 1 or 2
+
+  court  Court  @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([courtId, playerId])
+  @@index([courtId])
+}
+
+/// A finished match. Player names are snapshotted so history survives
+/// player deletion.
+model Match {
+  id        String   @id @default(cuid())
+  courtName String
+  score1    Int
+  score2    Int
+  createdAt DateTime @default(now())
+
+  players MatchPlayer[]
+
+  @@index([createdAt])
+}
+
+/// A player's participation in a finished match (snapshot, no FK to Player).
+model MatchPlayer {
+  id         String @id @default(cuid())
+  matchId    String
+  playerId   String // historical reference only, not a foreign key
+  playerName String
+  team       Int
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@index([matchId])
+}
+
+/// Cumulative count of how often two players have been partnered.
+/// Stored canonically with playerA < playerB to keep one row per pair.
+model Partnership {
+  id      String @id @default(cuid())
+  playerA String
+  playerB String
+  count   Int    @default(0)
+
+  @@unique([playerA, playerB])
+}
