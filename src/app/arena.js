@@ -242,7 +242,8 @@ export default function Arena({ initialState }) {
               />
               <button
                 type="submit"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-5 py-2.5 rounded-xl transition duration-150 flex items-center justify-center shadow-sm shrink-0"
+                disabled={isPending}
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold px-5 py-2.5 rounded-xl transition duration-150 flex items-center justify-center shadow-sm shrink-0"
               >
                 Add
               </button>
@@ -285,7 +286,7 @@ export default function Arena({ initialState }) {
 
                 <button
                   onClick={handleShuffleQueue}
-                  disabled={queue.length < 2}
+                  disabled={queue.length < 2 || isPending}
                   className="bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-40 text-slate-700 border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1"
                   title="Shuffle everyone currently waiting to break court locking"
                 >
@@ -407,7 +408,8 @@ export default function Arena({ initialState }) {
 
             <button
               onClick={handleAddCourt}
-              className="bg-emerald-600 hover:bg-emerald-700 text-xs font-extrabold text-white px-4 py-2 rounded-lg transition-all flex items-center space-x-1 shadow-sm"
+              disabled={isPending}
+              className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-extrabold text-white px-4 py-2 rounded-lg transition-all flex items-center space-x-1 shadow-sm"
             >
               <span>+ Create Court</span>
             </button>
@@ -502,14 +504,15 @@ export default function Arena({ initialState }) {
                       {isPlaying ? (
                         <button
                           onClick={() => handleTriggerScoreModal(court)}
-                          className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm"
+                          disabled={isPending}
+                          className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm"
                         >
                           Finish Game & Record Score
                         </button>
                       ) : (
                         <button
                           onClick={() => handleFillCourt(court.id)}
-                          disabled={queue.length < 4}
+                          disabled={queue.length < 4 || isPending}
                           className={`w-full py-3 rounded-xl font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm ${
                             queue.length >= 4
                               ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'

@@ -49,6 +49,16 @@ async function maxQueueOrder(tx = prisma) {
   return top._max.queueOrder ?? 0;
 }
 
+/** Unbiased Fisher-Yates shuffle (returns a new array). */
+function shuffle(items) {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 /** Add players (comma-separated names) to the bottom of the rack. */
 export async function addPlayers(namesString) {
   const names = (namesString ?? '')
@@ -80,28 +90,12 @@ export async function removePlayer(playerId) {
     };
   }
 
-  await prisma.player.delete({ where: { id: playerId } });
-  return { state: await getState() };
-}
-
-/** Move a queued player up (-1) or down (+1) one slot. */
-export async function moveInQueue(playerId, direction) {
-  const queued = await prisma.player.findMany({
-    where: { queueOrder: { not: null } },
-    orderBy: { queueOrder: 'asc' },
-  });
-
-  const index = queued.findIndex((p) => p.id === playerId);
-  const target = index + direction;
-  if (index === -1 || target < 0 || target >= queued.length) {
-    return { state: await getState() };
-  }
-
-  const a = queued[index];
-  const b = queued[target];
+  // Delete the player and their partnership rows together (no FK to cascade these).
   await prisma.$transaction([
-    prisma.player.update({ where: { id: a.id }, data: { queueOrder: b.queueOrder } }),
-    prisma.player.update({ where: { id: b.id }, data: { queueOrder: a.queueOrder } }),
+    prisma.partnership.deleteMany({
+      where: { OR: [{ playerA: playerId }, { playerB: playerId }] },
+    }),
+    prisma.player.delete({ where: { id: playerId } }),
   ]);
 
   return { state: await getState() };
@@ -115,7 +109,7 @@ export async function shuffleQueue() {
   });
   if (queued.length < 2) return { state: await getState() };
 
-  const shuffled = [...queued].sort(() => Math.random() - 0.5);
+  const shuffled = shuffle(queued);
   await prisma.$transaction(
     shuffled.map((p, i) =>
       prisma.player.update({ where: { id: p.id }, data: { queueOrder: i + 1 } }),
@@ -130,47 +124,49 @@ export async function shuffleQueue() {
 
 /** Stack the top 4 waiting players onto a court using the lowest-partnership matchup. */
 export async function fillCourt(courtId) {
-  const queued = await prisma.player.findMany({
-    where: { queueOrder: { not: null } },
-    orderBy: { queueOrder: 'asc' },
-    take: 4,
-    select: { id: true },
-  });
-
-  if (queued.length < 4) {
-    return {
-      error: 'Need at least 4 players stacked in the queue to load a court!',
-      state: await getState(),
-    };
-  }
-
-  const [p0, p1, p2, p3] = queued.map((p) => p.id);
-
-  // Look up existing partnership counts among the four candidates.
-  const rows = await prisma.partnership.findMany({
-    where: { playerA: { in: [p0, p1, p2, p3] }, playerB: { in: [p0, p1, p2, p3] } },
-  });
-  const countFor = (x, y) => {
-    const [a, b] = canonicalPair(x, y);
-    return rows.find((r) => r.playerA === a && r.playerB === b)?.count ?? 0;
-  };
-
-  const matchups = [
-    { team1: [p0, p1], team2: [p2, p3], weight: countFor(p0, p1) + countFor(p2, p3) },
-    { team1: [p0, p2], team2: [p1, p3], weight: countFor(p0, p2) + countFor(p1, p3) },
-    { team1: [p0, p3], team2: [p1, p2], weight: countFor(p0, p3) + countFor(p1, p2) },
-  ];
-  matchups.sort((a, b) => (a.weight !== b.weight ? a.weight - b.weight : Math.random() - 0.5));
-  const best = matchups[0];
-
   try {
     await prisma.$transaction(async (tx) => {
-      // Re-check vacancy inside the tx so the same court isn't double-filled.
-      const fresh = await tx.court.findUnique({ where: { id: courtId } });
-      if (!fresh || fresh.status !== 'vacant') {
-        throw new Error('COURT_NOT_VACANT');
-      }
-      await tx.court.update({ where: { id: courtId }, data: { status: 'playing' } });
+      // Atomically claim the court only if it is still vacant (row-locks it).
+      const claimed = await tx.court.updateMany({
+        where: { id: courtId, status: 'vacant' },
+        data: { status: 'playing' },
+      });
+      if (claimed.count !== 1) throw new Error('COURT_UNAVAILABLE');
+
+      // Select the current top 4 inside the tx so we never act on a stale snapshot.
+      const queued = await tx.player.findMany({
+        where: { queueOrder: { not: null } },
+        orderBy: { queueOrder: 'asc' },
+        take: 4,
+        select: { id: true },
+      });
+      if (queued.length < 4) throw new Error('NOT_ENOUGH');
+
+      const [p0, p1, p2, p3] = queued.map((p) => p.id);
+
+      // Remove exactly these four from the rack; bail if any slipped away meanwhile.
+      const dequeued = await tx.player.updateMany({
+        where: { id: { in: [p0, p1, p2, p3] }, queueOrder: { not: null } },
+        data: { gamesPlayed: { increment: 1 }, queueOrder: null },
+      });
+      if (dequeued.count !== 4) throw new Error('QUEUE_CHANGED');
+
+      // Pick the matchup with the fewest prior partnerships (random tie-break).
+      const rows = await tx.partnership.findMany({
+        where: { playerA: { in: [p0, p1, p2, p3] }, playerB: { in: [p0, p1, p2, p3] } },
+      });
+      const countFor = (x, y) => {
+        const [a, b] = canonicalPair(x, y);
+        return rows.find((r) => r.playerA === a && r.playerB === b)?.count ?? 0;
+      };
+      const matchups = [
+        { team1: [p0, p1], team2: [p2, p3], weight: countFor(p0, p1) + countFor(p2, p3) },
+        { team1: [p0, p2], team2: [p1, p3], weight: countFor(p0, p2) + countFor(p1, p3) },
+        { team1: [p0, p3], team2: [p1, p2], weight: countFor(p0, p3) + countFor(p1, p2) },
+      ];
+      const minWeight = Math.min(...matchups.map((m) => m.weight));
+      const best = shuffle(matchups.filter((m) => m.weight === minWeight))[0];
+
       await tx.courtSlot.createMany({
         data: [
           ...best.team1.map((playerId) => ({ courtId, playerId, team: 1 })),
@@ -179,16 +175,18 @@ export async function fillCourt(courtId) {
       });
       await bumpPartnership(tx, best.team1[0], best.team1[1]);
       await bumpPartnership(tx, best.team2[0], best.team2[1]);
-      await tx.player.updateMany({
-        where: { id: { in: [p0, p1, p2, p3] } },
-        data: { gamesPlayed: { increment: 1 }, queueOrder: null },
-      });
     });
   } catch (err) {
-    // P2002 = unique violation: another court just claimed one of these players.
-    if (err?.code === 'P2002' || err?.message === 'COURT_NOT_VACANT') {
+    if (err?.message === 'NOT_ENOUGH') {
       return {
-        error: 'Those players were just stacked onto another court. Please try again.',
+        error: 'Need at least 4 players stacked in the queue to load a court!',
+        state: await getState(),
+      };
+    }
+    // Court taken, queue shifted, or a unique violation (P2002) from a concurrent fill.
+    if (err?.code === 'P2002' || ['COURT_UNAVAILABLE', 'QUEUE_CHANGED'].includes(err?.message)) {
+      return {
+        error: 'The court or queue changed while loading. Please try again.',
         state: await getState(),
       };
     }
@@ -217,7 +215,7 @@ export async function endMatch(courtId, score1, score2, autoMix) {
   await prisma.$transaction(async (tx) => {
     const base = await maxQueueOrder(tx);
     // Recycle finished players back into the rack in randomized order.
-    const recycled = [...court.slots].sort(() => Math.random() - 0.5);
+    const recycled = shuffle(court.slots);
 
     await tx.match.create({
       data: {
@@ -264,7 +262,7 @@ export async function endMatch(courtId, score1, score2, autoMix) {
       where: { queueOrder: { not: null } },
       select: { id: true },
     });
-    const shuffled = [...queued].sort(() => Math.random() - 0.5);
+    const shuffled = shuffle(queued);
     await prisma.$transaction(
       shuffled.map((p, i) =>
         prisma.player.update({ where: { id: p.id }, data: { queueOrder: i + 1 } }),
