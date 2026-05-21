@@ -252,12 +252,14 @@ export async function endMatch(courtId, score1, score2, autoMix) {
 
   // Decide whether to auto-mix (Silo-Buster) based on the other courts' state.
   const otherCourts = await prisma.court.findMany({ where: { id: { not: courtId } } });
-  const otherVacant = otherCourts.filter((c) => c.status === 'vacant').length;
   const otherPlaying = otherCourts.filter((c) => c.status === 'playing').length;
   const queuedCount = await prisma.player.count({ where: { queueOrder: { not: null } } });
 
   let notification = '';
-  if (otherVacant > 0 && autoMix && queuedCount >= 8) {
+  // Mix the whole rack on every finish (when enabled and more than one court's
+  // worth of players are waiting, so the next four can actually differ) — this
+  // stops the same group of four from locking together every round.
+  if (autoMix && queuedCount > 4) {
     const queued = await prisma.player.findMany({
       where: { queueOrder: { not: null } },
       select: { id: true },

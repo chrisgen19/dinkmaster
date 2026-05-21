@@ -281,7 +281,7 @@ export default function Arena({ initialState }) {
                     onChange={(e) => setAutoMix(e.target.checked)}
                     className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4"
                   />
-                  <span>Auto-Mix Queue on Multi-Finish</span>
+                  <span>Auto-Mix Rack After Each Finish</span>
                 </label>
 
                 <button
