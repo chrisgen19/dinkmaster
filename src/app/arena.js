@@ -11,6 +11,7 @@ import {
   removeCourt,
   resetArena,
 } from './actions';
+import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
 
 const playPaddleSound = () => {
   try {
@@ -340,10 +341,10 @@ export default function Arena({ initialState }) {
                         <div>
                           <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
                             {player.name}
-                            {player.waitRounds >= 2 && (
+                            {player.waitRounds >= STARVE_THRESHOLD && (
                               <span
                                 className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
-                                  player.waitRounds >= 4
+                                  player.waitRounds >= EMERGENCY_WAIT
                                     ? 'bg-red-100 text-red-700'
                                     : 'bg-amber-100 text-amber-700'
                                 }`}

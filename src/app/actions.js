@@ -2,6 +2,12 @@
 
 import { prisma } from '@/lib/prisma';
 import { getState } from '@/lib/data';
+import {
+  STARVE_THRESHOLD,
+  EMERGENCY_WAIT,
+  GAMES_WEIGHT,
+  RANDOM_WEIGHT,
+} from '@/lib/matchmaking';
 
 /** Default roster used on first load and when the arena is reset. */
 const DEFAULT_PLAYERS = [
@@ -27,20 +33,6 @@ const DEFAULT_PARTNERSHIPS = [
   { playerA: 'p1', playerB: 'p3', count: 1 },
   { playerA: 'p3', playerB: 'p4', count: 1 },
 ];
-
-// Auto-mix ordering, in three bands so fairness and variety coexist:
-//   wait >= EMERGENCY_WAIT : strictly longest-first, force the truly starved in
-//                            (bounds the worst-case wait).
-//   wait >= STARVE_THRESHOLD (the ⏳ badge): protected — always ahead of fresher
-//                            players, but RANDOM order among themselves so a big
-//                            waiting pool doesn't lock into a fixed rotation.
-//   otherwise              : mix freely by games + random.
-// Band gaps dominate the mix term, so bands are strict; within a band the mix
-// (games nudge + randomness) decides order.
-const STARVE_THRESHOLD = 2;
-const EMERGENCY_WAIT = 4;
-const GAMES_WEIGHT = 0.15;
-const RANDOM_WEIGHT = 2.5;
 
 /** Canonical (sorted) pair so each partnership has exactly one row. */
 function canonicalPair(x, y) {
@@ -218,57 +210,70 @@ export async function fillCourt(courtId) {
 
 /** Record a finished match's score, update records, and recycle players to the rack. */
 export async function endMatch(courtId, score1, score2, autoMix) {
-  const court = await prisma.court.findUnique({
-    where: { id: courtId },
-    include: { slots: { include: { player: true } } },
-  });
-  if (!court || court.status !== 'playing') return { state: await getState() };
-
   const s1 = parseInt(score1, 10) || 0;
   const s2 = parseInt(score2, 10) || 0;
   const team1Won = s1 > s2;
   const team2Won = s2 > s1;
 
-  const team1 = court.slots.filter((s) => s.team === 1);
-  const team2 = court.slots.filter((s) => s.team === 2);
-
-  await prisma.$transaction(async (tx) => {
-    const base = await maxQueueOrder(tx);
-    // Recycle finished players back into the rack in randomized order.
-    const recycled = shuffle(court.slots);
-
-    await tx.match.create({
-      data: {
-        courtName: court.name,
-        score1: s1,
-        score2: s2,
-        players: {
-          create: court.slots.map((s) => ({
-            playerId: s.playerId,
-            playerName: s.player.name,
-            team: s.team,
-          })),
-        },
-      },
-    });
-
-    if (team1Won || team2Won) {
-      const winners = (team1Won ? team1 : team2).map((s) => s.playerId);
-      const losers = (team1Won ? team2 : team1).map((s) => s.playerId);
-      await tx.player.updateMany({ where: { id: { in: winners } }, data: { wins: { increment: 1 } } });
-      await tx.player.updateMany({ where: { id: { in: losers } }, data: { losses: { increment: 1 } } });
-    }
-
-    await tx.courtSlot.deleteMany({ where: { courtId } });
-    await tx.court.update({ where: { id: courtId }, data: { status: 'vacant' } });
-
-    for (let i = 0; i < recycled.length; i++) {
-      await tx.player.update({
-        where: { id: recycled[i].playerId },
-        data: { queueOrder: base + i + 1 },
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Atomically claim the finish: only one caller can flip playing -> vacant,
+      // so concurrent endMatch calls for the same court can't double-record.
+      const claimed = await tx.court.updateMany({
+        where: { id: courtId, status: 'playing' },
+        data: { status: 'vacant' },
       });
-    }
-  });
+      if (claimed.count !== 1) throw new Error('ALREADY_FINISHED');
+
+      // Read the authoritative slot snapshot inside the transaction.
+      const court = await tx.court.findUnique({ where: { id: courtId } });
+      const slots = await tx.courtSlot.findMany({
+        where: { courtId },
+        include: { player: true },
+      });
+      const team1 = slots.filter((s) => s.team === 1);
+      const team2 = slots.filter((s) => s.team === 2);
+
+      const base = await maxQueueOrder(tx);
+      // Recycle finished players back into the rack in randomized order.
+      const recycled = shuffle(slots);
+
+      await tx.match.create({
+        data: {
+          courtName: court.name,
+          score1: s1,
+          score2: s2,
+          players: {
+            create: slots.map((s) => ({
+              playerId: s.playerId,
+              playerName: s.player.name,
+              team: s.team,
+            })),
+          },
+        },
+      });
+
+      if (team1Won || team2Won) {
+        const winners = (team1Won ? team1 : team2).map((s) => s.playerId);
+        const losers = (team1Won ? team2 : team1).map((s) => s.playerId);
+        await tx.player.updateMany({ where: { id: { in: winners } }, data: { wins: { increment: 1 } } });
+        await tx.player.updateMany({ where: { id: { in: losers } }, data: { losses: { increment: 1 } } });
+      }
+
+      await tx.courtSlot.deleteMany({ where: { courtId } });
+
+      for (let i = 0; i < recycled.length; i++) {
+        await tx.player.update({
+          where: { id: recycled[i].playerId },
+          data: { queueOrder: base + i + 1 },
+        });
+      }
+    });
+  } catch (err) {
+    // Court was already finished/vacant (a concurrent or duplicate call won) — no-op.
+    if (err?.message === 'ALREADY_FINISHED') return { state: await getState() };
+    throw err;
+  }
 
   // Decide whether to auto-mix (Silo-Buster) based on the other courts' state.
   const otherCourts = await prisma.court.findMany({ where: { id: { not: courtId } } });
@@ -284,18 +289,25 @@ export async function endMatch(courtId, score1, score2, autoMix) {
       where: { queueOrder: { not: null } },
       select: { id: true, gamesPlayed: true, waitRounds: true },
     });
-    // Band the rack (emergency / protected / fresh), then mix within each band.
+    // Band the rack, then sort lexicographically: band first, then (in the
+    // emergency band only) strictly by wait, then by the games+random mix.
+    // Using a comparator instead of additive sentinel scores keeps the bands
+    // strict no matter how large the games spread grows.
     const maxGames = Math.max(...queued.map((p) => p.gamesPlayed));
+    const bandOf = (w) =>
+      w >= EMERGENCY_WAIT ? 2 : w >= STARVE_THRESHOLD ? 1 : 0;
     const scored = queued
-      .map((p) => {
-        const mix = GAMES_WEIGHT * (maxGames - p.gamesPlayed) + RANDOM_WEIGHT * Math.random();
-        let base;
-        if (p.waitRounds >= EMERGENCY_WAIT) base = 1e6 + p.waitRounds * 1e3; // strict longest-first
-        else if (p.waitRounds >= STARVE_THRESHOLD) base = 1e3; // protected, random order within
-        else base = 0; // fresh, mix freely
-        return { id: p.id, score: base + mix };
-      })
-      .sort((a, b) => b.score - a.score);
+      .map((p) => ({
+        id: p.id,
+        band: bandOf(p.waitRounds),
+        waitRounds: p.waitRounds,
+        mix: GAMES_WEIGHT * (maxGames - p.gamesPlayed) + RANDOM_WEIGHT * Math.random(),
+      }))
+      .sort((a, b) => {
+        if (a.band !== b.band) return b.band - a.band; // emergency > protected > fresh
+        if (a.band === 2 && a.waitRounds !== b.waitRounds) return b.waitRounds - a.waitRounds; // strict longest-first
+        return b.mix - a.mix; // within band: games nudge + randomness
+      });
     await prisma.$transaction(
       scored.map((p, i) =>
         prisma.player.update({ where: { id: p.id }, data: { queueOrder: i + 1 } }),
