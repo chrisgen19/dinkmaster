@@ -262,15 +262,18 @@ export async function endMatch(courtId, score1, score2, autoMix) {
   if (autoMix && queuedCount > 4) {
     const queued = await prisma.player.findMany({
       where: { queueOrder: { not: null } },
-      select: { id: true },
+      select: { id: true, gamesPlayed: true },
     });
-    const shuffled = shuffle(queued);
+    // Fairness-aware mix: players with the fewest games come up first, with a
+    // random shuffle breaking ties. This bounds waiting and evens out play
+    // counts, while still mixing groups whenever counts are equal.
+    const mixed = shuffle(queued).sort((a, b) => a.gamesPlayed - b.gamesPlayed);
     await prisma.$transaction(
-      shuffled.map((p, i) =>
+      mixed.map((p, i) =>
         prisma.player.update({ where: { id: p.id }, data: { queueOrder: i + 1 } }),
       ),
     );
-    notification = '⚡ Silo-Buster: Automatically mixed finished players to prevent repetitive court matches!';
+    notification = '⚡ Silo-Buster: Mixed the rack (fewest games up next) to keep matchups fresh and fair!';
   } else if (otherPlaying > 0) {
     notification = '💡 Recommended: Wait for other courts to finish before stacking again, to allow a complete mix of player pools!';
   }
