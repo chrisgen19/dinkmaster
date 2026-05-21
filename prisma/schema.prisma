@@ -10,10 +10,28 @@ datasource db {
   provider = "postgresql"
 }
 
+/// A pickleball arena — an isolated session of players, courts, and matches
+/// owned by one User. All arena data is scoped by `arenaId`.
+model Arena {
+  id        String   @id @default(cuid())
+  name      String
+  ownerId   String
+  createdAt DateTime @default(now())
+
+  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  players      Player[]
+  courts       Court[]
+  matches      Match[]
+  partnerships Partnership[]
+
+  @@index([ownerId])
+}
+
 /// A registered player. `queueOrder` is the position in the paddle rack
 /// (null when the player is on a court or otherwise not waiting).
 model Player {
   id          String   @id @default(cuid())
+  arenaId     String
   name        String
   gamesPlayed Int      @default(0)
   wins        Int      @default(0)
@@ -25,21 +43,26 @@ model Player {
 
   createdAt   DateTime @default(now())
 
+  arena      Arena       @relation(fields: [arenaId], references: [id], onDelete: Cascade)
   courtSlots CourtSlot[]
 
+  @@index([arenaId])
   @@index([queueOrder])
 }
 
 /// A physical court. `position` orders the courts in the UI.
 model Court {
   id        String   @id @default(cuid())
+  arenaId   String
   name      String
   status    String   @default("vacant") // "vacant" | "playing"
   position  Int
   createdAt DateTime @default(now())
 
+  arena Arena       @relation(fields: [arenaId], references: [id], onDelete: Cascade)
   slots CourtSlot[]
 
+  @@index([arenaId])
   @@index([position])
 }
 
@@ -62,13 +85,16 @@ model CourtSlot {
 /// player deletion.
 model Match {
   id        String   @id @default(cuid())
+  arenaId   String
   courtName String
   score1    Int
   score2    Int
   createdAt DateTime @default(now())
 
+  arena   Arena         @relation(fields: [arenaId], references: [id], onDelete: Cascade)
   players MatchPlayer[]
 
+  @@index([arenaId])
   @@index([createdAt])
 }
 
@@ -89,11 +115,15 @@ model MatchPlayer {
 /// Stored canonically with playerA < playerB to keep one row per pair.
 model Partnership {
   id      String @id @default(cuid())
+  arenaId String
   playerA String
   playerB String
   count   Int    @default(0)
 
+  arena Arena @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+
   @@unique([playerA, playerB])
+  @@index([arenaId])
 }
 
 // --- Auth (Better Auth) -------------------------------------------------
@@ -114,6 +144,7 @@ model User {
 
   sessions Session[]
   accounts Account[]
+  arenas   Arena[]
 }
 
 /// A signed-in session (cookie-backed).
