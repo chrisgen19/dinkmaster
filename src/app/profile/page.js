@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/session';
 import { getUserPlayerStats } from '@/lib/arenas';
+import { eloToDupr } from '@/lib/rating';
 import { AuthStatus } from '../auth-status';
 
 // Always read fresh stats on each request.
@@ -62,7 +63,10 @@ export default async function ProfilePage() {
             <StatTile label="Wins" value={totals.wins} />
             <StatTile label="Losses" value={totals.losses} />
             <StatTile label="Win %" value={totals.wins + totals.losses > 0 ? `${totals.winPct}%` : '—'} />
-            <StatTile label="Rating" value="Phase 6" dashed />
+            <StatTile
+              label="Rating"
+              value={totals.rating !== null ? eloToDupr(totals.rating).toFixed(3) : '—'}
+            />
           </div>
         </section>
 
@@ -88,6 +92,7 @@ export default async function ProfilePage() {
                     <th className="p-3 font-extrabold text-center">Games</th>
                     <th className="p-3 font-extrabold text-center">W</th>
                     <th className="p-3 font-extrabold text-center">L</th>
+                    <th className="p-3 font-extrabold text-center">Rating</th>
                     <th className="p-3 font-extrabold text-center">In rack</th>
                   </tr>
                 </thead>
@@ -107,6 +112,9 @@ export default async function ProfilePage() {
                       <td className="p-3 text-center text-slate-600">{a.gamesPlayed}</td>
                       <td className="p-3 text-center font-bold text-emerald-700">{a.wins}</td>
                       <td className="p-3 text-center font-bold text-slate-500">{a.losses}</td>
+                      <td className="p-3 text-center font-bold text-slate-700">
+                        {a.gamesPlayed > 0 ? eloToDupr(a.rating).toFixed(3) : '—'}
+                      </td>
                       <td className="p-3 text-center text-slate-500">
                         {a.inQueue ? 'Yes' : '—'}
                       </td>

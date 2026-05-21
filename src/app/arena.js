@@ -16,6 +16,7 @@ import {
   requestToJoin,
 } from './actions';
 import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
+import { eloToDupr } from '@/lib/rating';
 import { AuthStatus } from './auth-status';
 import { ArenaMembers } from './arena-members';
 
@@ -929,11 +930,20 @@ export default function Arena({
                         : 'Not in the rack'}
                   </span>
                 </div>
-                <div className="bg-slate-50 border border-dashed border-slate-200 rounded-xl px-4 py-3">
+                <div className="bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-3">
                   <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
                     Rating
                   </span>
-                  <span className="block text-sm font-semibold text-slate-400 mt-0.5">Coming in Phase 6</span>
+                  <span className="block text-sm font-bold text-slate-800 mt-0.5">
+                    {myPlayer.gamesPlayed > 0 ? (
+                      <>
+                        {eloToDupr(myPlayer.rating).toFixed(3)}
+                        <span className="text-slate-400 font-normal"> DUPR</span>
+                      </>
+                    ) : (
+                      '—'
+                    )}
+                  </span>
                 </div>
               </div>
 

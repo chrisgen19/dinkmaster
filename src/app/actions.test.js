@@ -284,6 +284,7 @@ describe('arena server actions — authorization', () => {
         player: {
           findMany: vi.fn().mockResolvedValue([{ id: 'p1' }]),
           update: vi.fn(),
+          updateMany: vi.fn(),
         },
       };
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
@@ -294,6 +295,57 @@ describe('arena server actions — authorization', () => {
       expect(tx.player.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { arenaId: ARENA, leftAt: null } }),
       );
+      // ...but stats (games/wins/losses/rating) are cleared for EVERY player,
+      // departed rows included, so a rejoin can't resurrect pre-reset stats or
+      // a stale Elo from matches the reset already deleted.
+      expect(tx.player.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { arenaId: ARENA },
+          data: expect.objectContaining({ gamesPlayed: 0, wins: 0, rating: 1000 }),
+        }),
+      );
+    });
+
+    it('endMatch() applies Elo rating updates — winners rise, losers fall', async () => {
+      const slot = (playerId, team) => ({
+        playerId,
+        team,
+        player: { id: playerId, firstName: playerId, lastName: null, rating: 1000 },
+      });
+      const tx = {
+        $executeRaw: vi.fn(),
+        court: {
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }), // claim the finish
+          findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
+        },
+        courtSlot: {
+          findMany: vi
+            .fn()
+            .mockResolvedValue([slot('w1', 1), slot('w2', 1), slot('l1', 2), slot('l2', 2)]),
+          deleteMany: vi.fn(),
+        },
+        player: {
+          aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 0 } }),
+          updateMany: vi.fn(),
+          update: vi.fn(),
+        },
+        match: { create: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+      prisma.court.findMany.mockResolvedValue([]); // no other courts -> no auto-mix
+      prisma.player.count.mockResolvedValue(0);
+
+      await actions.endMatch(ARENA, 'c1', 11, 5, false);
+
+      // tx.player.update is called both for ratings and for re-queueing; pick
+      // the rating write for each player. Team 1 won 11-5 from an even start.
+      const ratingFor = (id) =>
+        tx.player.update.mock.calls.find((c) => c[0].where.id === id && 'rating' in c[0].data)[0]
+          .data.rating;
+      expect(ratingFor('w1')).toBeGreaterThan(1000);
+      expect(ratingFor('w2')).toBeGreaterThan(1000);
+      expect(ratingFor('l1')).toBeLessThan(1000);
+      expect(ratingFor('l2')).toBeLessThan(1000);
     });
 
     it('rejectJoinRequest() deletes the request', async () => {
@@ -371,16 +423,17 @@ describe('arena server actions — authorization', () => {
 
     it('linkPlayerToMember() merges the member’s existing player into the walk-in', async () => {
       const tx = linkTx({
-        temp: { id: 'temp1', userId: null },
+        temp: { id: 'temp1', userId: null, gamesPlayed: 1, rating: 1100 },
         member: { role: ROLES.MEMBER },
-        ownPlayer: { id: 'own1', gamesPlayed: 3, wins: 2, losses: 1 },
+        ownPlayer: { id: 'own1', gamesPlayed: 3, wins: 2, losses: 1, rating: 1300 },
         onCourt: null,
       });
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
       const result = await actions.linkPlayerToMember(ARENA, 'temp1', 'u2');
       expect(result.error).toBeUndefined();
-      // Counters folded into the survivor; no history dropped.
+      // Counters folded into the survivor; no history dropped. Elo is blended
+      // by games played: (1100×1 + 1300×3) / 4 = 1250.
       expect(tx.player.update).toHaveBeenCalledWith({
         where: { id: 'temp1' },
         data: {
@@ -388,6 +441,7 @@ describe('arena server actions — authorization', () => {
           gamesPlayed: { increment: 3 },
           wins: { increment: 2 },
           losses: { increment: 1 },
+          rating: 1250,
         },
       });
       // Finished-match snapshots re-pointed to the survivor.

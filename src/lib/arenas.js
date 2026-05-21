@@ -123,8 +123,8 @@ export async function hasPendingJoinRequest(arenaId, userId) {
  * the global `/profile` page.
  * @param {string} userId
  * @returns {Promise<{
- *   totals:{arenas:number,gamesPlayed:number,wins:number,losses:number,winPct:number},
- *   arenas:Array<{arenaId:string,arenaName:string,gamesPlayed:number,wins:number,losses:number,inQueue:boolean,active:boolean}>,
+ *   totals:{arenas:number,gamesPlayed:number,wins:number,losses:number,winPct:number,rating:number|null},
+ *   arenas:Array<{arenaId:string,arenaName:string,gamesPlayed:number,wins:number,losses:number,rating:number,inQueue:boolean,active:boolean}>,
  *   recentMatches:Array<{matchId:string,arenaName:string,courtName:string,won:boolean,scoreFor:number,scoreAgainst:number,timestamp:string}>
  * }>}
  */
@@ -155,9 +155,20 @@ export async function getUserPlayerStats(userId) {
     gamesPlayed: p.gamesPlayed,
     wins: p.wins,
     losses: p.losses,
+    rating: p.rating, // internal Elo; the UI maps it to a DUPR display value
     inQueue: p.queueOrder !== null,
     active: p.leftAt === null, // false = arena the user has left (history kept)
   }));
+
+  // Global rating: a match-weighted average of the user's active arena Elos
+  // (weight = games played there). An unconverged baseline row in a new or
+  // secondary arena has few/zero games, so it barely moves — or is excluded
+  // entirely (0 games) — and can't deflate a strong player's global rating.
+  const activePlayers = players.filter((p) => p.leftAt === null);
+  const ratingWeight = activePlayers.reduce((acc, p) => acc + p.gamesPlayed, 0);
+  const rating = ratingWeight
+    ? activePlayers.reduce((acc, p) => acc + p.rating * p.gamesPlayed, 0) / ratingWeight
+    : null;
 
   // Recent matches across all the user's arenas. `MatchPlayer.playerId` is a
   // plain id snapshot (no FK), so it is matched against the user's player ids.
@@ -194,6 +205,7 @@ export async function getUserPlayerStats(userId) {
       wins: sum.wins,
       losses: sum.losses,
       winPct: decided ? Math.round((sum.wins / decided) * 100) : 0,
+      rating, // internal Elo (match-weighted); null when no games played yet
     },
     arenas,
     recentMatches,
