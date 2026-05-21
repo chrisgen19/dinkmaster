@@ -153,18 +153,20 @@ src/
   app/
     page.js            Server Component — the public arena directory
     arena/[id]/page.js Server Component — reads one arena's state, renders it
-    arena.js           Client UI (rack, courts, modals, badges)
-    arena-members.js   Client UI — members tab (roles, join/leave, owner controls)
+    arena.js           Client UI (rack, courts, modals, my-stats, badges)
+    arena-members.js   Client UI — members tab (roles, join/leave, pending requests, owner controls)
     actions.js         Server Actions — every mutation (role-gated) + rotation algorithm
     create-arena-form.js  Client form for creating an arena
-    auth-status.js     Header sign-in / sign-out control
+    auth-status.js     Header sign-in / sign-out control + profile link
+    profile/           Per-user stats & match history across all arenas
     login/             Sign-in page
     register/          Sign-up page
     api/auth/          Better Auth catch-all route handler
   lib/
     prisma.js      Prisma 7 client (node-postgres driver adapter)
     data.js        getState(arenaId) — the shape the UI consumes
-    arenas.js      listArenas() / getArena() / getArenaMembers() — directory reads
+    arenas.js      directory + member/join-request reads, getUserPlayerStats()
+    user-profile.js  normalizeUserProfile() — server-side signup validation
     roles.js       Role constants (OWNER/ORGANIZER/MEMBER) + helpers
     matchmaking.js Shared thresholds/weights
     auth.js        Better Auth server instance
@@ -192,4 +194,4 @@ prisma/            schema, migrations
 
 ## Security note
 
-As of Phase 3, every mutating Server Action in `src/app/actions.js` is role-gated: play actions require `requireArenaManager` (owner or organizer), owner-only actions require `requireArenaOwner`, and both verify the session against `ArenaMembership` / `Arena.ownerId`. `createArena` and `joinArena`/`leaveArena` only require a signed-in account.
+Every mutating Server Action in `src/app/actions.js` is role-gated: play actions and join-request decisions (`approveJoinRequest` / `rejectJoinRequest`) require `requireArenaManager` (owner or organizer), owner-only actions (`renameArena`, `updateMemberRole`, `removeMember`, `transferOwnership`, `linkPlayerToMember`) require `requireArenaOwner`, and both verify the session against `ArenaMembership` / `Arena.ownerId`. `createArena`, `requestToJoin`, and `leaveArena` only require a signed-in account.
