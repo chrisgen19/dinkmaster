@@ -705,19 +705,19 @@ export async function resetArena(arenaId) {
     await tx.partnership.deleteMany({ where: { arenaId } });
     await tx.court.updateMany({ where: { arenaId }, data: { status: 'vacant' } });
 
-    // Reset the Elo rating for EVERY player in the arena, departed rows
-    // included: a reset wipes the arena's match history, so a later rejoin
-    // (activateArenaPlayer reuses the departed row without touching rating)
-    // must not resurrect a stale pre-reset Elo. The active-player loop below
-    // re-sets it too — harmless, same value — so the rack stays self-evident.
+    // Clear stats for EVERY player in the arena, departed rows included: a
+    // reset wipes the arena's match history, so a later rejoin (which reuses
+    // the departed Player row and keeps its lifetime stats) must not
+    // resurrect pre-reset games/wins/losses or a stale Elo from matches that
+    // no longer exist. queueOrder is assigned per active player below.
     await tx.player.updateMany({
       where: { arenaId },
-      data: { rating: RATING_BASELINE },
+      data: { gamesPlayed: 0, wins: 0, losses: 0, waitRounds: 0, gamesOffset: 0, rating: RATING_BASELINE },
     });
 
-    // Send every active player back to the rack with cleared stats. Departed
-    // players (leftAt set) are skipped so a reset can't silently re-queue an
-    // invisible former member.
+    // Send every active player back to the rack. Departed players (leftAt
+    // set) are skipped so a reset can't silently re-queue an invisible
+    // former member — they keep queueOrder null.
     const players = await tx.player.findMany({
       where: { arenaId, leftAt: null },
       orderBy: { createdAt: 'asc' },
@@ -726,15 +726,7 @@ export async function resetArena(arenaId) {
     for (let i = 0; i < players.length; i++) {
       await tx.player.update({
         where: { id: players[i].id },
-        data: {
-          gamesPlayed: 0,
-          wins: 0,
-          losses: 0,
-          waitRounds: 0,
-          gamesOffset: 0,
-          rating: RATING_BASELINE,
-          queueOrder: i + 1,
-        },
+        data: { queueOrder: i + 1 },
       });
     }
   });

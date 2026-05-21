@@ -295,10 +295,14 @@ describe('arena server actions — authorization', () => {
       expect(tx.player.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { arenaId: ARENA, leftAt: null } }),
       );
-      // ...but ratings are reset for EVERY player (departed rows included), so
-      // a rejoin can't resurrect a stale pre-reset Elo.
+      // ...but stats (games/wins/losses/rating) are cleared for EVERY player,
+      // departed rows included, so a rejoin can't resurrect pre-reset stats or
+      // a stale Elo from matches the reset already deleted.
       expect(tx.player.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { arenaId: ARENA } }),
+        expect.objectContaining({
+          where: { arenaId: ARENA },
+          data: expect.objectContaining({ gamesPlayed: 0, wins: 0, rating: 1000 }),
+        }),
       );
     });
 
