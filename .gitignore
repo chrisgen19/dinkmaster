@@ -46,6 +46,10 @@ next-env.d.ts
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+/.playwright-mcp/
+
+# claude code — machine-local settings
+.claude/settings.local.json
 
 /src/generated/prisma
 

@@ -42,7 +42,7 @@ const ERR = 'denied';
 
 // Owner-or-organizer gated (requireArenaManager).
 const PLAY = [
-  ['addPlayers', () => actions.addPlayers(ARENA, 'Alice')],
+  ['addPlayer', () => actions.addPlayer(ARENA, 'Alice', 'Bob')],
   ['removePlayer', () => actions.removePlayer(ARENA, 'p1')],
   ['shuffleQueue', () => actions.shuffleQueue(ARENA)],
   ['fillCourt', () => actions.fillCourt(ARENA, 'c1')],
@@ -105,15 +105,15 @@ describe('arena server actions — authorization', () => {
       requireUser.mockResolvedValue({ user: { id: 'u1' } });
     });
 
-    it('addPlayers() with names proceeds to the transaction', async () => {
-      await actions.addPlayers(ARENA, 'Alice');
-      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-    });
-
-    it('addPlayers() with no names is a no-op', async () => {
-      const result = await actions.addPlayers(ARENA, '  , ');
+    it('addPlayer() with a blank first name skips the gate and the transaction', async () => {
+      const result = await actions.addPlayer(ARENA, '   ', '  ');
       expect(result.error).toBeUndefined();
       expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('addPlayer() with a first name proceeds past the gate to the transaction', async () => {
+      await actions.addPlayer(ARENA, 'Alice', '');
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
 
     it('removePlayer() scopes both deletes to the arena (no cross-arena delete)', async () => {
