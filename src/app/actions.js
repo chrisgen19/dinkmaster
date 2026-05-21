@@ -296,7 +296,7 @@ export async function linkPlayerToMember(arenaId, playerId, userId) {
 
     const temp = await tx.player.findFirst({
       where: { id: playerId, arenaId },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, gamesPlayed: true, rating: true },
     });
     if (!temp) {
       reason = 'NO_PLAYER';
@@ -321,7 +321,7 @@ export async function linkPlayerToMember(arenaId, playerId, userId) {
     // player keeps its id, queue position, and court slot.
     const ownPlayer = await tx.player.findUnique({
       where: { arenaId_userId: { arenaId, userId } },
-      select: { id: true, gamesPlayed: true, wins: true, losses: true },
+      select: { id: true, gamesPlayed: true, wins: true, losses: true, rating: true },
     });
     if (ownPlayer) {
       const onCourt = await tx.courtSlot.findFirst({
@@ -333,7 +333,18 @@ export async function linkPlayerToMember(arenaId, playerId, userId) {
       }
       // Fold the existing player's win/loss/game counters into the survivor
       // and re-point its finished-match snapshots, so nothing the member has
-      // already played is lost when the records are merged.
+      // already played is lost when the records are merged. Elo is not
+      // additive, so blend the two ratings by games played — a row with no
+      // games (never rated, still at baseline) contributes nothing and the
+      // survivor simply keeps the other side's rating.
+      const totalGames = temp.gamesPlayed + ownPlayer.gamesPlayed;
+      const mergedRating =
+        totalGames > 0
+          ? Math.round(
+              (temp.rating * temp.gamesPlayed + ownPlayer.rating * ownPlayer.gamesPlayed) /
+                totalGames,
+            )
+          : temp.rating;
       await tx.player.update({
         where: { id: temp.id },
         data: {
@@ -341,6 +352,7 @@ export async function linkPlayerToMember(arenaId, playerId, userId) {
           gamesPlayed: { increment: ownPlayer.gamesPlayed },
           wins: { increment: ownPlayer.wins },
           losses: { increment: ownPlayer.losses },
+          rating: mergedRating,
         },
       });
       await tx.matchPlayer.updateMany({
@@ -692,6 +704,16 @@ export async function resetArena(arenaId) {
     await tx.courtSlot.deleteMany({ where: { court: { arenaId } } });
     await tx.partnership.deleteMany({ where: { arenaId } });
     await tx.court.updateMany({ where: { arenaId }, data: { status: 'vacant' } });
+
+    // Reset the Elo rating for EVERY player in the arena, departed rows
+    // included: a reset wipes the arena's match history, so a later rejoin
+    // (activateArenaPlayer reuses the departed row without touching rating)
+    // must not resurrect a stale pre-reset Elo. The active-player loop below
+    // re-sets it too — harmless, same value — so the rack stays self-evident.
+    await tx.player.updateMany({
+      where: { arenaId },
+      data: { rating: RATING_BASELINE },
+    });
 
     // Send every active player back to the rack with cleared stats. Departed
     // players (leftAt set) are skipped so a reset can't silently re-queue an

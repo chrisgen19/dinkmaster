@@ -45,6 +45,12 @@ function expectedScore(a, b) {
  * @returns {{team1:[number,number], team2:[number,number]}} new integer ratings
  */
 export function computeMatchRatings({ team1, team2, outcome }) {
+  if (outcome !== 0 && outcome !== 1 && outcome !== 2) {
+    // Reject invalid input rather than silently scoring it as a tie — a
+    // regressed caller must fail loudly, not quietly corrupt persisted Elo.
+    throw new RangeError('outcome must be 0 (tie), 1 (team1 win), or 2 (team2 win)');
+  }
+
   const avg1 = (team1[0] + team1[1]) / 2;
   const avg2 = (team2[0] + team2[1]) / 2;
   const expected1 = expectedScore(avg1, avg2);

@@ -284,6 +284,7 @@ describe('arena server actions — authorization', () => {
         player: {
           findMany: vi.fn().mockResolvedValue([{ id: 'p1' }]),
           update: vi.fn(),
+          updateMany: vi.fn(),
         },
       };
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
@@ -293,6 +294,11 @@ describe('arena server actions — authorization', () => {
       // player can't be silently re-queued (invisible to getState).
       expect(tx.player.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { arenaId: ARENA, leftAt: null } }),
+      );
+      // ...but ratings are reset for EVERY player (departed rows included), so
+      // a rejoin can't resurrect a stale pre-reset Elo.
+      expect(tx.player.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { arenaId: ARENA } }),
       );
     });
 
@@ -371,16 +377,17 @@ describe('arena server actions — authorization', () => {
 
     it('linkPlayerToMember() merges the member’s existing player into the walk-in', async () => {
       const tx = linkTx({
-        temp: { id: 'temp1', userId: null },
+        temp: { id: 'temp1', userId: null, gamesPlayed: 1, rating: 1100 },
         member: { role: ROLES.MEMBER },
-        ownPlayer: { id: 'own1', gamesPlayed: 3, wins: 2, losses: 1 },
+        ownPlayer: { id: 'own1', gamesPlayed: 3, wins: 2, losses: 1, rating: 1300 },
         onCourt: null,
       });
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
       const result = await actions.linkPlayerToMember(ARENA, 'temp1', 'u2');
       expect(result.error).toBeUndefined();
-      // Counters folded into the survivor; no history dropped.
+      // Counters folded into the survivor; no history dropped. Elo is blended
+      // by games played: (1100×1 + 1300×3) / 4 = 1250.
       expect(tx.player.update).toHaveBeenCalledWith({
         where: { id: 'temp1' },
         data: {
@@ -388,6 +395,7 @@ describe('arena server actions — authorization', () => {
           gamesPlayed: { increment: 3 },
           wins: { increment: 2 },
           losses: { increment: 1 },
+          rating: 1250,
         },
       });
       // Finished-match snapshots re-pointed to the survivor.

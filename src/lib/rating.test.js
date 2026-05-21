@@ -39,6 +39,13 @@ describe('computeMatchRatings', () => {
     expect(underdog.team1[0] - 800).toBeGreaterThan(favourite.team1[0] - 1200);
   });
 
+  it('throws on an invalid outcome instead of silently scoring a tie', () => {
+    expect(() => computeMatchRatings({ team1: even, team2: even, outcome: 3 })).toThrow(RangeError);
+    expect(() => computeMatchRatings({ team1: even, team2: even, outcome: undefined })).toThrow(
+      RangeError,
+    );
+  });
+
   it('uses the team average, so a mixed pair plays as its midpoint', () => {
     const mixed = computeMatchRatings({ team1: [1400, 600], team2: even, outcome: 1 });
     const midpoint = computeMatchRatings({ team1: [1000, 1000], team2: even, outcome: 1 });
