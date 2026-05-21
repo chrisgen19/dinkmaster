@@ -497,6 +497,7 @@ export async function resetArena(arenaId) {
 export async function joinArena(arenaId) {
   const guard = await requireUser();
   if (guard.error) return { error: guard.error };
+  if (!arenaId) return { error: 'Arena not found.' };
 
   const arena = await prisma.arena.findUnique({ where: { id: arenaId } });
   if (!arena) return { error: 'Arena not found.' };
@@ -514,6 +515,7 @@ export async function joinArena(arenaId) {
 export async function leaveArena(arenaId) {
   const guard = await requireUser();
   if (guard.error) return { error: guard.error };
+  if (!arenaId) return { error: 'Arena not found.' };
 
   const arena = await prisma.arena.findUnique({ where: { id: arenaId } });
   if (!arena) return { error: 'Arena not found.' };

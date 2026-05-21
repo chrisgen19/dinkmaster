@@ -36,14 +36,16 @@ export async function getArena(id) {
 }
 
 /**
- * List an arena's members (oldest first) with user details and role.
+ * List an arena's members (oldest first) with role. Returns only
+ * non-sensitive fields: `/arena/[id]` is publicly viewable, so email and
+ * other account identifiers must not be in this payload.
  * @param {string} arenaId
- * @returns {Promise<Array<{membershipId:string,userId:string,name:string,email:string,role:string}>>}
+ * @returns {Promise<Array<{membershipId:string,userId:string,name:string,role:string}>>}
  */
 export async function getArenaMembers(arenaId) {
   const members = await prisma.arenaMembership.findMany({
     where: { arenaId },
-    include: { user: { select: { id: true, name: true, email: true } } },
+    include: { user: { select: { id: true, name: true } } },
     orderBy: { createdAt: 'asc' },
   });
 
@@ -51,7 +53,6 @@ export async function getArenaMembers(arenaId) {
     membershipId: m.id,
     userId: m.userId,
     name: m.user.name,
-    email: m.user.email,
     role: m.role,
   }));
 }

@@ -118,7 +118,7 @@ Viewing any arena is public. Managing one depends on the caller's `ArenaMembersh
 ## Routing
 
 - `/` — public **arena directory**: lists every arena; signed-in users get a "create arena" form.
-- `/arena/[id]` — a single arena (rack, courts, match log, members). Public to view; owners and organizers see management controls, others see it read-only with a "join" prompt.
+- `/arena/[id]` — a single arena (rack, courts, match log, members). Public to view; owners and organizers see management controls, members see it read-only, and non-members get a "join" prompt.
 - `/login`, `/register` — auth pages.
 
 ## Roadmap

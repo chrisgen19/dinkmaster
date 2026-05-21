@@ -28,15 +28,23 @@ model Arena {
   @@index([ownerId])
 }
 
+/// A member's role within an arena. Enforced at the database level so an
+/// invalid value can never be persisted and break authorization checks.
+enum ArenaRole {
+  OWNER
+  ORGANIZER
+  MEMBER
+}
+
 /// A user's role within an arena. The owner is tracked canonically by
 /// `Arena.ownerId`; their membership row mirrors it with role OWNER and is
-/// kept in sync on ownership transfer. Roles: OWNER | ORGANIZER | MEMBER.
+/// kept in sync on ownership transfer.
 model ArenaMembership {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   arenaId   String
   userId    String
-  role      String
-  createdAt DateTime @default(now())
+  role      ArenaRole
+  createdAt DateTime  @default(now())
 
   arena Arena @relation(fields: [arenaId], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)

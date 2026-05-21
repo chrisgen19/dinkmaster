@@ -23,12 +23,16 @@ export function ArenaMembers({ arenaId, members, viewerUserId, viewerRole }) {
   const act = (fn) => {
     setError('');
     startTransition(async () => {
-      const result = await fn();
-      if (result?.error) {
-        setError(result.error);
-        return;
+      try {
+        const result = await fn();
+        if (result?.error) {
+          setError(result.error);
+          return;
+        }
+        router.refresh();
+      } catch {
+        setError('Something went wrong. Please try again.');
       }
-      router.refresh();
     });
   };
 
@@ -84,7 +88,6 @@ export function ArenaMembers({ arenaId, members, viewerUserId, viewerRole }) {
                 {m.name}
                 {m.userId === viewerUserId && <span className="text-slate-400 font-normal"> (you)</span>}
               </p>
-              <p className="text-[11px] text-slate-400 truncate">{m.email}</p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <span
