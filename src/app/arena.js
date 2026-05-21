@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useTransition } from 'react';
+import React, { useState, useEffect, useTransition } from 'react';
 import {
   addPlayers,
   removePlayer,
@@ -77,6 +77,15 @@ export default function Arena({ initialState }) {
 
   const [autoMix, setAutoMix] = useState(true);
   const [notification, setNotification] = useState('');
+
+  // Locale-format timestamps only after mount: the server renders in its own
+  // locale/timezone, so formatting during SSR/hydration would mismatch. Until
+  // mounted we show the deterministic ISO value (same on server and client).
+  const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount flag for hydration-safe locale formatting
+  useEffect(() => setMounted(true), []);
+  const formatTimestamp = (iso) =>
+    mounted ? new Date(iso).toLocaleString() : iso.replace('T', ' ').slice(0, 16);
 
   // Apply a server action result to local state (state, error, notification).
   const applyResult = (result) => {
@@ -646,7 +655,7 @@ export default function Arena({ initialState }) {
                       <div key={match.id} className="border border-slate-100 rounded-xl bg-slate-50/50 p-4 hover:bg-slate-50 transition-colors">
                         <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold mb-3">
                           <span>{match.courtName}</span>
-                          <span>{new Date(match.timestamp).toLocaleString()}</span>
+                          <span>{formatTimestamp(match.timestamp)}</span>
                         </div>
 
                         <div className="grid grid-cols-9 items-center gap-2">

@@ -370,11 +370,23 @@ export async function addCourt() {
 
 /** Remove a court, unless a game is in progress on it. */
 export async function removeCourt(courtId) {
-  const court = await prisma.court.findUnique({ where: { id: courtId } });
-  if (court?.status === 'playing') {
+  let blocked = false;
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx);
+    // Conditional delete under the lock: only remove the court if it is still
+    // vacant, so it can't race a concurrent fillCourt that just claimed it
+    // (which would cascade-delete the new slots and strand its players).
+    const deleted = await tx.court.deleteMany({ where: { id: courtId, status: 'vacant' } });
+    if (deleted.count === 0) {
+      // Nothing deleted: either it's now playing, or already gone.
+      const stillThere = await tx.court.findUnique({ where: { id: courtId }, select: { id: true } });
+      if (stillThere) blocked = true; // exists but not vacant -> active game
+    }
+  });
+
+  if (blocked) {
     return { error: 'Cannot remove a court with an active game!', state: await getState() };
   }
-  await prisma.court.delete({ where: { id: courtId } });
   return { state: await getState() };
 }
 
