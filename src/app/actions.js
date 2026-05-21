@@ -28,13 +28,17 @@ const DEFAULT_PARTNERSHIPS = [
   { playerA: 'p3', playerB: 'p4', count: 1 },
 ];
 
-// Auto-mix ordering. Players who have waited >= STARVE_THRESHOLD rounds (the
-// ⏳ badge threshold) are a protected tier: they always rank ahead of anyone
-// fresher, so randomness can never bump a waiting player out of the on-deck
-// four. Below that, wait 0 and 1 mix freely so the same foursome can't lock
-// together. Within either tier, ordering is GAMES (gently evens totals /
-// integrates newcomers) plus RANDOM (the actual mixing).
+// Auto-mix ordering, in three bands so fairness and variety coexist:
+//   wait >= EMERGENCY_WAIT : strictly longest-first, force the truly starved in
+//                            (bounds the worst-case wait).
+//   wait >= STARVE_THRESHOLD (the ⏳ badge): protected — always ahead of fresher
+//                            players, but RANDOM order among themselves so a big
+//                            waiting pool doesn't lock into a fixed rotation.
+//   otherwise              : mix freely by games + random.
+// Band gaps dominate the mix term, so bands are strict; within a band the mix
+// (games nudge + randomness) decides order.
 const STARVE_THRESHOLD = 2;
+const EMERGENCY_WAIT = 4;
 const GAMES_WEIGHT = 0.15;
 const RANDOM_WEIGHT = 2.5;
 
@@ -280,16 +284,18 @@ export async function endMatch(courtId, score1, score2, autoMix) {
       where: { queueOrder: { not: null } },
       select: { id: true, gamesPlayed: true, waitRounds: true },
     });
-    // Tiered fairness: anyone past the starvation threshold is protected and
-    // ordered by how long they've waited; everyone else mixes by games+random.
+    // Band the rack (emergency / protected / fresh), then mix within each band.
     const maxGames = Math.max(...queued.map((p) => p.gamesPlayed));
     const scored = queued
-      .map((p) => ({
-        id: p.id,
-        tier: p.waitRounds >= STARVE_THRESHOLD ? p.waitRounds : 0,
-        mix: GAMES_WEIGHT * (maxGames - p.gamesPlayed) + RANDOM_WEIGHT * Math.random(),
-      }))
-      .sort((a, b) => b.tier - a.tier || b.mix - a.mix);
+      .map((p) => {
+        const mix = GAMES_WEIGHT * (maxGames - p.gamesPlayed) + RANDOM_WEIGHT * Math.random();
+        let base;
+        if (p.waitRounds >= EMERGENCY_WAIT) base = 1e6 + p.waitRounds * 1e3; // strict longest-first
+        else if (p.waitRounds >= STARVE_THRESHOLD) base = 1e3; // protected, random order within
+        else base = 0; // fresh, mix freely
+        return { id: p.id, score: base + mix };
+      })
+      .sort((a, b) => b.score - a.score);
     await prisma.$transaction(
       scored.map((p, i) =>
         prisma.player.update({ where: { id: p.id }, data: { queueOrder: i + 1 } }),
