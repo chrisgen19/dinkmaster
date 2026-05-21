@@ -55,6 +55,15 @@ async function maxQueueOrder(tx = prisma) {
   return top._max.queueOrder ?? 0;
 }
 
+// App-wide key for a transaction-scoped Postgres advisory lock. Every
+// transaction that assigns queueOrder positions takes this lock first, so
+// concurrent finishes/adds/shuffles are serialized and can never read the
+// same maxQueueOrder and write duplicate positions. Released on commit/rollback.
+const QUEUE_LOCK_KEY = 920425;
+function lockQueue(tx) {
+  return tx.$executeRaw`SELECT pg_advisory_xact_lock(${QUEUE_LOCK_KEY})`;
+}
+
 /** Unbiased Fisher-Yates shuffle (returns a new array). */
 function shuffle(items) {
   const arr = [...items];
@@ -75,6 +84,7 @@ export async function addPlayers(namesString) {
   if (names.length === 0) return { state: await getState() };
 
   await prisma.$transaction(async (tx) => {
+    await lockQueue(tx);
     let order = await maxQueueOrder(tx);
     for (const name of names) {
       await tx.player.create({ data: { name, queueOrder: ++order } });
@@ -116,11 +126,12 @@ export async function shuffleQueue() {
   if (queued.length < 2) return { state: await getState() };
 
   const shuffled = shuffle(queued);
-  await prisma.$transaction(
-    shuffled.map((p, i) =>
-      prisma.player.update({ where: { id: p.id }, data: { queueOrder: i + 1 } }),
-    ),
-  );
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx);
+    for (let i = 0; i < shuffled.length; i++) {
+      await tx.player.update({ where: { id: shuffled[i].id }, data: { queueOrder: i + 1 } });
+    }
+  });
 
   return {
     notification: '🔀 Manual Queue Shuffle: All waiting players mixed successfully!',
@@ -132,6 +143,7 @@ export async function shuffleQueue() {
 export async function fillCourt(courtId) {
   try {
     await prisma.$transaction(async (tx) => {
+      await lockQueue(tx);
       // Atomically claim the court only if it is still vacant (row-locks it).
       const claimed = await tx.court.updateMany({
         where: { id: courtId, status: 'vacant' },
@@ -217,6 +229,7 @@ export async function endMatch(courtId, score1, score2, autoMix) {
 
   try {
     await prisma.$transaction(async (tx) => {
+      await lockQueue(tx);
       // Atomically claim the finish: only one caller can flip playing -> vacant,
       // so concurrent endMatch calls for the same court can't double-record.
       const claimed = await tx.court.updateMany({
@@ -308,11 +321,12 @@ export async function endMatch(courtId, score1, score2, autoMix) {
         if (a.band === 2 && a.waitRounds !== b.waitRounds) return b.waitRounds - a.waitRounds; // strict longest-first
         return b.mix - a.mix; // within band: games nudge + randomness
       });
-    await prisma.$transaction(
-      scored.map((p, i) =>
-        prisma.player.update({ where: { id: p.id }, data: { queueOrder: i + 1 } }),
-      ),
-    );
+    await prisma.$transaction(async (tx) => {
+      await lockQueue(tx);
+      for (let i = 0; i < scored.length; i++) {
+        await tx.player.update({ where: { id: scored[i].id }, data: { queueOrder: i + 1 } });
+      }
+    });
     notification = '⚡ Silo-Buster: Mixed the rack (longest-waiting up next) to keep matchups fresh and fair!';
   } else if (otherPlaying > 0) {
     notification = '💡 Recommended: Wait for other courts to finish before stacking again, to allow a complete mix of player pools!';
@@ -344,6 +358,7 @@ export async function removeCourt(courtId) {
 /** Wipe the arena and restore the default roster, courts, and partnerships. */
 export async function resetArena() {
   await prisma.$transaction(async (tx) => {
+    await lockQueue(tx);
     await tx.matchPlayer.deleteMany();
     await tx.match.deleteMany();
     await tx.courtSlot.deleteMany();
