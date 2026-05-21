@@ -44,7 +44,7 @@ Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM
    ```bash
    DATABASE_URL="postgres://USER:PASSWORD@localhost:5432/dinkmaster"
    BETTER_AUTH_SECRET="<run: openssl rand -base64 32>"
-   BETTER_AUTH_URL="http://localhost:3000"
+   BETTER_AUTH_URL="http://localhost:3020"
    ```
 
 3. Apply migrations:
@@ -59,7 +59,7 @@ Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM
    pnpm dev
    ```
 
-   Open [http://localhost:3000](http://localhost:3000).
+   Open [http://localhost:3020](http://localhost:3020) (the app runs on port 3020).
 
 ## Scripts
 
