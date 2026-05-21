@@ -88,6 +88,7 @@ model Player {
   queueOrder  Int? // null = not in queue; ascending = rack order
   waitRounds  Int      @default(0) // consecutive rounds spent waiting (fairness)
   gamesOffset Int      @default(0) // games credited at join (group avg) so latecomers slot in as peers, not catch-up
+  rating      Int      @default(1000) // Elo skill rating (Phase 6); displayed DUPR-style. Per-arena.
   leftAt      DateTime? // null = active; set = the member left/was removed (row kept for history)
 
 

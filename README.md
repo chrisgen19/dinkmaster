@@ -10,6 +10,7 @@ Smart pickleball **paddle-stacking & partnership-mixing arena**. Register player
 - **Auto-mix the rack** — after each finish the rack reshuffles so the same four don't lock together, balanced by a fairness algorithm (below).
 - **Waiting badge** — a `⏳ N` badge appears on players who've waited ≥ 2 rounds (amber), turning red at ≥ 4, so you can see who's overdue.
 - **Match log & stats** — full history of finished matches (with snapshotted names that survive player deletion) plus per-player games/wins/losses.
+- **Skill rating** — every player carries an Elo-based **skill rating**, shown DUPR-style on a 2.0–8.0 scale, that moves after each finished match. Surfaced in the per-arena **My Stats** tab and the global **/profile** page.
 
 ## How the rotation algorithm works
 
@@ -86,7 +87,7 @@ Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM
 Defined in [`prisma/schema.prisma`](prisma/schema.prisma):
 
 - **Arena** — an isolated session owned by a `User`. Players, courts, matches, and partnerships are all scoped by `arenaId`.
-- **Player** — a rack entry: `firstName`/`lastName`, `gamesPlayed`, `wins`, `losses`, `queueOrder` (null when not in the rack), `waitRounds`, `gamesOffset` (games credited at join so late joiners rotate as peers, not catch-up). `userId` links the player to a registered account; it is null for temporary walk-in players. `leftAt` marks a departed member: the row (stats + history) is kept but excluded from the active rack, and a rejoin reactivates it.
+- **Player** — a rack entry: `firstName`/`lastName`, `gamesPlayed`, `wins`, `losses`, `queueOrder` (null when not in the rack), `waitRounds`, `gamesOffset` (games credited at join so late joiners rotate as peers, not catch-up), `rating` (Elo skill rating, see [Skill rating](#skill-rating)). `userId` links the player to a registered account; it is null for temporary walk-in players. `leftAt` marks a departed member: the row (stats + history) is kept but excluded from the active rack, and a rejoin reactivates it.
 - **Court** + **CourtSlot** — a court's live status and the four players assigned to it (a player can be on at most one court — DB-enforced).
 - **Match** + **MatchPlayer** — finished-match history with snapshotted player names.
 - **Partnership** — canonical pair counts powering the matchup optimiser.
@@ -135,16 +136,20 @@ DINKMASTER is being built toward a **multi-tenant, multi-arena** system in phase
 | **3 — Membership & roles** | `ArenaMembership` with **Owner / Organizer / Member** roles; public join/leave; promote/demote/remove members; transfer ownership. | ✅ Done |
 | **4 — Player ↔ User linking** | `Player.userId` links rack entries to accounts; creating or joining an arena auto-adds you as a queued player; owners can link walk-ins to members; per-arena **My Stats** tab and a global **/profile** page. Temporary players kept for walk-ins. | ✅ Done |
 | **5 — Join approval & history retention** | Arenas are public to browse but join-gated: anyone **requests** to join and an owner/organizer accepts or rejects via the Members tab. Leaving/removal **deactivates** the `Player` (`leftAt`) instead of deleting it, so stats & match history survive and a rejoin reclaims them; `/profile` still lists left arenas. | ✅ Done |
-| **6 — Skill rating** | A computed Elo/DUPR-style rating that moves per match, surfaced in the stats views. | ⏳ Planned |
-
-### Planned phases — detail
-
-**Phase 6 — Skill rating**
-
-- A computed **skill rating** per player (Elo/DUPR-style), updated at the end of each match from the result and the opponents' ratings.
-- Surfaced in the per-arena **My Stats** tab and the global **/profile** page, both of which already render a "Rating" placeholder slot reserved for this phase.
+| **6 — Skill rating** | Elo-based per-player rating updated at the end of each match; DUPR-style 2.0–8.0 display; surfaced in **My Stats** and **/profile**. | ✅ Done |
 
 Phase tracking and detailed scope live in the GitHub issues.
+
+## Skill rating
+
+Every player carries a **skill rating** that moves after each finished match.
+
+- **Internally** it is classic integer **Elo** (`baseline 1000`, `scale 400`, `K 32`) — robust, well-understood constants. A match's two teams are each rated by their players' average; the winning team gains and the losing team loses an equal, zero-sum delta (a tie applies the expected-score difference). Both teammates share their team's delta.
+- **For display** the Elo value is linearly mapped to a **DUPR-style decimal** — `1000 Elo = 3.500`, every `100 Elo = 0.500` — and clamped to `2.000–8.000`. The math and the mapping live in [`src/lib/rating.js`](src/lib/rating.js), imported by both the server action that finishes a match and the stats UIs so they never drift.
+- Ratings are **per-arena** (stored on `Player`), fair within one group. The global **/profile** "Rating" tile is a **match-weighted** average of the user's active arenas (weight = games played there), so an unconverged baseline row in a new or secondary arena can't deflate a strong player's headline rating.
+- New players start at the baseline; there is **no backfill**, so only matches finished after Phase 6 shipped move ratings. `resetArena` returns every player to the baseline along with their other stats.
+
+> **Known limitation (V1):** teammates share one Elo delta and `fillCourt` builds teams to minimise repeated partnerships, not to balance skill — so a player carried by a stronger partner can gain unearned rating. Fixing this needs a per-player performance signal beyond the final score; it is left to a future phase.
 
 ## Project structure
 
@@ -169,6 +174,7 @@ src/
     user-profile.js  normalizeUserProfile() — server-side signup validation
     roles.js       Role constants (OWNER/ORGANIZER/MEMBER) + helpers
     matchmaking.js Shared thresholds/weights
+    rating.js      Elo skill-rating math + DUPR-style display mapping
     auth.js        Better Auth server instance
     auth-client.js Better Auth browser client
     session.js     getCurrentUser() / requireUser() / requireArenaOwner() / requireArenaManager()

@@ -5,6 +5,7 @@ import { getState } from '@/lib/data';
 import { requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
 import { ROLES } from '@/lib/roles';
 import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
+import { computeMatchRatings, RATING_BASELINE } from '@/lib/rating';
 
 /** Canonical (sorted) pair so each partnership has exactly one row. */
 function canonicalPair(x, y) {
@@ -538,6 +539,21 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
         await tx.player.updateMany({ where: { id: { in: losers } }, data: { losses: { increment: 1 } } });
       }
 
+      // Update Elo skill ratings (Phase 6). A filled court is always two
+      // players per team; guard anyway so a malformed court can't crash a finish.
+      if (team1.length === 2 && team2.length === 2) {
+        const outcome = team1Won ? 1 : team2Won ? 2 : 0;
+        const next = computeMatchRatings({
+          team1: [team1[0].player.rating, team1[1].player.rating],
+          team2: [team2[0].player.rating, team2[1].player.rating],
+          outcome,
+        });
+        await tx.player.update({ where: { id: team1[0].playerId }, data: { rating: next.team1[0] } });
+        await tx.player.update({ where: { id: team1[1].playerId }, data: { rating: next.team1[1] } });
+        await tx.player.update({ where: { id: team2[0].playerId }, data: { rating: next.team2[0] } });
+        await tx.player.update({ where: { id: team2[1].playerId }, data: { rating: next.team2[1] } });
+      }
+
       await tx.courtSlot.deleteMany({ where: { courtId } });
 
       for (let i = 0; i < recycled.length; i++) {
@@ -688,7 +704,15 @@ export async function resetArena(arenaId) {
     for (let i = 0; i < players.length; i++) {
       await tx.player.update({
         where: { id: players[i].id },
-        data: { gamesPlayed: 0, wins: 0, losses: 0, waitRounds: 0, gamesOffset: 0, queueOrder: i + 1 },
+        data: {
+          gamesPlayed: 0,
+          wins: 0,
+          losses: 0,
+          waitRounds: 0,
+          gamesOffset: 0,
+          rating: RATING_BASELINE,
+          queueOrder: i + 1,
+        },
       });
     }
   });
