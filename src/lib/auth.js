@@ -1,7 +1,9 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { nextCookies } from 'better-auth/next-js';
+import { APIError } from 'better-auth/api';
 import { prisma } from '@/lib/prisma';
+import { normalizeUserProfile } from '@/lib/user-profile';
 
 /**
  * Better Auth server instance. Email + password auth backed by the existing
@@ -14,5 +16,35 @@ import { prisma } from '@/lib/prisma';
 export const auth = betterAuth({
   database: prismaAdapter(prisma, { provider: 'postgresql' }),
   emailAndPassword: { enabled: true },
+  // Profile columns collected at registration alongside Better Auth's core
+  // `name`/`email`. All required; the register form enforces this client-side
+  // and Better Auth rejects sign-ups missing any of them.
+  user: {
+    additionalFields: {
+      firstName: { type: 'string', required: true },
+      lastName: { type: 'string', required: true },
+      phone: { type: 'string', required: true },
+      address: { type: 'string', required: true },
+      birthday: { type: 'date', required: true },
+      gender: { type: 'string', required: true },
+    },
+  },
+  // Server-side guard at the auth boundary: trim and validate the required
+  // profile fields before any user row is written, so a direct API call that
+  // bypasses the register form cannot persist whitespace-only or malformed
+  // values. Better Auth's `required` only checks presence, not content.
+  databaseHooks: {
+    user: {
+      create: {
+        before(user) {
+          const result = normalizeUserProfile(user);
+          if (result.error) {
+            throw new APIError('BAD_REQUEST', { message: result.error });
+          }
+          return { data: result.data };
+        },
+      },
+    },
+  },
   plugins: [nextCookies()],
 });

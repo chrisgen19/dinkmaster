@@ -33,7 +33,7 @@ const ARENA = 'arena_test';
 
 // Every owner-gated mutation, with representative arguments.
 const OWNER_MUTATIONS = [
-  ['addPlayers', () => actions.addPlayers(ARENA, 'Alice, Bob')],
+  ['addPlayer', () => actions.addPlayer(ARENA, 'Alice', 'Bob')],
   ['removePlayer', () => actions.removePlayer(ARENA, 'p1')],
   ['shuffleQueue', () => actions.shuffleQueue(ARENA)],
   ['fillCourt', () => actions.fillCourt(ARENA, 'c1')],
@@ -82,14 +82,14 @@ describe('arena server actions — auth & ownership gating', () => {
       requireUser.mockResolvedValue({ user: { id: 'u1', name: 'Owner' } });
     });
 
-    it('addPlayers() with no names skips the gate and the transaction', async () => {
-      const result = await actions.addPlayers(ARENA, '   ,  ');
+    it('addPlayer() with a blank first name skips the gate and the transaction', async () => {
+      const result = await actions.addPlayer(ARENA, '   ', '  ');
       expect(result.error).toBeUndefined();
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it('addPlayers() with names proceeds past the gate to the transaction', async () => {
-      await actions.addPlayers(ARENA, 'Alice');
+    it('addPlayer() with a first name proceeds past the gate to the transaction', async () => {
+      await actions.addPlayer(ARENA, 'Alice', '');
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
 
