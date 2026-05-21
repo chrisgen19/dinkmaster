@@ -584,7 +584,18 @@ export async function transferOwnership(arenaId, newOwnerUserId) {
       });
       if (!target) throw new Error('NOT_A_MEMBER');
 
-      await tx.arena.update({ where: { id: arenaId }, data: { ownerId: newOwnerUserId } });
+      // Atomically claim the transfer: flip ownerId only if the caller is
+      // still the canonical owner. `requireArenaOwner` ran before this
+      // transaction, so a concurrent transfer (double-submit / two tabs)
+      // could already have moved ownership — its updateMany then matches
+      // zero rows and the whole transaction rolls back, keeping
+      // `Arena.ownerId` and the OWNER membership row in sync.
+      const claimed = await tx.arena.updateMany({
+        where: { id: arenaId, ownerId: prevOwnerId },
+        data: { ownerId: newOwnerUserId },
+      });
+      if (claimed.count !== 1) throw new Error('OWNERSHIP_CHANGED');
+
       await tx.arenaMembership.update({
         where: { arenaId_userId: { arenaId, userId: newOwnerUserId } },
         data: { role: ROLES.OWNER },
@@ -597,6 +608,9 @@ export async function transferOwnership(arenaId, newOwnerUserId) {
   } catch (err) {
     if (err?.message === 'NOT_A_MEMBER') {
       return { error: 'The new owner must join the arena as a member first.' };
+    }
+    if (err?.message === 'OWNERSHIP_CHANGED') {
+      return { error: 'Ownership changed while processing. Please try again.' };
     }
     throw err;
   }
