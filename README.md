@@ -51,8 +51,19 @@ Smart pickleball paddle-stacking & partnership-mixing arena. Players, the paddle
 ## Deployment
 
 - Set `DATABASE_URL` in the host environment.
-- `pnpm build` runs `prisma generate`; run `pnpm prisma migrate deploy` against the production database as part of the release step.
-- On Vercel, the generated client lives in `src/generated/prisma` (gitignored) and is recreated at build time.
+- **On Vercel:** migrations run automatically. Vercel uses the `vercel-build`
+  script (`prisma generate && prisma migrate deploy && next build`) when present,
+  so each deploy applies pending migrations against the deploy's `DATABASE_URL`.
+- **Elsewhere / manually:** run `pnpm db:deploy` (`prisma migrate deploy`) as a
+  release step, then `pnpm build`.
+- The plain `pnpm build` deliberately omits `migrate deploy` so local and CI
+  builds don't require a database.
+- The generated client lives in `src/generated/prisma` (gitignored) and is
+  recreated at build time via `prisma generate`.
+
+> **Heads up:** if Vercel preview deployments share the production `DATABASE_URL`,
+> they will also run `migrate deploy`. Use a separate preview/staging database to
+> avoid previews migrating production.
 
 ## Security note
 
