@@ -1,9 +1,8 @@
 import { notFound } from 'next/navigation';
 import { getState } from '@/lib/data';
-import { getArena, getArenaMembers, getArenaJoinRequests } from '@/lib/arenas';
+import { getArena, getArenaMembers, getArenaJoinRequests, hasPendingJoinRequest } from '@/lib/arenas';
 import { getCurrentUser } from '@/lib/session';
 import { canManageArena } from '@/lib/roles';
-import { prisma } from '@/lib/prisma';
 import Arena from '../../arena';
 
 // Always read fresh arena state from the database on each request.
@@ -29,9 +28,7 @@ export default async function ArenaPage({ params }) {
   const [pendingRequests, viewerPending] = await Promise.all([
     canManage ? getArenaJoinRequests(id) : Promise.resolve([]),
     user && !viewerRole && user.id !== arena.ownerId
-      ? prisma.joinRequest
-          .findUnique({ where: { arenaId_userId: { arenaId: id, userId: user.id } } })
-          .then((r) => !!r)
+      ? hasPendingJoinRequest(id, user.id)
       : Promise.resolve(false),
   ]);
 

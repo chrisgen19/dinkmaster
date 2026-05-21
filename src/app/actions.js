@@ -21,9 +21,12 @@ async function bumpPartnership(tx, arenaId, x, y) {
   });
 }
 
-/** Highest queueOrder currently assigned in an arena, or 0 if the rack is empty. */
+/** Highest queueOrder currently assigned to an active player, or 0 if the rack is empty. */
 async function maxQueueOrder(tx, arenaId) {
-  const top = await tx.player.aggregate({ where: { arenaId }, _max: { queueOrder: true } });
+  const top = await tx.player.aggregate({
+    where: { arenaId, leftAt: null },
+    _max: { queueOrder: true },
+  });
   return top._max.queueOrder ?? 0;
 }
 
@@ -94,8 +97,10 @@ async function activateArenaPlayer(tx, arenaId, user) {
       lastName: user.lastName,
     });
   }
-  // Already an active player on the rack — nothing to do.
-  if (existing.leftAt === null && existing.queueOrder !== null) return existing;
+  // Already an active player — nothing to do. This covers both a player on the
+  // rack (queueOrder set) and one currently on a court (queueOrder null);
+  // re-queuing the latter would put the same person in the rack AND on a court.
+  if (existing.leftAt === null) return existing;
 
   const avg = await groupAverageMetric(tx, arenaId);
   const order = (await maxQueueOrder(tx, arenaId)) + 1;
@@ -138,6 +143,9 @@ async function removeArenaMember(tx, arenaId, userId) {
   await tx.arenaMembership.deleteMany({
     where: { arenaId, userId, role: { not: ROLES.OWNER } },
   });
+  // Clear any stale pending request for the same user (cheap insurance against
+  // odd orderings — a leaver should not be left with a lingering request).
+  await tx.joinRequest.deleteMany({ where: { arenaId, userId } });
   return true;
 }
 

@@ -9,7 +9,9 @@ export async function listArenas() {
     orderBy: { createdAt: 'asc' },
     include: {
       owner: { select: { id: true, name: true } },
-      _count: { select: { players: true, courts: true, matches: true } },
+      // Count active players only — departed rows are kept for history but
+      // must not inflate the public directory's player count.
+      _count: { select: { players: { where: { leftAt: null } }, courts: true, matches: true } },
     },
   });
 
@@ -101,6 +103,19 @@ export async function getUserPendingRequestArenaIds(userId) {
     select: { arenaId: true },
   });
   return new Set(requests.map((r) => r.arenaId));
+}
+
+/**
+ * Whether a user has a pending join request in a specific arena.
+ * @param {string} arenaId
+ * @param {string} userId
+ * @returns {Promise<boolean>}
+ */
+export async function hasPendingJoinRequest(arenaId, userId) {
+  const request = await prisma.joinRequest.findUnique({
+    where: { arenaId_userId: { arenaId, userId } },
+  });
+  return !!request;
 }
 
 /**

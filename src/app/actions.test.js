@@ -302,6 +302,32 @@ describe('arena server actions — authorization', () => {
       expect(prisma.joinRequest.deleteMany).toHaveBeenCalledWith({ where: { arenaId: ARENA, userId: 'u2' } });
     });
 
+    it('approveJoinRequest() does not re-queue a member already active on court', async () => {
+      const tx = {
+        $executeRaw: vi.fn(),
+        joinRequest: {
+          findUnique: vi.fn().mockResolvedValue({ id: 'req1', arenaId: ARENA, userId: 'u2' }),
+          deleteMany: vi.fn(),
+        },
+        user: { findUnique: vi.fn().mockResolvedValue({ id: 'u2', firstName: 'Bo', lastName: 'B' }) },
+        arenaMembership: { upsert: vi.fn() },
+        player: {
+          // active player, but off the rack (on a court): leftAt null, queueOrder null
+          findUnique: vi.fn().mockResolvedValue({ id: 'p-court', gamesPlayed: 1, leftAt: null, queueOrder: null }),
+          findMany: vi.fn().mockResolvedValue([]),
+          aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 2 } }),
+          update: vi.fn(),
+          create: vi.fn(),
+        },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.approveJoinRequest(ARENA, 'u2');
+      // Must not re-queue them — that would put the same person in the rack and on a court.
+      expect(tx.player.update).not.toHaveBeenCalled();
+      expect(tx.player.create).not.toHaveBeenCalled();
+    });
+
     it('removeMember() deactivates the member’s player (keeps the row for history)', async () => {
       const tx = {
         $executeRaw: vi.fn(),
@@ -312,6 +338,7 @@ describe('arena server actions — authorization', () => {
         },
         courtSlot: { findFirst: vi.fn().mockResolvedValue(null) },
         arenaMembership: { deleteMany: vi.fn() },
+        joinRequest: { deleteMany: vi.fn() },
       };
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
