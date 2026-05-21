@@ -12,6 +12,7 @@ import {
   resetArena,
 } from './actions';
 import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
+import { AuthStatus } from './auth-status';
 
 const playPaddleSound = () => {
   try {
@@ -209,6 +210,8 @@ export default function Arena({ initialState }) {
           >
             Reset Arena
           </button>
+
+          <AuthStatus />
         </div>
       </header>
 
