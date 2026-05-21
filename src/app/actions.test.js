@@ -274,6 +274,28 @@ describe('arena server actions — authorization', () => {
       expect(tx.arenaMembership.upsert).not.toHaveBeenCalled();
     });
 
+    it('resetArena() only re-queues active players (skips departed rows)', async () => {
+      const tx = {
+        $executeRaw: vi.fn(),
+        match: { deleteMany: vi.fn() },
+        courtSlot: { deleteMany: vi.fn() },
+        partnership: { deleteMany: vi.fn() },
+        court: { updateMany: vi.fn() },
+        player: {
+          findMany: vi.fn().mockResolvedValue([{ id: 'p1' }]),
+          update: vi.fn(),
+        },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.resetArena(ARENA);
+      // The reset must scope its player scan to active rows so a departed
+      // player can't be silently re-queued (invisible to getState).
+      expect(tx.player.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { arenaId: ARENA, leftAt: null } }),
+      );
+    });
+
     it('rejectJoinRequest() deletes the request', async () => {
       const result = await actions.rejectJoinRequest(ARENA, 'u2');
       expect(result.ok).toBe(true);

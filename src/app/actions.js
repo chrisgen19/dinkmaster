@@ -368,7 +368,7 @@ export async function shuffleQueue(arenaId) {
     // Read the queued set under the lock so we never write a position onto a
     // player a concurrent fillCourt just moved onto a court.
     const queued = await tx.player.findMany({
-      where: { arenaId, queueOrder: { not: null } },
+      where: { arenaId, leftAt: null, queueOrder: { not: null } },
       select: { id: true },
     });
     if (queued.length < 2) return;
@@ -405,7 +405,7 @@ export async function fillCourt(arenaId, courtId) {
 
       // Select the current top 4 inside the tx so we never act on a stale snapshot.
       const queued = await tx.player.findMany({
-        where: { arenaId, queueOrder: { not: null } },
+        where: { arenaId, leftAt: null, queueOrder: { not: null } },
         orderBy: { queueOrder: 'asc' },
         take: 4,
         select: { id: true },
@@ -423,7 +423,7 @@ export async function fillCourt(arenaId, courtId) {
 
       // Everyone still waiting in this arena was skipped this round.
       await tx.player.updateMany({
-        where: { arenaId, queueOrder: { not: null } },
+        where: { arenaId, leftAt: null, queueOrder: { not: null } },
         data: { waitRounds: { increment: 1 } },
       });
 
@@ -551,7 +551,7 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
   });
   const otherPlaying = otherCourts.filter((c) => c.status === 'playing').length;
   const queuedCount = await prisma.player.count({
-    where: { arenaId, queueOrder: { not: null } },
+    where: { arenaId, leftAt: null, queueOrder: { not: null } },
   });
 
   let notification = '';
@@ -564,7 +564,7 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
       // Read the queued set under the lock so a concurrent fillCourt can't make
       // us reassign a position to a player who is now on a court.
       const queued = await tx.player.findMany({
-        where: { arenaId, queueOrder: { not: null } },
+        where: { arenaId, leftAt: null, queueOrder: { not: null } },
         select: { id: true, gamesPlayed: true, gamesOffset: true, waitRounds: true },
       });
       if (queued.length === 0) return;
@@ -669,9 +669,11 @@ export async function resetArena(arenaId) {
     await tx.partnership.deleteMany({ where: { arenaId } });
     await tx.court.updateMany({ where: { arenaId }, data: { status: 'vacant' } });
 
-    // Send every player back to the rack with cleared stats.
+    // Send every active player back to the rack with cleared stats. Departed
+    // players (leftAt set) are skipped so a reset can't silently re-queue an
+    // invisible former member.
     const players = await tx.player.findMany({
-      where: { arenaId },
+      where: { arenaId, leftAt: null },
       orderBy: { createdAt: 'asc' },
       select: { id: true },
     });
