@@ -320,7 +320,7 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
 
                 <button
                   onClick={handleShuffleQueue}
-                  disabled={queue.length < 2 || isPending}
+                  disabled={queue.length < 2 || isPending || !canManage}
                   className="bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-40 text-slate-700 border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1"
                   title="Shuffle everyone currently waiting to break court locking"
                 >
@@ -393,15 +393,17 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
                         </div>
                       </div>
 
-                      <div className="flex items-center space-x-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => handleRemovePlayer(player.id)}
-                          className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:text-red-700 hover:bg-red-100 border border-red-100"
-                          title="Remove Player"
-                        >
-                          ✕
-                        </button>
-                      </div>
+                      {canManage && (
+                        <div className="flex items-center space-x-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => handleRemovePlayer(player.id)}
+                            className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:text-red-700 hover:bg-red-100 border border-red-100"
+                            title="Remove Player"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      )}
 
                       {isNextUp && (
                         <span className="absolute -top-2 right-4 text-[8px] tracking-widest uppercase font-black bg-emerald-600 text-white px-2 py-0.5 rounded-full shadow-sm">
@@ -454,13 +456,15 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
               </button>
             </div>
 
-            <button
-              onClick={handleAddCourt}
-              disabled={isPending}
-              className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-extrabold text-white px-4 py-2 rounded-lg transition-all flex items-center space-x-1 shadow-sm"
-            >
-              <span>+ Create Court</span>
-            </button>
+            {canManage && (
+              <button
+                onClick={handleAddCourt}
+                disabled={isPending}
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-extrabold text-white px-4 py-2 rounded-lg transition-all flex items-center space-x-1 shadow-sm"
+              >
+                <span>+ Create Court</span>
+              </button>
+            )}
           </div>
 
           {activeTab === 'courts' && (
@@ -486,7 +490,7 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
                         </div>
                       </div>
 
-                      {!isPlaying && (
+                      {!isPlaying && canManage && (
                         <button
                           onClick={() => handleRemoveCourt(court.id)}
                           className="text-slate-400 hover:text-red-500 text-sm transition-all p-1"
@@ -552,7 +556,7 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
                       {isPlaying ? (
                         <button
                           onClick={() => handleTriggerScoreModal(court)}
-                          disabled={isPending}
+                          disabled={isPending || !canManage}
                           className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm"
                         >
                           Finish Game & Record Score
@@ -560,14 +564,18 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
                       ) : (
                         <button
                           onClick={() => handleFillCourt(court.id)}
-                          disabled={queue.length < 4 || isPending}
+                          disabled={queue.length < 4 || isPending || !canManage}
                           className={`w-full py-3 rounded-xl font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm ${
-                            queue.length >= 4
+                            queue.length >= 4 && canManage
                               ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
                               : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200/50'
                           }`}
                         >
-                          {queue.length >= 4 ? 'Stack Next 4 Paddles' : 'Need 4 Players in Rack'}
+                          {!canManage
+                            ? 'View Only'
+                            : queue.length >= 4
+                              ? 'Stack Next 4 Paddles'
+                              : 'Need 4 Players in Rack'}
                         </button>
                       )}
                     </div>

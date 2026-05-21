@@ -14,6 +14,10 @@ import { prisma } from '@/lib/prisma';
  * }>}
  */
 export async function getState(arenaId) {
+  // Guard against an undefined arenaId: Prisma drops `where: { arenaId: undefined }`
+  // entirely, which would read every arena's data instead of one.
+  if (!arenaId) throw new Error('getState requires an arenaId');
+
   const [players, courts, matches, partnerships] = await Promise.all([
     prisma.player.findMany({ where: { arenaId }, orderBy: { createdAt: 'asc' } }),
     prisma.court.findMany({

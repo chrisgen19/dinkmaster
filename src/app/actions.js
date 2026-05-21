@@ -140,11 +140,14 @@ export async function removePlayer(arenaId, playerId) {
         blocked = true;
         return;
       }
-      // Delete the player and their partnership rows together (no FK to cascade these).
+      // Delete the player and their partnership rows together (no FK to cascade
+      // these). Both deletes are scoped to arenaId, so a playerId belonging to
+      // another arena can never be removed through this owner's session — the
+      // scoped delete simply matches zero rows.
       await tx.partnership.deleteMany({
         where: { arenaId, OR: [{ playerA: playerId }, { playerB: playerId }] },
       });
-      await tx.player.delete({ where: { id: playerId } });
+      await tx.player.deleteMany({ where: { id: playerId, arenaId } });
     });
   } catch (err) {
     if (err?.code !== 'P2025') throw err; // already deleted by a concurrent call — no-op

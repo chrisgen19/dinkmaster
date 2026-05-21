@@ -36,6 +36,22 @@ WHERE EXISTS (SELECT 1 FROM "Player")
 ORDER BY u."createdAt" ASC
 LIMIT 1;
 
+-- Guard: if legacy data exists but no default arena could be created (because
+-- there are no User rows to own it), fail now with a clear, actionable message
+-- instead of a generic foreign-key violation further down.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM "Arena" WHERE "id" = 'arena_legacy_default')
+     AND (
+       EXISTS (SELECT 1 FROM "Player")
+       OR EXISTS (SELECT 1 FROM "Court")
+       OR EXISTS (SELECT 1 FROM "Match")
+     )
+  THEN
+    RAISE EXCEPTION 'add_arenas migration: existing players/courts/matches need an owning arena, but no User account exists to own it. Register at least one account, then re-run the migration.';
+  END IF;
+END $$;
+
 UPDATE "Player" SET "arenaId" = 'arena_legacy_default' WHERE "arenaId" IS NULL;
 UPDATE "Court" SET "arenaId" = 'arena_legacy_default' WHERE "arenaId" IS NULL;
 UPDATE "Match" SET "arenaId" = 'arena_legacy_default' WHERE "arenaId" IS NULL;
