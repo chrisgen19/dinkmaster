@@ -360,10 +360,15 @@ export async function endMatch(courtId, score1, score2, autoMix) {
 
 /** Add a new vacant court at the end. */
 export async function addCourt() {
-  const count = await prisma.court.count();
-  const position = (await prisma.court.aggregate({ _max: { position: true } }))._max.position ?? 0;
-  await prisma.court.create({
-    data: { name: `Court ${count + 1}`, position: position + 1 },
+  // Serialize under the queue lock so concurrent adds can't read the same
+  // count/position and create duplicate court names/positions.
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx);
+    const count = await tx.court.count();
+    const position = (await tx.court.aggregate({ _max: { position: true } }))._max.position ?? 0;
+    await tx.court.create({
+      data: { name: `Court ${count + 1}`, position: position + 1 },
+    });
   });
   return { state: await getState() };
 }
