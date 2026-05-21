@@ -9,7 +9,7 @@
     "dev": "next dev -p 3020",
     "build": "prisma generate && next build",
     "vercel-build": "prisma generate && prisma migrate deploy && next build",
-    "start": "next start -p 3020",
+    "start": "next start -p ${PORT:-3020}",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
