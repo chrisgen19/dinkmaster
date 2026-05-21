@@ -35,9 +35,13 @@ export function AuthStatus() {
 
   return (
     <div className="flex items-center gap-2">
-      <span className="text-xs text-slate-500 hidden sm:block">
+      <Link
+        href="/profile"
+        className="text-xs text-slate-500 hover:text-emerald-600 font-semibold transition hidden sm:block"
+        title="View my profile"
+      >
         {session.user.name || session.user.email}
-      </span>
+      </Link>
       <button
         onClick={handleSignOut}
         className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3.5 py-2.5 rounded-xl border border-slate-200/60 transition-all font-semibold"
