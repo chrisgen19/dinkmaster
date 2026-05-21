@@ -338,7 +338,21 @@ export default function Arena({ initialState }) {
                         </div>
 
                         <div>
-                          <p className="text-sm font-bold text-slate-800">{player.name}</p>
+                          <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                            {player.name}
+                            {player.waitRounds >= 2 && (
+                              <span
+                                className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
+                                  player.waitRounds >= 4
+                                    ? 'bg-red-100 text-red-700'
+                                    : 'bg-amber-100 text-amber-700'
+                                }`}
+                                title={`Waiting ${player.waitRounds} rounds`}
+                              >
+                                ⏳ {player.waitRounds}
+                              </span>
+                            )}
+                          </p>
                           <p className="text-[10px] text-slate-400 font-medium">
                             Played: {player.gamesPlayed} (W: {player.wins || 0} - L: {player.losses || 0})
                           </p>

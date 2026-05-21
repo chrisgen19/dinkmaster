@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma';
  * Mirrors the original localStorage structure so the client stays unchanged.
  *
  * @returns {Promise<{
- *   players: Array<{id:string,name:string,gamesPlayed:number,wins:number,losses:number}>,
+ *   players: Array<{id:string,name:string,gamesPlayed:number,wins:number,losses:number,waitRounds:number}>,
  *   queue: string[],
  *   courts: Array<{id:string,name:string,status:string,team1:string[],team2:string[]}>,
  *   matchHistory: Array<{id:string,courtName:string,team1:Array<{id:string,name:string}>,team2:Array<{id:string,name:string}>,score1:number,score2:number,timestamp:string}>,
@@ -62,6 +62,7 @@ export async function getState() {
       gamesPlayed: p.gamesPlayed,
       wins: p.wins,
       losses: p.losses,
+      waitRounds: p.waitRounds,
     })),
     queue,
     courts: courtState,
