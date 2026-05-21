@@ -88,7 +88,7 @@ export default async function ProfilePage() {
                     <th className="p-3 font-extrabold text-center">Games</th>
                     <th className="p-3 font-extrabold text-center">W</th>
                     <th className="p-3 font-extrabold text-center">L</th>
-                    <th className="p-3 font-extrabold text-center">Queue</th>
+                    <th className="p-3 font-extrabold text-center">In rack</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -103,7 +103,7 @@ export default async function ProfilePage() {
                       <td className="p-3 text-center font-bold text-emerald-700">{a.wins}</td>
                       <td className="p-3 text-center font-bold text-slate-500">{a.losses}</td>
                       <td className="p-3 text-center text-slate-500">
-                        {a.queueOrder !== null ? `#${a.queueOrder}` : '—'}
+                        {a.inQueue ? 'Yes' : '—'}
                       </td>
                     </tr>
                   ))}

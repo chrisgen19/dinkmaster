@@ -90,7 +90,7 @@ Defined in [`prisma/schema.prisma`](prisma/schema.prisma):
 - **Court** + **CourtSlot** — a court's live status and the four players assigned to it (a player can be on at most one court — DB-enforced).
 - **Match** + **MatchPlayer** — finished-match history with snapshotted player names.
 - **Partnership** — canonical pair counts powering the matchup optimiser.
-- **ArenaMembership** — a user's role in an arena (`OWNER` / `ORGANIZER` / `MEMBER`), one row per `(arena, user)` pair. A member always has a linked `Player` row, and vice versa.
+- **ArenaMembership** — a user's role in an arena (`OWNER` / `ORGANIZER` / `MEMBER`), one row per `(arena, user)` pair. A member always has a linked `Player` row; temporary walk-in `Player` rows may exist without an `ArenaMembership`.
 - **User** / **Session** / **Account** / **Verification** — Better Auth tables.
 
 ## Authentication
@@ -132,8 +132,20 @@ DINKMASTER is being built toward a **multi-tenant, multi-arena** system in phase
 | **2 — Arenas** | `Arena` model + `arenaId` scoping on Player/Court/Match/Partnership; create/own arenas; arena directory at `/` and per-arena routing at `/arena/[id]`; owner-only management. | ✅ Done |
 | **3 — Membership & roles** | `ArenaMembership` with **Owner / Organizer / Member** roles; public join/leave; promote/demote/remove members; transfer ownership. | ✅ Done |
 | **4 — Player ↔ User linking** | `Player.userId` links rack entries to accounts; creating or joining an arena auto-adds you as a queued player; owners can link walk-ins to members; per-arena **My Stats** tab and a global **/profile** page. Temporary players kept for walk-ins. | ✅ Done |
-| **5 — Join approval** | Public arenas; anyone can request to join, and the owner approves before they're in. | ⏳ Planned |
+| **5 — Join approval & history retention** | Public arenas; anyone can request to join, and the owner approves before they're in. Former members keep their match history and stats — leaving an arena no longer drops a user's `Player` record. | ⏳ Planned |
 | **6 — Skill rating** | A computed Elo/DUPR-style rating that moves per match, surfaced in the stats views. | ⏳ Planned |
+
+### Planned phases — detail
+
+**Phase 5 — Join approval & history retention**
+
+- *Join approval.* Arenas stay publicly browsable. A signed-in user can **request** to join; the request is **pending** until the arena **owner** accepts or rejects it. Only on acceptance does the user become a `MEMBER` and a queued player. (Mechanism — a `PENDING` membership state vs. a separate join-request model — to be decided at implementation.)
+- *History retention.* Leaving an arena, or being removed by the owner, must **not** discard the user's match history and stats there. Today `removeArenaMember` deletes the linked `Player` row, so a former member's matches drop off `/profile`. Phase 5 preserves attribution — e.g. snapshotting `userId` onto `MatchPlayer`, or keeping the `Player` row (un-queued) instead of deleting it — so a leaver's record survives and a rejoin can reclaim it.
+
+**Phase 6 — Skill rating**
+
+- A computed **skill rating** per player (Elo/DUPR-style), updated at the end of each match from the result and the opponents' ratings.
+- Surfaced in the per-arena **My Stats** tab and the global **/profile** page, both of which already render a "Rating" placeholder slot reserved for this phase.
 
 Phase tracking and detailed scope live in the GitHub issues.
 

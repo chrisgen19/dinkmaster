@@ -75,7 +75,7 @@ export async function getUserMemberships(userId) {
  * @param {string} userId
  * @returns {Promise<{
  *   totals:{arenas:number,gamesPlayed:number,wins:number,losses:number,winPct:number},
- *   arenas:Array<{arenaId:string,arenaName:string,gamesPlayed:number,wins:number,losses:number,queueOrder:number|null}>,
+ *   arenas:Array<{arenaId:string,arenaName:string,gamesPlayed:number,wins:number,losses:number,inQueue:boolean}>,
  *   recentMatches:Array<{matchId:string,arenaName:string,courtName:string,won:boolean,scoreFor:number,scoreAgainst:number,timestamp:string}>
  * }>}
  */
@@ -96,13 +96,17 @@ export async function getUserPlayerStats(userId) {
   );
   const decided = sum.wins + sum.losses;
 
+  // `queueOrder` is a raw, gap-prone ordering value (not a 1-based rank), and
+  // computing a true per-arena position would need every arena's full queue.
+  // The profile only needs whether the player is currently racked, so expose
+  // a boolean rather than a misleading number.
   const arenas = players.map((p) => ({
     arenaId: p.arenaId,
     arenaName: p.arena.name,
     gamesPlayed: p.gamesPlayed,
     wins: p.wins,
     losses: p.losses,
-    queueOrder: p.queueOrder,
+    inQueue: p.queueOrder !== null,
   }));
 
   // Recent matches across all the user's arenas. `MatchPlayer.playerId` is a
