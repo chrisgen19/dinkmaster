@@ -258,12 +258,13 @@ export async function linkPlayerToMember(arenaId, playerId, userId) {
       return;
     }
 
-    // Merge away the member's own auto-created player so the temp player
+    // Merge the member's own auto-created player into the temp player so it
     // becomes their single linked player (the @@unique([arenaId,userId])
-    // constraint also forbids two linked players for one user).
+    // constraint also forbids two linked players for one user). The temp
+    // player keeps its id, queue position, and court slot.
     const ownPlayer = await tx.player.findUnique({
       where: { arenaId_userId: { arenaId, userId } },
-      select: { id: true },
+      select: { id: true, gamesPlayed: true, wins: true, losses: true },
     });
     if (ownPlayer) {
       const onCourt = await tx.courtSlot.findFirst({
@@ -273,13 +274,29 @@ export async function linkPlayerToMember(arenaId, playerId, userId) {
         reason = 'MEMBER_PLAYING';
         return;
       }
+      // Fold the existing player's win/loss/game counters into the survivor
+      // and re-point its finished-match snapshots, so nothing the member has
+      // already played is lost when the records are merged.
+      await tx.player.update({
+        where: { id: temp.id },
+        data: {
+          userId,
+          gamesPlayed: { increment: ownPlayer.gamesPlayed },
+          wins: { increment: ownPlayer.wins },
+          losses: { increment: ownPlayer.losses },
+        },
+      });
+      await tx.matchPlayer.updateMany({
+        where: { playerId: ownPlayer.id },
+        data: { playerId: temp.id },
+      });
       await tx.partnership.deleteMany({
         where: { arenaId, OR: [{ playerA: ownPlayer.id }, { playerB: ownPlayer.id }] },
       });
       await tx.player.deleteMany({ where: { id: ownPlayer.id, arenaId } });
+    } else {
+      await tx.player.update({ where: { id: temp.id }, data: { userId } });
     }
-
-    await tx.player.update({ where: { id: temp.id }, data: { userId } });
   });
 
   const messages = {
