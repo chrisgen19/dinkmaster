@@ -127,31 +127,27 @@ export async function removePlayer(arenaId, playerId) {
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
   let blocked = false;
-  try {
-    await prisma.$transaction(async (tx) => {
-      await lockQueue(tx, arenaId);
-      // Re-check under the lock: a concurrent fillCourt can't slip this player
-      // onto a court between the check and the delete (which would cascade the
-      // new slot and leave the court with three players).
-      const slot = await tx.courtSlot.findFirst({
-        where: { playerId, player: { arenaId }, court: { status: 'playing' } },
-      });
-      if (slot) {
-        blocked = true;
-        return;
-      }
-      // Delete the player and their partnership rows together (no FK to cascade
-      // these). Both deletes are scoped to arenaId, so a playerId belonging to
-      // another arena can never be removed through this owner's session — the
-      // scoped delete simply matches zero rows.
-      await tx.partnership.deleteMany({
-        where: { arenaId, OR: [{ playerA: playerId }, { playerB: playerId }] },
-      });
-      await tx.player.deleteMany({ where: { id: playerId, arenaId } });
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+    // Re-check under the lock: a concurrent fillCourt can't slip this player
+    // onto a court between the check and the delete (which would cascade the
+    // new slot and leave the court with three players).
+    const slot = await tx.courtSlot.findFirst({
+      where: { playerId, player: { arenaId }, court: { status: 'playing' } },
     });
-  } catch (err) {
-    if (err?.code !== 'P2025') throw err; // already deleted by a concurrent call — no-op
-  }
+    if (slot) {
+      blocked = true;
+      return;
+    }
+    // Delete the player and their partnership rows together (no FK to cascade
+    // these). Both are scoped deleteMany calls: a playerId from another arena —
+    // or one already removed by a concurrent call — simply matches zero rows,
+    // so there is no P2025 to catch.
+    await tx.partnership.deleteMany({
+      where: { arenaId, OR: [{ playerA: playerId }, { playerB: playerId }] },
+    });
+    await tx.player.deleteMany({ where: { id: playerId, arenaId } });
+  });
 
   if (blocked) {
     return {
@@ -439,9 +435,11 @@ export async function removeCourt(arenaId, courtId) {
       where: { id: courtId, arenaId, status: 'vacant' },
     });
     if (deleted.count === 0) {
-      // Nothing deleted: either it's now playing, or already gone.
-      const stillThere = await tx.court.findUnique({
-        where: { id: courtId },
+      // Nothing deleted: either it's now playing, or already gone. Scope the
+      // lookup to this arena so a courtId from another arena reports as gone
+      // (not as a misleading "active game").
+      const stillThere = await tx.court.findFirst({
+        where: { id: courtId, arenaId },
         select: { id: true },
       });
       if (stillThere) blocked = true; // exists but not vacant -> active game

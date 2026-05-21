@@ -98,5 +98,34 @@ describe('arena server actions — auth & ownership gating', () => {
       expect(result.error).toBeTruthy();
       expect(prisma.arena.create).not.toHaveBeenCalled();
     });
+
+    it('removePlayer() scopes both deletes to the arena (no cross-arena delete)', async () => {
+      // Drive the real transaction callback with a fake tx so the destructive
+      // queries can be inspected — this guards the cross-arena delete fix:
+      // even an owner must not be able to delete another arena's player by id.
+      const tx = {
+        $executeRaw: vi.fn(),
+        courtSlot: { findFirst: vi.fn().mockResolvedValue(null) },
+        partnership: { deleteMany: vi.fn() },
+        player: { deleteMany: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.removePlayer(ARENA, 'player-from-another-arena');
+
+      // The final delete must carry arenaId, not just the global id.
+      expect(tx.player.deleteMany).toHaveBeenCalledWith({
+        where: { id: 'player-from-another-arena', arenaId: ARENA },
+      });
+      expect(tx.partnership.deleteMany).toHaveBeenCalledWith({
+        where: {
+          arenaId: ARENA,
+          OR: [
+            { playerA: 'player-from-another-arena' },
+            { playerB: 'player-from-another-arena' },
+          ],
+        },
+      });
+    });
   });
 });
