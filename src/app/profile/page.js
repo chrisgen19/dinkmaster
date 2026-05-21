@@ -113,7 +113,7 @@ export default async function ProfilePage() {
                       <td className="p-3 text-center font-bold text-emerald-700">{a.wins}</td>
                       <td className="p-3 text-center font-bold text-slate-500">{a.losses}</td>
                       <td className="p-3 text-center font-bold text-slate-700">
-                        {eloToDupr(a.rating).toFixed(3)}
+                        {a.gamesPlayed > 0 ? eloToDupr(a.rating).toFixed(3) : '—'}
                       </td>
                       <td className="p-3 text-center text-slate-500">
                         {a.inQueue ? 'Yes' : '—'}

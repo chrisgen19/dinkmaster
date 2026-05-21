@@ -935,8 +935,14 @@ export default function Arena({
                     Rating
                   </span>
                   <span className="block text-sm font-bold text-slate-800 mt-0.5">
-                    {eloToDupr(myPlayer.rating).toFixed(3)}
-                    <span className="text-slate-400 font-normal"> DUPR</span>
+                    {myPlayer.gamesPlayed > 0 ? (
+                      <>
+                        {eloToDupr(myPlayer.rating).toFixed(3)}
+                        <span className="text-slate-400 font-normal"> DUPR</span>
+                      </>
+                    ) : (
+                      '—'
+                    )}
                   </span>
                 </div>
               </div>

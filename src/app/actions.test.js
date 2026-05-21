@@ -306,6 +306,48 @@ describe('arena server actions — authorization', () => {
       );
     });
 
+    it('endMatch() applies Elo rating updates — winners rise, losers fall', async () => {
+      const slot = (playerId, team) => ({
+        playerId,
+        team,
+        player: { id: playerId, firstName: playerId, lastName: null, rating: 1000 },
+      });
+      const tx = {
+        $executeRaw: vi.fn(),
+        court: {
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }), // claim the finish
+          findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
+        },
+        courtSlot: {
+          findMany: vi
+            .fn()
+            .mockResolvedValue([slot('w1', 1), slot('w2', 1), slot('l1', 2), slot('l2', 2)]),
+          deleteMany: vi.fn(),
+        },
+        player: {
+          aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 0 } }),
+          updateMany: vi.fn(),
+          update: vi.fn(),
+        },
+        match: { create: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+      prisma.court.findMany.mockResolvedValue([]); // no other courts -> no auto-mix
+      prisma.player.count.mockResolvedValue(0);
+
+      await actions.endMatch(ARENA, 'c1', 11, 5, false);
+
+      // tx.player.update is called both for ratings and for re-queueing; pick
+      // the rating write for each player. Team 1 won 11-5 from an even start.
+      const ratingFor = (id) =>
+        tx.player.update.mock.calls.find((c) => c[0].where.id === id && 'rating' in c[0].data)[0]
+          .data.rating;
+      expect(ratingFor('w1')).toBeGreaterThan(1000);
+      expect(ratingFor('w2')).toBeGreaterThan(1000);
+      expect(ratingFor('l1')).toBeLessThan(1000);
+      expect(ratingFor('l2')).toBeLessThan(1000);
+    });
+
     it('rejectJoinRequest() deletes the request', async () => {
       const result = await actions.rejectJoinRequest(ARENA, 'u2');
       expect(result.ok).toBe(true);
