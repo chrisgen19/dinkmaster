@@ -85,7 +85,25 @@ Defined in [`prisma/schema.prisma`](prisma/schema.prisma):
 
 ## Authentication
 
-Email + password auth via [Better Auth](https://www.better-auth.com). Sign up at `/register`, sign in at `/login`. The arena view is public; every mutating server action is gated behind a session. Multi-arena ownership, joining, and linking players to accounts are planned follow-ups.
+Email + password auth via [Better Auth](https://www.better-auth.com), backed by the same PostgreSQL database through the Prisma adapter.
+
+- **Sign up** at `/register`, **sign in** at `/login`; the header shows the current user with a sign-out control.
+- **Viewing the arena is public.** Every mutating Server Action (`addPlayers`, `removePlayer`, `shuffleQueue`, `fillCourt`, `endMatch`, `addCourt`, `removeCourt`, `resetArena`) is gated behind a session via `requireUser()` — unauthenticated callers get a "please sign in" notice instead of a mutation.
+- Sessions are cookie-backed; config lives in `src/lib/auth.js`, the browser client in `src/lib/auth-client.js`, and the catch-all API handler at `src/app/api/auth/[...all]/route.js`.
+- Requires `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` in `.env` (see `.env.example`).
+
+## Roadmap
+
+DINKMASTER is being built toward a **multi-tenant, multi-arena** system in phases.
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| **1 — Auth foundation** | Better Auth user accounts; login/register pages; header sign-in/out; all arena mutations session-gated; arena view stays public. Destructive SQL seed removed. | ✅ Done |
+| **2 — Arenas** | `Arena` model + `arenaId` scoping on Player/Court/Match; each account owns its arena(s) (migration backfills existing data under an owner). | ⏳ Planned |
+| **3 — Membership & roles** | `ArenaMembership` with **Owner / Organizer / Member** roles; public arena browse + join; permissions per role. | ⏳ Planned |
+| **4 — Player ↔ User linking** | Link a registered Player to a User account; per-user match-history and score views so people see their own stats. | ⏳ Planned |
+
+Phase tracking and detailed scope live in the GitHub issues.
 
 ## Project structure
 
@@ -128,4 +146,4 @@ prisma/            schema, migrations
 
 ## Security note
 
-The Server Actions in `src/app/actions.js` (`resetArena`, `removePlayer`, `fillCourt`, etc.) are **unauthenticated** — they assume a trusted, single-operator local/club deployment. Add authentication/authorization before exposing this app publicly.
+As of Phase 1, every Server Action in `src/app/actions.js` (`resetArena`, `removePlayer`, `fillCourt`, etc.) is gated behind a Better Auth session via `requireUser()` — any signed-in user can manage the single shared arena. Per-arena ownership and role-based authorization arrive in Phases 2–3; until then, treat all authenticated users as trusted operators.
