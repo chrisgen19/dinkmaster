@@ -2,7 +2,14 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { updateMemberRole, removeMember, transferOwnership, leaveArena } from './actions';
+import {
+  updateMemberRole,
+  removeMember,
+  transferOwnership,
+  leaveArena,
+  approveJoinRequest,
+  rejectJoinRequest,
+} from './actions';
 import { ROLES } from '@/lib/roles';
 
 const ROLE_BADGE = {
@@ -11,8 +18,15 @@ const ROLE_BADGE = {
   MEMBER: 'bg-slate-100 text-slate-600',
 };
 
-/** Members tab: roster with roles, plus owner controls and a leave action. */
-export function ArenaMembers({ arenaId, members, viewerUserId, viewerRole }) {
+/** Members tab: roster with roles, owner controls, pending requests, and leave. */
+export function ArenaMembers({
+  arenaId,
+  members,
+  viewerUserId,
+  viewerRole,
+  canManage = false,
+  pendingRequests = [],
+}) {
   const router = useRouter();
   const [error, setError] = useState('');
   const [isPending, startTransition] = useTransition();
@@ -51,6 +65,8 @@ export function ArenaMembers({ arenaId, members, viewerUserId, viewerRole }) {
   const leave = () => {
     if (window.confirm('Leave this arena?')) act(() => leaveArena(arenaId));
   };
+  const approve = (r) => act(() => approveJoinRequest(arenaId, r.userId));
+  const reject = (r) => act(() => rejectJoinRequest(arenaId, r.userId));
 
   return (
     <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-5 animate-fade-in">
@@ -77,6 +93,37 @@ export function ArenaMembers({ arenaId, members, viewerUserId, viewerRole }) {
       {error && (
         <div role="alert" className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">
           {error}
+        </div>
+      )}
+
+      {canManage && pendingRequests.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+          <h4 className="text-xs font-extrabold uppercase tracking-widest text-amber-700 mb-3">
+            Pending requests ({pendingRequests.length})
+          </h4>
+          <ul className="space-y-2">
+            {pendingRequests.map((r) => (
+              <li key={r.requestId} className="flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold text-slate-800 truncate">{r.name}</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => approve(r)}
+                    disabled={isPending}
+                    className="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
+                  >
+                    Accept
+                  </button>
+                  <button
+                    onClick={() => reject(r)}
+                    disabled={isPending}
+                    className="text-[11px] bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-600 border border-slate-200 px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

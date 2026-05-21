@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import { getState } from '@/lib/data';
-import { getArena, getArenaMembers } from '@/lib/arenas';
+import { getArena, getArenaMembers, getArenaJoinRequests, hasPendingJoinRequest } from '@/lib/arenas';
 import { getCurrentUser } from '@/lib/session';
 import { canManageArena } from '@/lib/roles';
 import Arena from '../../arena';
@@ -21,17 +21,29 @@ export default async function ArenaPage({ params }) {
   ]);
 
   const viewerRole = user ? (members.find((m) => m.userId === user.id)?.role ?? null) : null;
+  const canManage = canManageArena(viewerRole);
+
+  // Managers see the pending-request queue; a signed-in non-member sees whether
+  // their own request is pending.
+  const [pendingRequests, viewerPending] = await Promise.all([
+    canManage ? getArenaJoinRequests(id) : Promise.resolve([]),
+    user && !viewerRole && user.id !== arena.ownerId
+      ? hasPendingJoinRequest(id, user.id)
+      : Promise.resolve(false),
+  ]);
 
   return (
     <Arena
       initialState={initialState}
       arenaId={arena.id}
       arenaName={arena.name}
-      canManage={canManageArena(viewerRole)}
+      canManage={canManage}
       viewerRole={viewerRole}
       viewerUserId={user?.id ?? null}
       isAuthenticated={!!user}
       members={members}
+      pendingRequests={pendingRequests}
+      viewerPending={viewerPending}
     />
   );
 }

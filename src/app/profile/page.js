@@ -98,6 +98,11 @@ export default async function ProfilePage() {
                         <Link href={`/arena/${a.arenaId}`} className="hover:text-emerald-700">
                           {a.arenaName}
                         </Link>
+                        {!a.active && (
+                          <span className="ml-2 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400">
+                            left
+                          </span>
+                        )}
                       </td>
                       <td className="p-3 text-center text-slate-600">{a.gamesPlayed}</td>
                       <td className="p-3 text-center font-bold text-emerald-700">{a.wins}</td>

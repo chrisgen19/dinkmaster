@@ -24,8 +24,26 @@ model Arena {
   matches      Match[]
   partnerships Partnership[]
   memberships  ArenaMembership[]
+  joinRequests JoinRequest[]
 
   @@index([ownerId])
+}
+
+/// A pending request to join an arena. A row's existence means the request is
+/// pending; it is deleted when an owner/organizer accepts (becoming an
+/// `ArenaMembership`) or rejects it.
+model JoinRequest {
+  id        String   @id @default(cuid())
+  arenaId   String
+  userId    String
+  createdAt DateTime @default(now())
+
+  arena Arena @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([arenaId, userId])
+  @@index([arenaId])
+  @@index([userId])
 }
 
 /// A member's role within an arena. Enforced at the database level so an
@@ -70,6 +88,7 @@ model Player {
   queueOrder  Int? // null = not in queue; ascending = rack order
   waitRounds  Int      @default(0) // consecutive rounds spent waiting (fairness)
   gamesOffset Int      @default(0) // games credited at join (group avg) so latecomers slot in as peers, not catch-up
+  leftAt      DateTime? // null = active; set = the member left/was removed (row kept for history)
 
 
   createdAt   DateTime @default(now())
@@ -183,11 +202,12 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  sessions    Session[]
-  accounts    Account[]
-  arenas      Arena[]
-  memberships ArenaMembership[]
-  players     Player[]
+  sessions     Session[]
+  accounts     Account[]
+  arenas       Arena[]
+  memberships  ArenaMembership[]
+  players      Player[]
+  joinRequests JoinRequest[]
 }
 
 /// A signed-in session (cookie-backed).
