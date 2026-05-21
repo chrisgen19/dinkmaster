@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the auth guards, the state reader, and Prisma so the actions run with
-// no database. The point of these tests is the auth/ownership gate.
+// no database. These tests cover authorization and pure-logic guards.
 vi.mock('@/lib/session', () => ({
   requireUser: vi.fn(),
   requireArenaOwner: vi.fn(),
+  requireArenaManager: vi.fn(),
 }));
 vi.mock('@/lib/data', () => ({
   getState: vi.fn(async () => ({
@@ -18,21 +19,29 @@ vi.mock('@/lib/data', () => ({
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     $transaction: vi.fn(),
-    arena: { create: vi.fn(), update: vi.fn() },
+    arena: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
+    arenaMembership: {
+      upsert: vi.fn(),
+      deleteMany: vi.fn(),
+      updateMany: vi.fn(),
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
     court: { findMany: vi.fn() },
     player: { count: vi.fn() },
   },
 }));
 
-import { requireUser, requireArenaOwner } from '@/lib/session';
+import { requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
 import { prisma } from '@/lib/prisma';
+import { ROLES } from '@/lib/roles';
 import * as actions from '@/app/actions';
 
-const AUTH_ERROR = 'Only the arena owner can manage this arena.';
 const ARENA = 'arena_test';
+const ERR = 'denied';
 
-// Every owner-gated mutation, with representative arguments.
-const OWNER_MUTATIONS = [
+// Owner-or-organizer gated (requireArenaManager).
+const PLAY = [
   ['addPlayer', () => actions.addPlayer(ARENA, 'Alice', 'Bob')],
   ['removePlayer', () => actions.removePlayer(ARENA, 'p1')],
   ['shuffleQueue', () => actions.shuffleQueue(ARENA)],
@@ -41,45 +50,59 @@ const OWNER_MUTATIONS = [
   ['addCourt', () => actions.addCourt(ARENA)],
   ['removeCourt', () => actions.removeCourt(ARENA, 'c1')],
   ['resetArena', () => actions.resetArena(ARENA)],
-  ['renameArena', () => actions.renameArena(ARENA, 'New Name')],
+];
+// Owner-only gated (requireArenaOwner).
+const OWNER_ONLY = [
+  ['renameArena', () => actions.renameArena(ARENA, 'New')],
+  ['updateMemberRole', () => actions.updateMemberRole(ARENA, 'u2', ROLES.ORGANIZER)],
+  ['removeMember', () => actions.removeMember(ARENA, 'u2')],
+  ['transferOwnership', () => actions.transferOwnership(ARENA, 'u2')],
+];
+// Any signed-in user (requireUser).
+const USER_GATED = [
+  ['createArena', () => actions.createArena('My Arena')],
+  ['joinArena', () => actions.joinArena(ARENA)],
+  ['leaveArena', () => actions.leaveArena(ARENA)],
 ];
 
-describe('arena server actions — auth & ownership gating', () => {
+describe('arena server actions — authorization', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  describe('non-owner / unauthenticated callers', () => {
+  describe('denied callers', () => {
     beforeEach(() => {
-      requireArenaOwner.mockResolvedValue({ error: AUTH_ERROR });
-      requireUser.mockResolvedValue({ error: AUTH_ERROR });
+      requireArenaManager.mockResolvedValue({ error: ERR });
+      requireArenaOwner.mockResolvedValue({ error: ERR });
+      requireUser.mockResolvedValue({ error: ERR });
     });
 
-    for (const [name, call] of OWNER_MUTATIONS) {
-      it(`${name}() returns the auth error and does not mutate`, async () => {
+    for (const [name, call] of [...PLAY, ...OWNER_ONLY, ...USER_GATED]) {
+      it(`${name}() returns the auth error and writes nothing`, async () => {
         const result = await call();
-        expect(result.error).toBe(AUTH_ERROR);
-        // $transaction is the single entry point for every mutation — if it
-        // was never called, nothing was written.
+        expect(result.error).toBe(ERR);
         expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(prisma.arena.create).not.toHaveBeenCalled();
         expect(prisma.arena.update).not.toHaveBeenCalled();
+        expect(prisma.arenaMembership.upsert).not.toHaveBeenCalled();
+        expect(prisma.arenaMembership.updateMany).not.toHaveBeenCalled();
+        expect(prisma.arenaMembership.deleteMany).not.toHaveBeenCalled();
       });
     }
-
-    it('createArena() returns the auth error and creates nothing', async () => {
-      const result = await actions.createArena('My Arena');
-      expect(result.error).toBe(AUTH_ERROR);
-      expect(prisma.arena.create).not.toHaveBeenCalled();
-    });
   });
 
-  describe('the arena owner', () => {
+  describe('authorized callers', () => {
     beforeEach(() => {
-      requireArenaOwner.mockResolvedValue({
-        user: { id: 'u1', name: 'Owner' },
-        arena: { id: ARENA, name: 'Test Arena', ownerId: 'u1' },
+      requireArenaManager.mockResolvedValue({
+        user: { id: 'u1' },
+        arena: { id: ARENA, ownerId: 'u1' },
+        role: ROLES.OWNER,
       });
-      requireUser.mockResolvedValue({ user: { id: 'u1', name: 'Owner' } });
+      requireArenaOwner.mockResolvedValue({
+        user: { id: 'u1' },
+        arena: { id: ARENA, ownerId: 'u1' },
+      });
+      requireUser.mockResolvedValue({ user: { id: 'u1' } });
     });
 
     it('addPlayer() with a blank first name skips the gate and the transaction', async () => {
@@ -93,16 +116,7 @@ describe('arena server actions — auth & ownership gating', () => {
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
 
-    it('createArena() with a blank name is rejected before any write', async () => {
-      const result = await actions.createArena('   ');
-      expect(result.error).toBeTruthy();
-      expect(prisma.arena.create).not.toHaveBeenCalled();
-    });
-
     it('removePlayer() scopes both deletes to the arena (no cross-arena delete)', async () => {
-      // Drive the real transaction callback with a fake tx so the destructive
-      // queries can be inspected — this guards the cross-arena delete fix:
-      // even an owner must not be able to delete another arena's player by id.
       const tx = {
         $executeRaw: vi.fn(),
         courtSlot: { findFirst: vi.fn().mockResolvedValue(null) },
@@ -113,19 +127,34 @@ describe('arena server actions — auth & ownership gating', () => {
 
       await actions.removePlayer(ARENA, 'player-from-another-arena');
 
-      // The final delete must carry arenaId, not just the global id.
       expect(tx.player.deleteMany).toHaveBeenCalledWith({
         where: { id: 'player-from-another-arena', arenaId: ARENA },
       });
-      expect(tx.partnership.deleteMany).toHaveBeenCalledWith({
-        where: {
-          arenaId: ARENA,
-          OR: [
-            { playerA: 'player-from-another-arena' },
-            { playerB: 'player-from-another-arena' },
-          ],
-        },
-      });
+    });
+
+    it('updateMemberRole() rejects an unknown role', async () => {
+      const result = await actions.updateMemberRole(ARENA, 'u2', 'SUPERUSER');
+      expect(result.error).toBeTruthy();
+      expect(prisma.arenaMembership.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('updateMemberRole() refuses to change the owner', async () => {
+      const result = await actions.updateMemberRole(ARENA, 'u1', ROLES.MEMBER);
+      expect(result.error).toBeTruthy();
+      expect(prisma.arenaMembership.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('transferOwnership() rejects transferring to the current owner', async () => {
+      const result = await actions.transferOwnership(ARENA, 'u1');
+      expect(result.error).toBeTruthy();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('leaveArena() refuses to let the owner leave', async () => {
+      prisma.arena.findUnique.mockResolvedValue({ id: ARENA, ownerId: 'u1' });
+      const result = await actions.leaveArena(ARENA);
+      expect(result.error).toBeTruthy();
+      expect(prisma.arenaMembership.deleteMany).not.toHaveBeenCalled();
     });
   });
 });

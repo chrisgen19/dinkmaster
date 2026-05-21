@@ -90,21 +90,35 @@ Defined in [`prisma/schema.prisma`](prisma/schema.prisma):
 - **Court** + **CourtSlot** — a court's live status and the four players assigned to it (a player can be on at most one court — DB-enforced).
 - **Match** + **MatchPlayer** — finished-match history with snapshotted player names.
 - **Partnership** — canonical pair counts powering the matchup optimiser.
-- **User** / **Session** / **Account** / **Verification** — Better Auth tables. Viewing any arena is public; managing one requires being its owner.
+- **ArenaMembership** — a user's role in an arena (`OWNER` / `ORGANIZER` / `MEMBER`), one row per `(arena, user)` pair.
+- **User** / **Session** / **Account** / **Verification** — Better Auth tables.
 
 ## Authentication
 
 Email + password auth via [Better Auth](https://www.better-auth.com), backed by the same PostgreSQL database through the Prisma adapter.
 
 - **Sign up** at `/register`, **sign in** at `/login`; the header shows the current user with a sign-out control.
-- **Viewing any arena is public.** Every mutating Server Action (`addPlayers`, `removePlayer`, `shuffleQueue`, `fillCourt`, `endMatch`, `addCourt`, `removeCourt`, `resetArena`, `renameArena`) is gated by `requireArenaOwner(arenaId)` — only the arena's owner can manage it. `createArena` only requires a signed-in account.
 - Sessions are cookie-backed; config lives in `src/lib/auth.js`, the browser client in `src/lib/auth-client.js`, and the catch-all API handler at `src/app/api/auth/[...all]/route.js`.
 - Requires `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` in `.env` (see `.env.example`).
+
+## Roles & permissions
+
+Viewing any arena is public. Managing one depends on the caller's `ArenaMembership` role:
+
+| Role | Can do |
+|------|--------|
+| **Owner** | Everything — run the session, rename, manage members, transfer ownership |
+| **Organizer** | Run the full session: add/remove players & courts, fill courts, end matches, shuffle, reset |
+| **Member** | View the arena; can leave |
+
+- Any signed-in user can **join** any arena (as `MEMBER`) or **create** their own.
+- The 8 play actions are gated by `requireArenaManager(arenaId)` (owner or organizer); owner-only actions (`renameArena`, `updateMemberRole`, `removeMember`, `transferOwnership`) by `requireArenaOwner(arenaId)`.
+- `Arena.ownerId` stays the canonical owner; the owner also has an `OWNER` membership row, kept in sync on transfer.
 
 ## Routing
 
 - `/` — public **arena directory**: lists every arena; signed-in users get a "create arena" form.
-- `/arena/[id]` — a single arena (rack, courts, match log). Public to view; the owner sees the management controls, everyone else sees it read-only.
+- `/arena/[id]` — a single arena (rack, courts, match log, members). Public to view; owners and organizers see management controls, members see it read-only, and non-members get a "join" prompt.
 - `/login`, `/register` — auth pages.
 
 ## Roadmap
@@ -115,7 +129,7 @@ DINKMASTER is being built toward a **multi-tenant, multi-arena** system in phase
 |-------|-------|--------|
 | **1 — Auth foundation** | Better Auth user accounts; login/register pages; header sign-in/out; all arena mutations session-gated; arena view stays public. Destructive SQL seed removed. | ✅ Done |
 | **2 — Arenas** | `Arena` model + `arenaId` scoping on Player/Court/Match/Partnership; create/own arenas; arena directory at `/` and per-arena routing at `/arena/[id]`; owner-only management. | ✅ Done |
-| **3 — Membership & roles** | `ArenaMembership` with **Owner / Organizer / Member** roles; public arena browse + join; permissions per role. | ⏳ Planned |
+| **3 — Membership & roles** | `ArenaMembership` with **Owner / Organizer / Member** roles; public join/leave; promote/demote/remove members; transfer ownership. | ✅ Done |
 | **4 — Player ↔ User linking** | Link a registered Player to a User account; per-user match-history and score views so people see their own stats. | ⏳ Planned |
 
 Phase tracking and detailed scope live in the GitHub issues.
@@ -128,7 +142,8 @@ src/
     page.js            Server Component — the public arena directory
     arena/[id]/page.js Server Component — reads one arena's state, renders it
     arena.js           Client UI (rack, courts, modals, badges)
-    actions.js         Server Actions — every mutation (owner-gated) + rotation algorithm
+    arena-members.js   Client UI — members tab (roles, join/leave, owner controls)
+    actions.js         Server Actions — every mutation (role-gated) + rotation algorithm
     create-arena-form.js  Client form for creating an arena
     auth-status.js     Header sign-in / sign-out control
     login/             Sign-in page
@@ -137,11 +152,12 @@ src/
   lib/
     prisma.js      Prisma 7 client (node-postgres driver adapter)
     data.js        getState(arenaId) — the shape the UI consumes
-    arenas.js      listArenas() / getArena() — arena directory reads
+    arenas.js      listArenas() / getArena() / getArenaMembers() — directory reads
+    roles.js       Role constants (OWNER/ORGANIZER/MEMBER) + helpers
     matchmaking.js Shared thresholds/weights
     auth.js        Better Auth server instance
     auth-client.js Better Auth browser client
-    session.js     getCurrentUser() / requireUser() / requireArenaOwner() helpers
+    session.js     getCurrentUser() / requireUser() / requireArenaOwner() / requireArenaManager()
 prisma/            schema, migrations
 ```
 
@@ -164,4 +180,4 @@ prisma/            schema, migrations
 
 ## Security note
 
-As of Phase 2, every mutating Server Action in `src/app/actions.js` is gated by `requireArenaOwner(arenaId)` — only an arena's owner can manage it, and the check verifies both the session and ownership. `createArena` only requires a signed-in account. Finer-grained, role-based authorization (organizers, members) arrives in Phase 3.
+As of Phase 3, every mutating Server Action in `src/app/actions.js` is role-gated: play actions require `requireArenaManager` (owner or organizer), owner-only actions require `requireArenaOwner`, and both verify the session against `ArenaMembership` / `Arena.ownerId`. `createArena` and `joinArena`/`leaveArena` only require a signed-in account.

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { listArenas } from '@/lib/arenas';
+import { listArenas, getUserMemberships } from '@/lib/arenas';
 import { getCurrentUser } from '@/lib/session';
 import { AuthStatus } from './auth-status';
 import { CreateArenaForm } from './create-arena-form';
@@ -7,8 +7,16 @@ import { CreateArenaForm } from './create-arena-form';
 // Always read the fresh arena list on each request.
 export const dynamic = 'force-dynamic';
 
+const ROLE_BADGE = {
+  OWNER: 'bg-emerald-50 text-emerald-700',
+  ORGANIZER: 'bg-sky-50 text-sky-700',
+  MEMBER: 'bg-slate-100 text-slate-600',
+};
+
 export default async function Page() {
   const [arenas, user] = await Promise.all([listArenas(), getCurrentUser()]);
+  const memberships = user ? await getUserMemberships(user.id) : [];
+  const roleByArena = new Map(memberships.map((m) => [m.arenaId, m.role]));
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
@@ -66,9 +74,11 @@ export default async function Page() {
                     <h3 className="text-base font-extrabold text-slate-900 group-hover:text-emerald-700 transition">
                       {arena.name}
                     </h3>
-                    {user && arena.ownerId === user.id && (
-                      <span className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0">
-                        Owner
+                    {roleByArena.get(arena.id) && (
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 ${ROLE_BADGE[roleByArena.get(arena.id)]}`}
+                      >
+                        {roleByArena.get(arena.id)}
                       </span>
                     )}
                   </div>
