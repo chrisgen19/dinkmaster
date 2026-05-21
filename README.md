@@ -1,10 +1,33 @@
 # DINKMASTER
 
-Smart pickleball paddle-stacking & partnership-mixing arena. Players, the paddle-rack queue, courts, match history, and the partnership matrix are all persisted in **PostgreSQL** via **Prisma 7** (Server Actions for all mutations).
+Smart pickleball **paddle-stacking & partnership-mixing arena**. Register players, stack them onto courts, record scores, and let the app handle fair, varied rotations automatically. Players, the paddle-rack queue, courts, match history, and the partnership matrix are all persisted in **PostgreSQL** via **Prisma 7** (Next.js App Router + Server Actions for every mutation).
+
+## Features
+
+- **Paddle rack queue** — register players (comma-separated), see who's waiting and who's **on deck** (the next four to be stacked).
+- **Courts** — add/remove courts; stack the top four onto any vacant court; record a final score to finish a match.
+- **Smart matchups** — when a court is filled, teams are chosen to minimise repeated partnerships (the **partnership matrix** tracks how often any two players have paired).
+- **Auto-mix the rack** — after each finish the rack reshuffles so the same four don't lock together, balanced by a fairness algorithm (below).
+- **Waiting badge** — a `⏳ N` badge appears on players who've waited ≥ 2 rounds (amber), turning red at ≥ 4, so you can see who's overdue.
+- **Match log & stats** — full history of finished matches (with snapshotted names that survive player deletion) plus per-player games/wins/losses.
+
+## How the rotation algorithm works
+
+When auto-mix runs (after a finish, if more than one court's worth of players are waiting), each waiting player is sorted into three **bands**, highest priority first:
+
+| Band | Condition | Ordering within the band |
+|------|-----------|--------------------------|
+| **Emergency** | waited ≥ `EMERGENCY_WAIT` (4) | strictly longest-waiting first — bounds the worst-case wait |
+| **Protected** (⏳ badge) | waited ≥ `STARVE_THRESHOLD` (2) | always ahead of fresher players, but **random** among themselves so a big pool doesn't lock into a fixed rotation |
+| **Fresh** | waited 0–1 | mixed by a small games-played nudge + randomness |
+
+Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM_WEIGHT × random()` — the games term gently evens out totals (and eases newcomers in without letting them hog the court), while randomness keeps groups varied. The thresholds/weights live in [`src/lib/matchmaking.js`](src/lib/matchmaking.js) and are shared by the server logic and the UI badge so they never drift.
+
+> **Inherent trade-off:** when players ÷ (courts × 4) divides evenly (e.g. 12 players on 1 court), the *only* arrangement with minimal waiting is a fixed rotation — so variety is naturally low there. Adding a court or a few more players restores high variety.
 
 ## Requirements
 
-- **Node.js ≥ 20.19** (enforced via `engines`; Prisma 7 / `@prisma/dev` require it — older 20.x minors fail `prisma generate` with `ERR_REQUIRE_ESM`).
+- **Node.js ≥ 20.19** (enforced via `engines` and `.nvmrc`; Prisma 7 / `@prisma/dev` require it — older 20.x minors fail `prisma generate` with `ERR_REQUIRE_ESM`).
 - **PostgreSQL** (local or hosted).
 - **pnpm** (project package manager).
 
@@ -25,8 +48,8 @@ Smart pickleball paddle-stacking & partnership-mixing arena. Players, the paddle
 3. Apply migrations and seed the starter roster:
 
    ```bash
-   pnpm prisma migrate deploy   # apply schema
-   set -a; . ./.env; pnpm db:seed   # load default players/courts/partnerships
+   pnpm prisma migrate deploy        # apply schema
+   set -a; . ./.env; pnpm db:seed    # load default players/courts/partnerships
    ```
 
 4. Run the dev server:
@@ -42,11 +65,37 @@ Smart pickleball paddle-stacking & partnership-mixing arena. Players, the paddle
 | Script | Purpose |
 |--------|---------|
 | `pnpm dev` | Start the dev server |
-| `pnpm build` | `prisma generate` + production build |
+| `pnpm build` | `prisma generate` + production build (no migration) |
+| `pnpm vercel-build` | `prisma generate` + `migrate deploy` + build (used automatically by Vercel) |
 | `pnpm db:migrate` | Create/apply a dev migration (`prisma migrate dev`) |
+| `pnpm db:deploy` | Apply pending migrations (`prisma migrate deploy`) |
 | `pnpm db:push` | Push schema without a migration |
 | `pnpm db:seed` | Seed default data from `prisma/seed.sql` (needs `DATABASE_URL` in env) |
 | `pnpm db:studio` | Open Prisma Studio |
+
+## Data model
+
+Defined in [`prisma/schema.prisma`](prisma/schema.prisma):
+
+- **Player** — `name`, `gamesPlayed`, `wins`, `losses`, `queueOrder` (null when not in the rack), `waitRounds`.
+- **Court** + **CourtSlot** — a court's live status and the four players assigned to it (a player can be on at most one court — DB-enforced).
+- **Match** + **MatchPlayer** — finished-match history with snapshotted player names.
+- **Partnership** — canonical pair counts powering the matchup optimiser.
+
+## Project structure
+
+```
+src/
+  app/
+    page.js        Server Component — reads state, renders the arena
+    arena.js       Client UI (rack, courts, modals, badges)
+    actions.js     Server Actions — every mutation + the rotation algorithm
+  lib/
+    prisma.js      Prisma 7 client (node-postgres driver adapter)
+    data.js        getState() — the shape the UI consumes
+    matchmaking.js Shared thresholds/weights
+prisma/            schema, migrations, seed.sql
+```
 
 ## Deployment
 
