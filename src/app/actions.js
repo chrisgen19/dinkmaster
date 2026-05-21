@@ -54,13 +54,7 @@ function shuffle(items) {
  * and append them to the bottom of the queue. The caller must hold `lockQueue`.
  */
 async function addArenaPlayer(tx, arenaId, { userId = null, firstName, lastName }) {
-  const existing = await tx.player.findMany({
-    where: { arenaId },
-    select: { gamesPlayed: true, gamesOffset: true },
-  });
-  const gamesOffset = existing.length
-    ? Math.round(existing.reduce((sum, p) => sum + p.gamesPlayed + p.gamesOffset, 0) / existing.length)
-    : 0;
+  const gamesOffset = await groupAverageMetric(tx, arenaId);
   const order = (await maxQueueOrder(tx, arenaId)) + 1;
   return tx.player.create({
     data: { arenaId, userId, firstName, lastName: lastName || null, queueOrder: order, gamesOffset },
@@ -68,9 +62,61 @@ async function addArenaPlayer(tx, arenaId, { userId = null, firstName, lastName 
 }
 
 /**
- * Remove a user from an arena inside a transaction: delete their linked player
- * (and its partnership rows) and their non-owner membership. Returns false when
- * the player is mid-match so the caller can abort. Caller must hold `lockQueue`.
+ * The current group's average ordering metric (gamesPlayed + gamesOffset over
+ * active players), used to slot a joiner in as a peer rather than giving them a
+ * catch-up advantage for games they weren't here for.
+ */
+async function groupAverageMetric(tx, arenaId) {
+  const active = await tx.player.findMany({
+    where: { arenaId, leftAt: null },
+    select: { gamesPlayed: true, gamesOffset: true },
+  });
+  return active.length
+    ? Math.round(active.reduce((sum, p) => sum + p.gamesPlayed + p.gamesOffset, 0) / active.length)
+    : 0;
+}
+
+/**
+ * Make `user` an active, queued player in the arena. Reactivates their existing
+ * (possibly departed) row so prior stats and match history are reclaimed, or
+ * creates a fresh one. Either way they slot in at the bottom of the rack as a
+ * peer (effective metric = current group average). Caller must hold `lockQueue`.
+ */
+async function activateArenaPlayer(tx, arenaId, user) {
+  const existing = await tx.player.findUnique({
+    where: { arenaId_userId: { arenaId, userId: user.id } },
+    select: { id: true, gamesPlayed: true, leftAt: true, queueOrder: true },
+  });
+  if (!existing) {
+    return addArenaPlayer(tx, arenaId, {
+      userId: user.id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+    });
+  }
+  // Already an active player on the rack — nothing to do.
+  if (existing.leftAt === null && existing.queueOrder !== null) return existing;
+
+  const avg = await groupAverageMetric(tx, arenaId);
+  const order = (await maxQueueOrder(tx, arenaId)) + 1;
+  return tx.player.update({
+    where: { id: existing.id },
+    data: {
+      leftAt: null,
+      queueOrder: order,
+      waitRounds: 0,
+      // Keep lifetime stats, but reset the effective ordering metric to the
+      // group average so a returner rotates as a peer (offset may go negative).
+      gamesOffset: avg - existing.gamesPlayed,
+    },
+  });
+}
+
+/**
+ * Remove a user from an arena inside a transaction: deactivate their linked
+ * player (kept for history — `leftAt` set, pulled off the rack) and delete
+ * their non-owner membership. Returns false when the player is mid-match so the
+ * caller can abort. Caller must hold `lockQueue`.
  */
 async function removeArenaMember(tx, arenaId, userId) {
   const player = await tx.player.findUnique({
@@ -82,10 +128,12 @@ async function removeArenaMember(tx, arenaId, userId) {
       where: { playerId: player.id, court: { status: 'playing' } },
     });
     if (onCourt) return false;
-    await tx.partnership.deleteMany({
-      where: { arenaId, OR: [{ playerA: player.id }, { playerB: player.id }] },
+    // Deactivate rather than delete: the row (stats + partnership history) is
+    // kept so the user's record survives and a rejoin reclaims it.
+    await tx.player.update({
+      where: { id: player.id },
+      data: { leftAt: new Date(), queueOrder: null, waitRounds: 0 },
     });
-    await tx.player.deleteMany({ where: { id: player.id, arenaId } });
   }
   await tx.arenaMembership.deleteMany({
     where: { arenaId, userId, role: { not: ROLES.OWNER } },
@@ -641,11 +689,11 @@ export async function resetArena(arenaId) {
 // --- Membership (Phase 3) -------------------------------------------------
 
 /**
- * Join an arena: become a MEMBER and a queued player on the rack. Idempotent
- * — a repeated join keeps the existing role and player. The owner already has
- * both from `createArena`.
+ * Request to join an arena. Arenas are public to browse but join-gated: this
+ * records a pending `JoinRequest` that an owner/organizer must approve. Owners
+ * and existing members need no request. Idempotent.
  */
-export async function joinArena(arenaId) {
+export async function requestToJoin(arenaId) {
   const guard = await requireUser();
   if (guard.error) return { error: guard.error };
   if (!arenaId) return { error: 'Arena not found.' };
@@ -654,26 +702,65 @@ export async function joinArena(arenaId) {
   if (!arena) return { error: 'Arena not found.' };
   if (arena.ownerId === guard.user.id) return { ok: true };
 
+  const membership = await prisma.arenaMembership.findUnique({
+    where: { arenaId_userId: { arenaId, userId: guard.user.id } },
+  });
+  if (membership) return { ok: true }; // already a member
+
+  await prisma.joinRequest.upsert({
+    where: { arenaId_userId: { arenaId, userId: guard.user.id } },
+    create: { arenaId, userId: guard.user.id },
+    update: {}, // request already pending
+  });
+  return { ok: true };
+}
+
+/**
+ * Approve a pending join request (owner or organizer): the requester becomes a
+ * MEMBER and a queued player, and the request is consumed.
+ */
+export async function approveJoinRequest(arenaId, userId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  let reason = '';
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
-    await tx.arenaMembership.upsert({
-      where: { arenaId_userId: { arenaId, userId: guard.user.id } },
-      create: { arenaId, userId: guard.user.id, role: ROLES.MEMBER },
-      update: {}, // already a member — keep the existing role
+    const request = await tx.joinRequest.findUnique({
+      where: { arenaId_userId: { arenaId, userId } },
     });
-    // A registered user is also a player. Skip if they already have one
-    // (repeated join, or they were added some other way).
-    const existing = await tx.player.findUnique({
-      where: { arenaId_userId: { arenaId, userId: guard.user.id } },
-    });
-    if (!existing) {
-      await addArenaPlayer(tx, arenaId, {
-        userId: guard.user.id,
-        firstName: guard.user.firstName,
-        lastName: guard.user.lastName,
-      });
+    if (!request) {
+      reason = 'NO_REQUEST';
+      return;
     }
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    if (!user) {
+      reason = 'NO_USER';
+      return;
+    }
+    await tx.arenaMembership.upsert({
+      where: { arenaId_userId: { arenaId, userId } },
+      create: { arenaId, userId, role: ROLES.MEMBER },
+      update: {}, // already a member somehow — keep their role
+    });
+    await activateArenaPlayer(tx, arenaId, user);
+    await tx.joinRequest.deleteMany({ where: { arenaId, userId } });
   });
+
+  if (reason === 'NO_REQUEST') return { error: 'That join request no longer exists.' };
+  if (reason === 'NO_USER') return { error: 'That user no longer exists.' };
+  return { ok: true };
+}
+
+/** Reject (delete) a pending join request (owner or organizer). */
+export async function rejectJoinRequest(arenaId, userId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  await prisma.joinRequest.deleteMany({ where: { arenaId, userId } });
   return { ok: true };
 }
 

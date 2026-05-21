@@ -86,11 +86,12 @@ Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM
 Defined in [`prisma/schema.prisma`](prisma/schema.prisma):
 
 - **Arena** — an isolated session owned by a `User`. Players, courts, matches, and partnerships are all scoped by `arenaId`.
-- **Player** — a rack entry: `firstName`/`lastName`, `gamesPlayed`, `wins`, `losses`, `queueOrder` (null when not in the rack), `waitRounds`, `gamesOffset` (games credited at join so late joiners rotate as peers, not catch-up). `userId` links the player to a registered account; it is null for temporary walk-in players.
+- **Player** — a rack entry: `firstName`/`lastName`, `gamesPlayed`, `wins`, `losses`, `queueOrder` (null when not in the rack), `waitRounds`, `gamesOffset` (games credited at join so late joiners rotate as peers, not catch-up). `userId` links the player to a registered account; it is null for temporary walk-in players. `leftAt` marks a departed member: the row (stats + history) is kept but excluded from the active rack, and a rejoin reactivates it.
 - **Court** + **CourtSlot** — a court's live status and the four players assigned to it (a player can be on at most one court — DB-enforced).
 - **Match** + **MatchPlayer** — finished-match history with snapshotted player names.
 - **Partnership** — canonical pair counts powering the matchup optimiser.
 - **ArenaMembership** — a user's role in an arena (`OWNER` / `ORGANIZER` / `MEMBER`), one row per `(arena, user)` pair. A member always has a linked `Player` row; temporary walk-in `Player` rows may exist without an `ArenaMembership`.
+- **JoinRequest** — a pending request to join an arena, one row per `(arena, user)`; deleted when an owner/organizer accepts (creating an `ArenaMembership`) or rejects it.
 - **User** / **Session** / **Account** / **Verification** — Better Auth tables.
 
 ## Authentication
@@ -111,14 +112,15 @@ Viewing any arena is public. Managing one depends on the caller's `ArenaMembersh
 | **Organizer** | Run the full session: add/remove players & courts, fill courts, end matches, shuffle, reset |
 | **Member** | View the arena; can leave |
 
-- Any signed-in user can **join** any arena — becoming a `MEMBER` and a queued player — or **create** their own.
-- Play actions are gated by `requireArenaManager(arenaId)` (owner or organizer); owner-only actions (`renameArena`, `updateMemberRole`, `removeMember`, `transferOwnership`, `linkPlayerToMember`) by `requireArenaOwner(arenaId)`.
+- Arenas are public to browse but **join-gated**: a signed-in user **requests** to join (`requestToJoin`), and an owner or organizer **accepts** (`approveJoinRequest`) or **rejects** (`rejectJoinRequest`) it. On acceptance the user becomes a `MEMBER` and a queued player. Anyone can **create** their own arena (owner, no request needed).
+- Leaving (`leaveArena`) or being removed (`removeMember`) **deactivates** the user's `Player` (sets `leftAt`, off the rack) and drops their membership — stats and match history are kept, and approving a later request reactivates the same record.
+- Play actions and join-request decisions are gated by `requireArenaManager(arenaId)` (owner or organizer); owner-only actions (`renameArena`, `updateMemberRole`, `removeMember`, `transferOwnership`, `linkPlayerToMember`) by `requireArenaOwner(arenaId)`.
 - `Arena.ownerId` stays the canonical owner; the owner also has an `OWNER` membership row, kept in sync on transfer.
 
 ## Routing
 
 - `/` — public **arena directory**: lists every arena; signed-in users get a "create arena" form.
-- `/arena/[id]` — a single arena (rack, courts, match log, members, my stats). Public to view; owners and organizers see management controls, members see it read-only, and non-members get a "join" prompt.
+- `/arena/[id]` — a single arena (rack, courts, match log, members, my stats). Public to view; owners and organizers see management controls plus a pending-requests queue, members see it read-only, and non-members get a "request to join" prompt (showing "pending approval" once requested).
 - `/profile` — your account: aggregate stats and match history across every arena you play in.
 - `/login`, `/register` — auth pages.
 
@@ -132,15 +134,10 @@ DINKMASTER is being built toward a **multi-tenant, multi-arena** system in phase
 | **2 — Arenas** | `Arena` model + `arenaId` scoping on Player/Court/Match/Partnership; create/own arenas; arena directory at `/` and per-arena routing at `/arena/[id]`; owner-only management. | ✅ Done |
 | **3 — Membership & roles** | `ArenaMembership` with **Owner / Organizer / Member** roles; public join/leave; promote/demote/remove members; transfer ownership. | ✅ Done |
 | **4 — Player ↔ User linking** | `Player.userId` links rack entries to accounts; creating or joining an arena auto-adds you as a queued player; owners can link walk-ins to members; per-arena **My Stats** tab and a global **/profile** page. Temporary players kept for walk-ins. | ✅ Done |
-| **5 — Join approval & history retention** | Public arenas; anyone can request to join, and the owner approves before they're in. Former members keep their match history and stats — leaving an arena no longer drops a user's `Player` record. | ⏳ Planned |
+| **5 — Join approval & history retention** | Arenas are public to browse but join-gated: anyone **requests** to join and an owner/organizer accepts or rejects via the Members tab. Leaving/removal **deactivates** the `Player` (`leftAt`) instead of deleting it, so stats & match history survive and a rejoin reclaims them; `/profile` still lists left arenas. | ✅ Done |
 | **6 — Skill rating** | A computed Elo/DUPR-style rating that moves per match, surfaced in the stats views. | ⏳ Planned |
 
 ### Planned phases — detail
-
-**Phase 5 — Join approval & history retention**
-
-- *Join approval.* Arenas stay publicly browsable. A signed-in user can **request** to join; the request is **pending** until the arena **owner** accepts or rejects it. Only on acceptance does the user become a `MEMBER` and a queued player. (Mechanism — a `PENDING` membership state vs. a separate join-request model — to be decided at implementation.)
-- *History retention.* Leaving an arena, or being removed by the owner, must **not** discard the user's match history and stats there. Today `removeArenaMember` deletes the linked `Player` row, so a former member's matches drop off `/profile`. Phase 5 preserves attribution — e.g. snapshotting `userId` onto `MatchPlayer`, or keeping the `Player` row (un-queued) instead of deleting it — so a leaver's record survives and a rejoin can reclaim it.
 
 **Phase 6 — Skill rating**
 

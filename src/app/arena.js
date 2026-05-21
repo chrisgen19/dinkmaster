@@ -13,7 +13,7 @@ import {
   addCourt,
   removeCourt,
   resetArena,
-  joinArena,
+  requestToJoin,
 } from './actions';
 import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { AuthStatus } from './auth-status';
@@ -74,6 +74,8 @@ export default function Arena({
   viewerUserId,
   isAuthenticated,
   members,
+  pendingRequests = [],
+  viewerPending = false,
 }) {
   const router = useRouter();
   const [players, setPlayers] = useState(initialState.players);
@@ -215,10 +217,10 @@ export default function Arena({
     run(() => resetArena(arenaId));
   };
 
-  // Join the arena as a member, then refresh so the server recomputes roles.
-  const handleJoin = () => {
+  // Request to join; an owner/organizer must approve before membership is granted.
+  const handleRequestJoin = () => {
     startTransition(async () => {
-      const result = await joinArena(arenaId);
+      const result = await requestToJoin(arenaId);
       if (result?.error) {
         setErrorMsg(result.error);
         return;
@@ -293,13 +295,18 @@ export default function Arena({
                 : "You're viewing this arena. Only its owner and organizers can manage it."}
             </span>
           </span>
-          {isAuthenticated && !viewerRole && (
+          {isAuthenticated && !viewerRole && viewerPending && (
+            <span className="text-xs bg-amber-50 text-amber-700 border border-amber-200 font-bold px-3 py-1.5 rounded-lg shrink-0">
+              Request pending approval
+            </span>
+          )}
+          {isAuthenticated && !viewerRole && !viewerPending && (
             <button
-              onClick={handleJoin}
+              onClick={handleRequestJoin}
               disabled={isPending}
               className="text-xs bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold px-3 py-1.5 rounded-lg transition shrink-0"
             >
-              Join this arena
+              Request to join
             </button>
           )}
           {!isAuthenticated && (
@@ -560,13 +567,18 @@ export default function Arena({
               </button>
               <button
                 onClick={() => setActiveTab('members')}
-                className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all ${
+                className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all flex items-center gap-1.5 ${
                   activeTab === 'members'
                     ? 'bg-slate-900 text-white shadow-sm'
                     : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
                 }`}
               >
                 Members
+                {canManage && pendingRequests.length > 0 && (
+                  <span className="bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none">
+                    {pendingRequests.length}
+                  </span>
+                )}
               </button>
               {myPlayer && (
                 <button
@@ -864,6 +876,8 @@ export default function Arena({
               members={members}
               viewerUserId={viewerUserId}
               viewerRole={viewerRole}
+              canManage={canManage}
+              pendingRequests={pendingRequests}
             />
           )}
 

@@ -19,7 +19,9 @@ export async function getState(arenaId) {
   if (!arenaId) throw new Error('getState requires an arenaId');
 
   const [players, courts, matches, partnerships] = await Promise.all([
-    prisma.player.findMany({ where: { arenaId }, orderBy: { createdAt: 'asc' } }),
+    // Active players only: a departed member's row is kept (leftAt set) for
+    // history but must not appear on the rack, matrix, or player count.
+    prisma.player.findMany({ where: { arenaId, leftAt: null }, orderBy: { createdAt: 'asc' } }),
     prisma.court.findMany({
       where: { arenaId },
       orderBy: { position: 'asc' },

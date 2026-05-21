@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { listArenas, getUserMemberships } from '@/lib/arenas';
+import { listArenas, getUserMemberships, getUserPendingRequestArenaIds } from '@/lib/arenas';
 import { getCurrentUser } from '@/lib/session';
 import { AuthStatus } from './auth-status';
 import { CreateArenaForm } from './create-arena-form';
@@ -15,7 +15,9 @@ const ROLE_BADGE = {
 
 export default async function Page() {
   const [arenas, user] = await Promise.all([listArenas(), getCurrentUser()]);
-  const memberships = user ? await getUserMemberships(user.id) : [];
+  const [memberships, pendingArenaIds] = user
+    ? await Promise.all([getUserMemberships(user.id), getUserPendingRequestArenaIds(user.id)])
+    : [[], new Set()];
   const roleByArena = new Map(memberships.map((m) => [m.arenaId, m.role]));
 
   return (
@@ -74,13 +76,17 @@ export default async function Page() {
                     <h3 className="text-base font-extrabold text-slate-900 group-hover:text-emerald-700 transition">
                       {arena.name}
                     </h3>
-                    {roleByArena.get(arena.id) && (
+                    {roleByArena.get(arena.id) ? (
                       <span
                         className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 ${ROLE_BADGE[roleByArena.get(arena.id)]}`}
                       >
                         {roleByArena.get(arena.id)}
                       </span>
-                    )}
+                    ) : pendingArenaIds.has(arena.id) ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 bg-amber-50 text-amber-700">
+                        Requested
+                      </span>
+                    ) : null}
                   </div>
                   <p className="text-xs text-slate-400 mt-1">by {arena.ownerName}</p>
                   <div className="flex gap-3 mt-4 text-xs text-slate-500">

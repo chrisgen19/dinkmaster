@@ -70,12 +70,46 @@ export async function getUserMemberships(userId) {
 }
 
 /**
+ * An arena's pending join requests (oldest first), with the requester's name.
+ * Name only — same non-PII shape as `getArenaMembers`. For owner/organizer use.
+ * @param {string} arenaId
+ * @returns {Promise<Array<{requestId:string,userId:string,name:string,requestedAt:string}>>}
+ */
+export async function getArenaJoinRequests(arenaId) {
+  const requests = await prisma.joinRequest.findMany({
+    where: { arenaId },
+    include: { user: { select: { id: true, name: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  return requests.map((r) => ({
+    requestId: r.id,
+    userId: r.userId,
+    name: r.user.name,
+    requestedAt: new Date(r.createdAt).toISOString(),
+  }));
+}
+
+/**
+ * The set of arena ids a user has a pending join request in — used to badge
+ * the directory and arena page.
+ * @param {string} userId
+ * @returns {Promise<Set<string>>}
+ */
+export async function getUserPendingRequestArenaIds(userId) {
+  const requests = await prisma.joinRequest.findMany({
+    where: { userId },
+    select: { arenaId: true },
+  });
+  return new Set(requests.map((r) => r.arenaId));
+}
+
+/**
  * Aggregate a user's player record across every arena they play in — powers
  * the global `/profile` page.
  * @param {string} userId
  * @returns {Promise<{
  *   totals:{arenas:number,gamesPlayed:number,wins:number,losses:number,winPct:number},
- *   arenas:Array<{arenaId:string,arenaName:string,gamesPlayed:number,wins:number,losses:number,inQueue:boolean}>,
+ *   arenas:Array<{arenaId:string,arenaName:string,gamesPlayed:number,wins:number,losses:number,inQueue:boolean,active:boolean}>,
  *   recentMatches:Array<{matchId:string,arenaName:string,courtName:string,won:boolean,scoreFor:number,scoreAgainst:number,timestamp:string}>
  * }>}
  */
@@ -107,6 +141,7 @@ export async function getUserPlayerStats(userId) {
     wins: p.wins,
     losses: p.losses,
     inQueue: p.queueOrder !== null,
+    active: p.leftAt === null, // false = arena the user has left (history kept)
   }));
 
   // Recent matches across all the user's arenas. `MatchPlayer.playerId` is a
