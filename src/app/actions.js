@@ -2,12 +2,7 @@
 
 import { prisma } from '@/lib/prisma';
 import { getState } from '@/lib/data';
-import {
-  STARVE_THRESHOLD,
-  EMERGENCY_WAIT,
-  GAMES_WEIGHT,
-  RANDOM_WEIGHT,
-} from '@/lib/matchmaking';
+import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
 
 /** Default roster used on first load and when the arena is reset. */
 const DEFAULT_PLAYERS = [
@@ -324,11 +319,10 @@ export async function endMatch(courtId, score1, score2, autoMix) {
         select: { id: true, gamesPlayed: true, waitRounds: true },
       });
       if (queued.length === 0) return;
-      // Band the rack, then sort lexicographically: band first, then (in the
-      // emergency band only) strictly by wait, then by the games+random mix.
-      // Using a comparator instead of additive sentinel scores keeps the bands
-      // strict no matter how large the games spread grows.
-      const maxGames = Math.max(...queued.map((p) => p.gamesPlayed));
+      // Sort lexicographically: band first (emergency > protected > fresh),
+      // then in the emergency band strictly by wait, then by FEWEST games
+      // played (so a player who has played less always goes ahead of one who
+      // has played more), then a random tie-break for variety among equals.
       const bandOf = (w) =>
         w >= EMERGENCY_WAIT ? 2 : w >= STARVE_THRESHOLD ? 1 : 0;
       const scored = queued
@@ -336,12 +330,14 @@ export async function endMatch(courtId, score1, score2, autoMix) {
           id: p.id,
           band: bandOf(p.waitRounds),
           waitRounds: p.waitRounds,
-          mix: GAMES_WEIGHT * (maxGames - p.gamesPlayed) + RANDOM_WEIGHT * Math.random(),
+          gamesPlayed: p.gamesPlayed,
+          rand: Math.random(),
         }))
         .sort((a, b) => {
           if (a.band !== b.band) return b.band - a.band; // emergency > protected > fresh
           if (a.band === 2 && a.waitRounds !== b.waitRounds) return b.waitRounds - a.waitRounds; // strict longest-first
-          return b.mix - a.mix; // within band: games nudge + randomness
+          if (a.gamesPlayed !== b.gamesPlayed) return a.gamesPlayed - b.gamesPlayed; // fewest games first
+          return a.rand - b.rand; // random tie-break among equal game counts
         });
       for (let i = 0; i < scored.length; i++) {
         await tx.player.update({ where: { id: scored[i].id }, data: { queueOrder: i + 1 } });
