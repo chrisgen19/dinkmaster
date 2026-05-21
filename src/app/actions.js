@@ -29,11 +29,13 @@ const DEFAULT_PARTNERSHIPS = [
 ];
 
 // Auto-mix priority weights (higher score = closer to the front of the rack).
-// WAIT dominates so nobody is starved; GAMES gently evens out totals and lets
-// newcomers catch up without hogging the court; RAND breaks up locked groups.
+// RANDOM > WAIT on purpose: randomness can overcome a 1-round wait gap (so the
+// same two foursomes don't ping-pong when another court holds players hostage),
+// but not a 2+ round gap (so nobody is genuinely starved). GAMES gently evens
+// out totals and lets newcomers catch up without hogging the court.
 const WAIT_WEIGHT = 1.0;
 const GAMES_WEIGHT = 0.15;
-const RANDOM_WEIGHT = 1.3;
+const RANDOM_WEIGHT = 2.5;
 
 /** Canonical (sorted) pair so each partnership has exactly one row. */
 function canonicalPair(x, y) {
