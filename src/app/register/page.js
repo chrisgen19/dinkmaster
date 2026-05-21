@@ -27,30 +27,57 @@ export default function RegisterPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters.');
-      return;
-    }
-    setLoading(true);
-    // `name` is Better Auth's core field; keep it populated as "First Last".
-    const name = `${firstName.trim()} ${lastName.trim()}`.trim();
-    const { error: signUpError } = await signUp.email({
-      name,
-      email,
-      password,
+
+    // Trim required text fields up front: HTML `required` accepts a
+    // whitespace-only value, which would otherwise reach the server as empty.
+    const trimmed = {
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       phone: phone.trim(),
       address: address.trim(),
-      birthday: new Date(birthday),
-      gender,
-    });
-    setLoading(false);
-    if (signUpError) {
-      setError(signUpError.message || 'Could not create account.');
+    };
+    if (
+      !trimmed.firstName ||
+      !trimmed.lastName ||
+      !trimmed.phone ||
+      !trimmed.address ||
+      !birthday ||
+      !gender
+    ) {
+      setError('Please complete all required fields.');
       return;
     }
-    router.push('/');
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // `name` is Better Auth's core field; keep it populated as "First Last".
+      const name = `${trimmed.firstName} ${trimmed.lastName}`;
+      const { error: signUpError } = await signUp.email({
+        name,
+        email,
+        password,
+        firstName: trimmed.firstName,
+        lastName: trimmed.lastName,
+        phone: trimmed.phone,
+        address: trimmed.address,
+        birthday: new Date(birthday),
+        gender,
+      });
+      if (signUpError) {
+        setError(signUpError.message || 'Could not create account.');
+        return;
+      }
+      router.push('/');
+    } catch (err) {
+      // Network or unexpected failure — surface it instead of hanging on "Creating…".
+      setError(err?.message || 'Could not create account.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
