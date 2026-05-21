@@ -28,6 +28,13 @@ const DEFAULT_PARTNERSHIPS = [
   { playerA: 'p3', playerB: 'p4', count: 1 },
 ];
 
+// Auto-mix priority weights (higher score = closer to the front of the rack).
+// WAIT dominates so nobody is starved; GAMES gently evens out totals and lets
+// newcomers catch up without hogging the court; RAND breaks up locked groups.
+const WAIT_WEIGHT = 1.0;
+const GAMES_WEIGHT = 0.15;
+const RANDOM_WEIGHT = 1.3;
+
 /** Canonical (sorted) pair so each partnership has exactly one row. */
 function canonicalPair(x, y) {
   return x < y ? [x, y] : [y, x];
@@ -147,9 +154,15 @@ export async function fillCourt(courtId) {
       // Remove exactly these four from the rack; bail if any slipped away meanwhile.
       const dequeued = await tx.player.updateMany({
         where: { id: { in: [p0, p1, p2, p3] }, queueOrder: { not: null } },
-        data: { gamesPlayed: { increment: 1 }, queueOrder: null },
+        data: { gamesPlayed: { increment: 1 }, queueOrder: null, waitRounds: 0 },
       });
       if (dequeued.count !== 4) throw new Error('QUEUE_CHANGED');
+
+      // Everyone still waiting was skipped this round.
+      await tx.player.updateMany({
+        where: { queueOrder: { not: null } },
+        data: { waitRounds: { increment: 1 } },
+      });
 
       // Pick the matchup with the fewest prior partnerships (random tie-break).
       const rows = await tx.partnership.findMany({
@@ -262,18 +275,27 @@ export async function endMatch(courtId, score1, score2, autoMix) {
   if (autoMix && queuedCount > 4) {
     const queued = await prisma.player.findMany({
       where: { queueOrder: { not: null } },
-      select: { id: true, gamesPlayed: true },
+      select: { id: true, gamesPlayed: true, waitRounds: true },
     });
-    // Fairness-aware mix: players with the fewest games come up first, with a
-    // random shuffle breaking ties. This bounds waiting and evens out play
-    // counts, while still mixing groups whenever counts are equal.
-    const mixed = shuffle(queued).sort((a, b) => a.gamesPlayed - b.gamesPlayed);
+    // Composite fairness: longest waiters first (anti-starvation), nudged by
+    // fewest games (evens totals, integrates newcomers), with randomness to
+    // keep the on-court four mixing instead of locking into the same group.
+    const maxGames = Math.max(...queued.map((p) => p.gamesPlayed));
+    const scored = queued
+      .map((p) => ({
+        id: p.id,
+        score:
+          WAIT_WEIGHT * p.waitRounds +
+          GAMES_WEIGHT * (maxGames - p.gamesPlayed) +
+          RANDOM_WEIGHT * Math.random(),
+      }))
+      .sort((a, b) => b.score - a.score);
     await prisma.$transaction(
-      mixed.map((p, i) =>
+      scored.map((p, i) =>
         prisma.player.update({ where: { id: p.id }, data: { queueOrder: i + 1 } }),
       ),
     );
-    notification = '⚡ Silo-Buster: Mixed the rack (fewest games up next) to keep matchups fresh and fair!';
+    notification = '⚡ Silo-Buster: Mixed the rack (longest-waiting up next) to keep matchups fresh and fair!';
   } else if (otherPlaying > 0) {
     notification = '💡 Recommended: Wait for other courts to finish before stacking again, to allow a complete mix of player pools!';
   }

@@ -19,6 +19,7 @@ model Player {
   wins        Int      @default(0)
   losses      Int      @default(0)
   queueOrder  Int? // null = not in queue; ascending = rack order
+  waitRounds  Int      @default(0) // consecutive rounds spent waiting (fairness)
   createdAt   DateTime @default(now())
 
   courtSlots CourtSlot[]
