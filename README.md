@@ -85,20 +85,27 @@ Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM
 
 Defined in [`prisma/schema.prisma`](prisma/schema.prisma):
 
+- **Arena** — an isolated session owned by a `User`. Players, courts, matches, and partnerships are all scoped by `arenaId`.
 - **Player** — `name`, `gamesPlayed`, `wins`, `losses`, `queueOrder` (null when not in the rack), `waitRounds`, `gamesOffset` (games credited at join so late joiners rotate as peers, not catch-up).
 - **Court** + **CourtSlot** — a court's live status and the four players assigned to it (a player can be on at most one court — DB-enforced).
 - **Match** + **MatchPlayer** — finished-match history with snapshotted player names.
 - **Partnership** — canonical pair counts powering the matchup optimiser.
-- **User** / **Session** / **Account** / **Verification** — Better Auth tables. Viewing the arena is public; managing it (registering players, running matches) requires a signed-in account.
+- **User** / **Session** / **Account** / **Verification** — Better Auth tables. Viewing any arena is public; managing one requires being its owner.
 
 ## Authentication
 
 Email + password auth via [Better Auth](https://www.better-auth.com), backed by the same PostgreSQL database through the Prisma adapter.
 
 - **Sign up** at `/register`, **sign in** at `/login`; the header shows the current user with a sign-out control.
-- **Viewing the arena is public.** Every mutating Server Action (`addPlayers`, `removePlayer`, `shuffleQueue`, `fillCourt`, `endMatch`, `addCourt`, `removeCourt`, `resetArena`) is gated behind a session via `requireUser()` — unauthenticated callers get a "please sign in" notice instead of a mutation.
+- **Viewing any arena is public.** Every mutating Server Action (`addPlayers`, `removePlayer`, `shuffleQueue`, `fillCourt`, `endMatch`, `addCourt`, `removeCourt`, `resetArena`, `renameArena`) is gated by `requireArenaOwner(arenaId)` — only the arena's owner can manage it. `createArena` only requires a signed-in account.
 - Sessions are cookie-backed; config lives in `src/lib/auth.js`, the browser client in `src/lib/auth-client.js`, and the catch-all API handler at `src/app/api/auth/[...all]/route.js`.
 - Requires `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` in `.env` (see `.env.example`).
+
+## Routing
+
+- `/` — public **arena directory**: lists every arena; signed-in users get a "create arena" form.
+- `/arena/[id]` — a single arena (rack, courts, match log). Public to view; the owner sees the management controls, everyone else sees it read-only.
+- `/login`, `/register` — auth pages.
 
 ## Roadmap
 
@@ -107,7 +114,7 @@ DINKMASTER is being built toward a **multi-tenant, multi-arena** system in phase
 | Phase | Scope | Status |
 |-------|-------|--------|
 | **1 — Auth foundation** | Better Auth user accounts; login/register pages; header sign-in/out; all arena mutations session-gated; arena view stays public. Destructive SQL seed removed. | ✅ Done |
-| **2 — Arenas** | `Arena` model + `arenaId` scoping on Player/Court/Match; each account owns its arena(s) (migration backfills existing data under an owner). | ⏳ Planned |
+| **2 — Arenas** | `Arena` model + `arenaId` scoping on Player/Court/Match/Partnership; create/own arenas; arena directory at `/` and per-arena routing at `/arena/[id]`; owner-only management. | ✅ Done |
 | **3 — Membership & roles** | `ArenaMembership` with **Owner / Organizer / Member** roles; public arena browse + join; permissions per role. | ⏳ Planned |
 | **4 — Player ↔ User linking** | Link a registered Player to a User account; per-user match-history and score views so people see their own stats. | ⏳ Planned |
 
@@ -118,20 +125,23 @@ Phase tracking and detailed scope live in the GitHub issues.
 ```text
 src/
   app/
-    page.js        Server Component — reads state, renders the arena
-    arena.js       Client UI (rack, courts, modals, badges)
-    actions.js     Server Actions — every mutation (session-gated) + rotation algorithm
-    auth-status.js Header sign-in / sign-out control
-    login/         Sign-in page
-    register/      Sign-up page
-    api/auth/      Better Auth catch-all route handler
+    page.js            Server Component — the public arena directory
+    arena/[id]/page.js Server Component — reads one arena's state, renders it
+    arena.js           Client UI (rack, courts, modals, badges)
+    actions.js         Server Actions — every mutation (owner-gated) + rotation algorithm
+    create-arena-form.js  Client form for creating an arena
+    auth-status.js     Header sign-in / sign-out control
+    login/             Sign-in page
+    register/          Sign-up page
+    api/auth/          Better Auth catch-all route handler
   lib/
     prisma.js      Prisma 7 client (node-postgres driver adapter)
-    data.js        getState() — the shape the UI consumes
+    data.js        getState(arenaId) — the shape the UI consumes
+    arenas.js      listArenas() / getArena() — arena directory reads
     matchmaking.js Shared thresholds/weights
     auth.js        Better Auth server instance
     auth-client.js Better Auth browser client
-    session.js     getCurrentUser() / requireUser() helpers
+    session.js     getCurrentUser() / requireUser() / requireArenaOwner() helpers
 prisma/            schema, migrations
 ```
 
@@ -154,4 +164,4 @@ prisma/            schema, migrations
 
 ## Security note
 
-As of Phase 1, every Server Action in `src/app/actions.js` (`resetArena`, `removePlayer`, `fillCourt`, etc.) is gated behind a Better Auth session via `requireUser()` — any signed-in user can manage the single shared arena. Per-arena ownership and role-based authorization arrive in Phases 2–3; until then, treat all authenticated users as trusted operators.
+As of Phase 2, every mutating Server Action in `src/app/actions.js` is gated by `requireArenaOwner(arenaId)` — only an arena's owner can manage it, and the check verifies both the session and ownership. `createArena` only requires a signed-in account. Finer-grained, role-based authorization (organizers, members) arrives in Phase 3.

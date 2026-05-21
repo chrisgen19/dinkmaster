@@ -1,9 +1,10 @@
 import { prisma } from '@/lib/prisma';
 
 /**
- * Build the full arena state in the exact shape the UI consumes.
- * Mirrors the original localStorage structure so the client stays unchanged.
+ * Build the full arena state in the exact shape the UI consumes, scoped to a
+ * single arena.
  *
+ * @param {string} arenaId - the arena whose players/courts/matches to read
  * @returns {Promise<{
  *   players: Array<{id:string,name:string,gamesPlayed:number,wins:number,losses:number,waitRounds:number}>,
  *   queue: string[],
@@ -12,12 +13,24 @@ import { prisma } from '@/lib/prisma';
  *   history: Record<string, Record<string, number>>
  * }>}
  */
-export async function getState() {
+export async function getState(arenaId) {
+  // Guard against an undefined arenaId: Prisma drops `where: { arenaId: undefined }`
+  // entirely, which would read every arena's data instead of one.
+  if (!arenaId) throw new Error('getState requires an arenaId');
+
   const [players, courts, matches, partnerships] = await Promise.all([
-    prisma.player.findMany({ orderBy: { createdAt: 'asc' } }),
-    prisma.court.findMany({ orderBy: { position: 'asc' }, include: { slots: true } }),
-    prisma.match.findMany({ orderBy: { createdAt: 'desc' }, include: { players: true } }),
-    prisma.partnership.findMany(),
+    prisma.player.findMany({ where: { arenaId }, orderBy: { createdAt: 'asc' } }),
+    prisma.court.findMany({
+      where: { arenaId },
+      orderBy: { position: 'asc' },
+      include: { slots: true },
+    }),
+    prisma.match.findMany({
+      where: { arenaId },
+      orderBy: { createdAt: 'desc' },
+      include: { players: true },
+    }),
+    prisma.partnership.findMany({ where: { arenaId } }),
   ]);
 
   const queue = players

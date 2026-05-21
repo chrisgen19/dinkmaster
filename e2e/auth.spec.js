@@ -5,7 +5,7 @@ const uniqueEmail = () => `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}@
 const PASSWORD = 'e2epassword123';
 
 test.describe('registration', () => {
-  test('creates an account and lands signed in on the arena', async ({ page }) => {
+  test('creates an account and lands signed in on the directory', async ({ page }) => {
     await page.goto('/register');
     await page.getByPlaceholder('Full name').fill('E2E Organizer');
     await page.getByPlaceholder('Email').fill(uniqueEmail());
