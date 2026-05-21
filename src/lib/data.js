@@ -6,7 +6,7 @@ import { prisma } from '@/lib/prisma';
  *
  * @param {string} arenaId - the arena whose players/courts/matches to read
  * @returns {Promise<{
- *   players: Array<{id:string,firstName:string,lastName:string|null,gamesPlayed:number,wins:number,losses:number,waitRounds:number}>,
+ *   players: Array<{id:string,userId:string|null,firstName:string,lastName:string|null,gamesPlayed:number,wins:number,losses:number,waitRounds:number}>,
  *   queue: string[],
  *   courts: Array<{id:string,name:string,status:string,team1:string[],team2:string[]}>,
  *   matchHistory: Array<{id:string,courtName:string,team1:Array<{id:string,firstName:string,lastName:string|null}>,team2:Array<{id:string,firstName:string,lastName:string|null}>,score1:number,score2:number,timestamp:string}>,
@@ -73,6 +73,7 @@ export async function getState(arenaId) {
   return {
     players: players.map((p) => ({
       id: p.id,
+      userId: p.userId,
       firstName: p.firstName,
       lastName: p.lastName,
       gamesPlayed: p.gamesPlayed,

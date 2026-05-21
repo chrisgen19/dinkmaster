@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import {
   addPlayer,
   removePlayer,
+  linkPlayerToMember,
   shuffleQueue,
   fillCourt,
   endMatch,
@@ -106,6 +107,24 @@ export default function Arena({
   const formatTimestamp = (iso) =>
     mounted ? new Date(iso).toLocaleString() : iso.replace('T', ' ').slice(0, 16);
 
+  // The viewer's own linked player in this arena (null for guests / non-players).
+  const myPlayer = viewerUserId
+    ? players.find((p) => p.userId === viewerUserId) ?? null
+    : null;
+  const myQueueIndex = myPlayer ? queue.indexOf(myPlayer.id) : -1;
+  // The viewer's finished matches, with their team's score and the outcome.
+  const myMatches = myPlayer
+    ? matchHistory.flatMap((m) => {
+        const inTeam1 = m.team1.some((p) => p.id === myPlayer.id);
+        const inTeam2 = m.team2.some((p) => p.id === myPlayer.id);
+        if (!inTeam1 && !inTeam2) return [];
+        const scoreFor = inTeam1 ? m.score1 : m.score2;
+        const scoreAgainst = inTeam1 ? m.score2 : m.score1;
+        const partners = (inTeam1 ? m.team1 : m.team2).filter((p) => p.id !== myPlayer.id);
+        return [{ ...m, scoreFor, scoreAgainst, won: scoreFor > scoreAgainst, partners }];
+      })
+    : [];
+
   // Apply a server action result to local state (state, error, notification).
   const applyResult = (result) => {
     if (!result) return;
@@ -160,6 +179,11 @@ export default function Arena({
   const handleRemovePlayer = (id) => {
     if (!canManage) return;
     run(() => removePlayer(arenaId, id));
+  };
+
+  const handleLinkPlayer = (playerId, userId) => {
+    if (!canManage || !userId) return;
+    run(() => linkPlayerToMember(arenaId, playerId, userId));
   };
 
   const handleTriggerScoreModal = (court) => {
@@ -433,6 +457,11 @@ export default function Arena({
                         <div>
                           <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
                             {fullName(player)}
+                            {player.userId && player.userId === viewerUserId && (
+                              <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                                you
+                              </span>
+                            )}
                             {player.waitRounds >= STARVE_THRESHOLD && (
                               <span
                                 className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
@@ -454,6 +483,22 @@ export default function Arena({
 
                       {canManage && (
                         <div className="flex items-center space-x-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+                          {!player.userId && members.length > 0 && (
+                            <select
+                              value=""
+                              onChange={(e) => handleLinkPlayer(player.id, e.target.value)}
+                              disabled={isPending}
+                              title="Link this walk-in to a member's account"
+                              className="text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-100 rounded-lg px-1.5 py-1 outline-none cursor-pointer disabled:opacity-50"
+                            >
+                              <option value="">Link…</option>
+                              {members.map((m) => (
+                                <option key={m.userId} value={m.userId}>
+                                  {m.name}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                           <button
                             onClick={() => handleRemovePlayer(player.id)}
                             className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:text-red-700 hover:bg-red-100 border border-red-100"
@@ -523,6 +568,18 @@ export default function Arena({
               >
                 Members
               </button>
+              {myPlayer && (
+                <button
+                  onClick={() => setActiveTab('mystats')}
+                  className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all ${
+                    activeTab === 'mystats'
+                      ? 'bg-slate-900 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
+                  }`}
+                >
+                  My Stats
+                </button>
+              )}
             </div>
 
             {canManage && (
@@ -682,6 +739,9 @@ export default function Arena({
                       <tr key={rowPlayer.id} className="border-b border-slate-200/60 hover:bg-white transition">
                         <td className="p-3 font-bold text-slate-700 border-r border-slate-200 sticky left-0 bg-slate-50">
                           {fullName(rowPlayer)}
+                          {rowPlayer.userId && rowPlayer.userId === viewerUserId && (
+                            <span className="text-emerald-600 font-normal"> (you)</span>
+                          )}
                         </td>
                         {players.map(colPlayer => {
                           const isSelf = rowPlayer.id === colPlayer.id;
@@ -805,6 +865,107 @@ export default function Arena({
               viewerUserId={viewerUserId}
               viewerRole={viewerRole}
             />
+          )}
+
+          {activeTab === 'mystats' && myPlayer && (
+            <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in">
+              <div>
+                <h3 className="text-sm font-extrabold uppercase tracking-widest text-slate-400">
+                  My Stats — {fullName(myPlayer)}
+                </h3>
+                <p className="text-xs text-slate-500 mt-1.5">
+                  Your record in this arena. Stats update as you finish matches.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { label: 'Games', value: myPlayer.gamesPlayed },
+                  { label: 'Wins', value: myPlayer.wins },
+                  { label: 'Losses', value: myPlayer.losses },
+                  {
+                    label: 'Win %',
+                    value:
+                      myPlayer.wins + myPlayer.losses > 0
+                        ? `${Math.round((myPlayer.wins / (myPlayer.wins + myPlayer.losses)) * 100)}%`
+                        : '—',
+                  },
+                ].map((s) => (
+                  <div key={s.label} className="bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-3 text-center">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      {s.label}
+                    </span>
+                    <span className="block text-xl font-extrabold text-slate-800 mt-0.5">{s.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-3">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Queue status
+                  </span>
+                  <span className="block text-sm font-bold text-slate-800 mt-0.5">
+                    {myQueueIndex >= 0
+                      ? `In the rack — position #${myQueueIndex + 1}`
+                      : courts.some(
+                            (c) => c.team1.includes(myPlayer.id) || c.team2.includes(myPlayer.id),
+                          )
+                        ? 'On a court'
+                        : 'Not in the rack'}
+                  </span>
+                </div>
+                <div className="bg-slate-50 border border-dashed border-slate-200 rounded-xl px-4 py-3">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Rating
+                  </span>
+                  <span className="block text-sm font-semibold text-slate-400 mt-0.5">Coming in Phase 6</span>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 mb-3">
+                  My matches ({myMatches.length})
+                </h4>
+                {myMatches.length === 0 ? (
+                  <div className="py-10 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/20 text-xs">
+                    No finished matches yet.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar pr-1">
+                    {myMatches.map((m) => (
+                      <div
+                        key={m.id}
+                        className="flex items-center justify-between gap-3 border border-slate-100 rounded-xl bg-slate-50/50 p-3"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-700 flex items-center gap-2">
+                            <span
+                              className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
+                                m.won ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
+                              }`}
+                            >
+                              {m.won ? 'Win' : 'Loss'}
+                            </span>
+                            <span className="truncate">
+                              with {m.partners.map((p) => p.firstName).join(' & ') || '—'}
+                            </span>
+                          </p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            {m.courtName} · {formatTimestamp(m.timestamp)}
+                          </p>
+                        </div>
+                        <span className="text-sm font-extrabold text-slate-800 shrink-0">
+                          {m.scoreFor}
+                          <span className="text-slate-300 font-normal"> : </span>
+                          {m.scoreAgainst}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           )}
 
         </div>

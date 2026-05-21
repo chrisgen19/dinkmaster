@@ -48,6 +48,51 @@ function shuffle(items) {
   return arr;
 }
 
+/**
+ * Create a player on an arena's rack inside a transaction: credit the current
+ * group-average `gamesOffset` (so a latecomer rotates as a peer, not catch-up)
+ * and append them to the bottom of the queue. The caller must hold `lockQueue`.
+ */
+async function addArenaPlayer(tx, arenaId, { userId = null, firstName, lastName }) {
+  const existing = await tx.player.findMany({
+    where: { arenaId },
+    select: { gamesPlayed: true, gamesOffset: true },
+  });
+  const gamesOffset = existing.length
+    ? Math.round(existing.reduce((sum, p) => sum + p.gamesPlayed + p.gamesOffset, 0) / existing.length)
+    : 0;
+  const order = (await maxQueueOrder(tx, arenaId)) + 1;
+  return tx.player.create({
+    data: { arenaId, userId, firstName, lastName: lastName || null, queueOrder: order, gamesOffset },
+  });
+}
+
+/**
+ * Remove a user from an arena inside a transaction: delete their linked player
+ * (and its partnership rows) and their non-owner membership. Returns false when
+ * the player is mid-match so the caller can abort. Caller must hold `lockQueue`.
+ */
+async function removeArenaMember(tx, arenaId, userId) {
+  const player = await tx.player.findUnique({
+    where: { arenaId_userId: { arenaId, userId } },
+    select: { id: true },
+  });
+  if (player) {
+    const onCourt = await tx.courtSlot.findFirst({
+      where: { playerId: player.id, court: { status: 'playing' } },
+    });
+    if (onCourt) return false;
+    await tx.partnership.deleteMany({
+      where: { arenaId, OR: [{ playerA: player.id }, { playerB: player.id }] },
+    });
+    await tx.player.deleteMany({ where: { id: player.id, arenaId } });
+  }
+  await tx.arenaMembership.deleteMany({
+    where: { arenaId, userId, role: { not: ROLES.OWNER } },
+  });
+  return true;
+}
+
 // --- Arena management -----------------------------------------------------
 
 /** Create a new arena owned by the current user, seeded with two courts. */
@@ -72,6 +117,16 @@ export async function createArena(nameInput) {
       // The creator is the OWNER member, so the members list is uniform.
       memberships: {
         create: { userId: guard.user.id, role: ROLES.OWNER },
+      },
+      // ...and the first player on the rack: a registered user is also a
+      // player. Brand-new arena, so queueOrder 1 and no gamesOffset.
+      players: {
+        create: {
+          userId: guard.user.id,
+          firstName: guard.user.firstName,
+          lastName: guard.user.lastName,
+          queueOrder: 1,
+        },
       },
     },
   });
@@ -109,19 +164,7 @@ export async function addPlayer(arenaId, firstNameInput, lastNameInput) {
 
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
-    // Credit the new player the current group's average ordering metric so they
-    // slot in as peers (no catch-up advantage for games they weren't here for).
-    const existing = await tx.player.findMany({
-      where: { arenaId },
-      select: { gamesPlayed: true, gamesOffset: true },
-    });
-    const gamesOffset = existing.length
-      ? Math.round(existing.reduce((sum, p) => sum + p.gamesPlayed + p.gamesOffset, 0) / existing.length)
-      : 0;
-    const order = (await maxQueueOrder(tx, arenaId)) + 1;
-    await tx.player.create({
-      data: { arenaId, firstName, lastName: lastName || null, queueOrder: order, gamesOffset },
-    });
+    await addArenaPlayer(tx, arenaId, { firstName, lastName });
   });
 
   return { state: await getState(arenaId) };
@@ -132,9 +175,19 @@ export async function removePlayer(arenaId, playerId) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
-  let blocked = false;
+  let blockedReason = '';
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
+    // A linked player is a registered member — removing them from the rack
+    // would orphan their membership. The owner must use the Members tab.
+    const player = await tx.player.findFirst({
+      where: { id: playerId, arenaId },
+      select: { userId: true },
+    });
+    if (player?.userId) {
+      blockedReason = 'MEMBER';
+      return;
+    }
     // Re-check under the lock: a concurrent fillCourt can't slip this player
     // onto a court between the check and the delete (which would cascade the
     // new slot and leave the court with three players).
@@ -142,7 +195,7 @@ export async function removePlayer(arenaId, playerId) {
       where: { playerId, player: { arenaId }, court: { status: 'playing' } },
     });
     if (slot) {
-      blocked = true;
+      blockedReason = 'PLAYING';
       return;
     }
     // Delete the player and their partnership rows together (no FK to cascade
@@ -155,12 +208,87 @@ export async function removePlayer(arenaId, playerId) {
     await tx.player.deleteMany({ where: { id: playerId, arenaId } });
   });
 
-  if (blocked) {
+  if (blockedReason === 'MEMBER') {
+    return {
+      error: 'This player has an account — remove them from the Members tab instead.',
+      state: await getState(arenaId),
+    };
+  }
+  if (blockedReason === 'PLAYING') {
     return {
       error: 'Cannot remove a player currently playing on court! Finish their match first.',
       state: await getState(arenaId),
     };
   }
+  return { state: await getState(arenaId) };
+}
+
+/**
+ * Link a temporary (walk-in) player to a registered member: the temp player
+ * keeps its id, stats, and queue position but gains a `userId`, and the
+ * member's auto-created player is merged away. Owner only. This is how a
+ * walk-in's record carries over once they have an account.
+ */
+export async function linkPlayerToMember(arenaId, playerId, userId) {
+  const guard = await requireArenaOwner(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  let reason = '';
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+
+    const temp = await tx.player.findFirst({
+      where: { id: playerId, arenaId },
+      select: { id: true, userId: true },
+    });
+    if (!temp) {
+      reason = 'NO_PLAYER';
+      return;
+    }
+    if (temp.userId) {
+      reason = 'ALREADY_LINKED';
+      return;
+    }
+
+    const membership = await tx.arenaMembership.findUnique({
+      where: { arenaId_userId: { arenaId, userId } },
+    });
+    if (!membership) {
+      reason = 'NOT_MEMBER';
+      return;
+    }
+
+    // Merge away the member's own auto-created player so the temp player
+    // becomes their single linked player (the @@unique([arenaId,userId])
+    // constraint also forbids two linked players for one user).
+    const ownPlayer = await tx.player.findUnique({
+      where: { arenaId_userId: { arenaId, userId } },
+      select: { id: true },
+    });
+    if (ownPlayer) {
+      const onCourt = await tx.courtSlot.findFirst({
+        where: { playerId: ownPlayer.id, court: { status: 'playing' } },
+      });
+      if (onCourt) {
+        reason = 'MEMBER_PLAYING';
+        return;
+      }
+      await tx.partnership.deleteMany({
+        where: { arenaId, OR: [{ playerA: ownPlayer.id }, { playerB: ownPlayer.id }] },
+      });
+      await tx.player.deleteMany({ where: { id: ownPlayer.id, arenaId } });
+    }
+
+    await tx.player.update({ where: { id: temp.id }, data: { userId } });
+  });
+
+  const messages = {
+    NO_PLAYER: 'That player no longer exists.',
+    ALREADY_LINKED: 'That player is already linked to an account.',
+    NOT_MEMBER: 'That user must join the arena before they can be linked.',
+    MEMBER_PLAYING: 'That member is on a court. Finish their match first.',
+  };
+  if (reason) return { error: messages[reason], state: await getState(arenaId) };
   return { state: await getState(arenaId) };
 }
 
@@ -495,7 +623,11 @@ export async function resetArena(arenaId) {
 
 // --- Membership (Phase 3) -------------------------------------------------
 
-/** Join an arena as a MEMBER. Idempotent; the owner is already a member. */
+/**
+ * Join an arena: become a MEMBER and a queued player on the rack. Idempotent
+ * — a repeated join keeps the existing role and player. The owner already has
+ * both from `createArena`.
+ */
 export async function joinArena(arenaId) {
   const guard = await requireUser();
   if (guard.error) return { error: guard.error };
@@ -505,15 +637,30 @@ export async function joinArena(arenaId) {
   if (!arena) return { error: 'Arena not found.' };
   if (arena.ownerId === guard.user.id) return { ok: true };
 
-  await prisma.arenaMembership.upsert({
-    where: { arenaId_userId: { arenaId, userId: guard.user.id } },
-    create: { arenaId, userId: guard.user.id, role: ROLES.MEMBER },
-    update: {}, // already a member — keep the existing role
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+    await tx.arenaMembership.upsert({
+      where: { arenaId_userId: { arenaId, userId: guard.user.id } },
+      create: { arenaId, userId: guard.user.id, role: ROLES.MEMBER },
+      update: {}, // already a member — keep the existing role
+    });
+    // A registered user is also a player. Skip if they already have one
+    // (repeated join, or they were added some other way).
+    const existing = await tx.player.findUnique({
+      where: { arenaId_userId: { arenaId, userId: guard.user.id } },
+    });
+    if (!existing) {
+      await addArenaPlayer(tx, arenaId, {
+        userId: guard.user.id,
+        firstName: guard.user.firstName,
+        lastName: guard.user.lastName,
+      });
+    }
   });
   return { ok: true };
 }
 
-/** Leave an arena. The owner must transfer ownership before leaving. */
+/** Leave an arena: drop your membership and your rack player. */
 export async function leaveArena(arenaId) {
   const guard = await requireUser();
   if (guard.error) return { error: guard.error };
@@ -525,7 +672,14 @@ export async function leaveArena(arenaId) {
     return { error: 'The owner cannot leave. Transfer ownership first.' };
   }
 
-  await prisma.arenaMembership.deleteMany({ where: { arenaId, userId: guard.user.id } });
+  let removed = true;
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+    removed = await removeArenaMember(tx, arenaId, guard.user.id);
+  });
+  if (!removed) {
+    return { error: 'Finish your current match before leaving the arena.' };
+  }
   return { ok: true };
 }
 
@@ -550,7 +704,10 @@ export async function updateMemberRole(arenaId, userId, role) {
   return { ok: true };
 }
 
-/** Remove a member from the arena (owner only). The owner cannot be removed. */
+/**
+ * Remove a member from the arena (owner only): drops their membership and
+ * their rack player. The owner cannot be removed.
+ */
 export async function removeMember(arenaId, userId) {
   const guard = await requireArenaOwner(arenaId);
   if (guard.error) return { error: guard.error };
@@ -558,9 +715,15 @@ export async function removeMember(arenaId, userId) {
   if (userId === guard.arena.ownerId) {
     return { error: 'The owner cannot be removed.' };
   }
-  await prisma.arenaMembership.deleteMany({
-    where: { arenaId, userId, role: { not: ROLES.OWNER } },
+
+  let removed = true;
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+    removed = await removeArenaMember(tx, arenaId, userId);
   });
+  if (!removed) {
+    return { error: 'That member is on a court. Finish their match first.' };
+  }
   return { ok: true };
 }
 

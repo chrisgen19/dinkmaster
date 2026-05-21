@@ -57,6 +57,7 @@ const OWNER_ONLY = [
   ['updateMemberRole', () => actions.updateMemberRole(ARENA, 'u2', ROLES.ORGANIZER)],
   ['removeMember', () => actions.removeMember(ARENA, 'u2')],
   ['transferOwnership', () => actions.transferOwnership(ARENA, 'u2')],
+  ['linkPlayerToMember', () => actions.linkPlayerToMember(ARENA, 'p1', 'u2')],
 ];
 // Any signed-in user (requireUser).
 const USER_GATED = [
@@ -119,9 +120,12 @@ describe('arena server actions — authorization', () => {
     it('removePlayer() scopes both deletes to the arena (no cross-arena delete)', async () => {
       const tx = {
         $executeRaw: vi.fn(),
+        player: {
+          findFirst: vi.fn().mockResolvedValue({ userId: null }), // a temp player
+          deleteMany: vi.fn(),
+        },
         courtSlot: { findFirst: vi.fn().mockResolvedValue(null) },
         partnership: { deleteMany: vi.fn() },
-        player: { deleteMany: vi.fn() },
       };
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
@@ -130,6 +134,23 @@ describe('arena server actions — authorization', () => {
       expect(tx.player.deleteMany).toHaveBeenCalledWith({
         where: { id: 'player-from-another-arena', arenaId: ARENA },
       });
+    });
+
+    it('removePlayer() refuses to remove a linked (member) player', async () => {
+      const tx = {
+        $executeRaw: vi.fn(),
+        player: {
+          findFirst: vi.fn().mockResolvedValue({ userId: 'u9' }), // a linked player
+          deleteMany: vi.fn(),
+        },
+        courtSlot: { findFirst: vi.fn() },
+        partnership: { deleteMany: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.removePlayer(ARENA, 'linked-player');
+      expect(result.error).toMatch(/Members tab/i);
+      expect(tx.player.deleteMany).not.toHaveBeenCalled();
     });
 
     it('updateMemberRole() rejects an unknown role', async () => {
@@ -155,6 +176,46 @@ describe('arena server actions — authorization', () => {
       const result = await actions.leaveArena(ARENA);
       expect(result.error).toBeTruthy();
       expect(prisma.arenaMembership.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('joinArena() makes the user a member and a queued player', async () => {
+      prisma.arena.findUnique.mockResolvedValue({ id: ARENA, ownerId: 'u2' });
+      const tx = {
+        $executeRaw: vi.fn(),
+        arenaMembership: { upsert: vi.fn() },
+        player: {
+          findUnique: vi.fn().mockResolvedValue(null), // no existing linked player
+          findMany: vi.fn().mockResolvedValue([]),
+          aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: null } }),
+          create: vi.fn(),
+        },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.joinArena(ARENA);
+      expect(tx.arenaMembership.upsert).toHaveBeenCalled();
+      expect(tx.player.create).toHaveBeenCalled();
+    });
+
+    it('removeMember() removes the member and their linked player', async () => {
+      const tx = {
+        $executeRaw: vi.fn(),
+        player: {
+          findUnique: vi.fn().mockResolvedValue({ id: 'p-linked' }),
+          deleteMany: vi.fn(),
+        },
+        courtSlot: { findFirst: vi.fn().mockResolvedValue(null) },
+        partnership: { deleteMany: vi.fn() },
+        arenaMembership: { deleteMany: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.removeMember(ARENA, 'u2');
+      expect(result.error).toBeUndefined();
+      expect(tx.player.deleteMany).toHaveBeenCalledWith({
+        where: { id: 'p-linked', arenaId: ARENA },
+      });
+      expect(tx.arenaMembership.deleteMany).toHaveBeenCalled();
     });
   });
 });

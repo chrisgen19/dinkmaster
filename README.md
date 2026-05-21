@@ -86,11 +86,11 @@ Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM
 Defined in [`prisma/schema.prisma`](prisma/schema.prisma):
 
 - **Arena** — an isolated session owned by a `User`. Players, courts, matches, and partnerships are all scoped by `arenaId`.
-- **Player** — `name`, `gamesPlayed`, `wins`, `losses`, `queueOrder` (null when not in the rack), `waitRounds`, `gamesOffset` (games credited at join so late joiners rotate as peers, not catch-up).
+- **Player** — a rack entry: `firstName`/`lastName`, `gamesPlayed`, `wins`, `losses`, `queueOrder` (null when not in the rack), `waitRounds`, `gamesOffset` (games credited at join so late joiners rotate as peers, not catch-up). `userId` links the player to a registered account; it is null for temporary walk-in players.
 - **Court** + **CourtSlot** — a court's live status and the four players assigned to it (a player can be on at most one court — DB-enforced).
 - **Match** + **MatchPlayer** — finished-match history with snapshotted player names.
 - **Partnership** — canonical pair counts powering the matchup optimiser.
-- **ArenaMembership** — a user's role in an arena (`OWNER` / `ORGANIZER` / `MEMBER`), one row per `(arena, user)` pair.
+- **ArenaMembership** — a user's role in an arena (`OWNER` / `ORGANIZER` / `MEMBER`), one row per `(arena, user)` pair. A member always has a linked `Player` row, and vice versa.
 - **User** / **Session** / **Account** / **Verification** — Better Auth tables.
 
 ## Authentication
@@ -111,14 +111,15 @@ Viewing any arena is public. Managing one depends on the caller's `ArenaMembersh
 | **Organizer** | Run the full session: add/remove players & courts, fill courts, end matches, shuffle, reset |
 | **Member** | View the arena; can leave |
 
-- Any signed-in user can **join** any arena (as `MEMBER`) or **create** their own.
-- The 8 play actions are gated by `requireArenaManager(arenaId)` (owner or organizer); owner-only actions (`renameArena`, `updateMemberRole`, `removeMember`, `transferOwnership`) by `requireArenaOwner(arenaId)`.
+- Any signed-in user can **join** any arena — becoming a `MEMBER` and a queued player — or **create** their own.
+- Play actions are gated by `requireArenaManager(arenaId)` (owner or organizer); owner-only actions (`renameArena`, `updateMemberRole`, `removeMember`, `transferOwnership`, `linkPlayerToMember`) by `requireArenaOwner(arenaId)`.
 - `Arena.ownerId` stays the canonical owner; the owner also has an `OWNER` membership row, kept in sync on transfer.
 
 ## Routing
 
 - `/` — public **arena directory**: lists every arena; signed-in users get a "create arena" form.
-- `/arena/[id]` — a single arena (rack, courts, match log, members). Public to view; owners and organizers see management controls, members see it read-only, and non-members get a "join" prompt.
+- `/arena/[id]` — a single arena (rack, courts, match log, members, my stats). Public to view; owners and organizers see management controls, members see it read-only, and non-members get a "join" prompt.
+- `/profile` — your account: aggregate stats and match history across every arena you play in.
 - `/login`, `/register` — auth pages.
 
 ## Roadmap
@@ -130,7 +131,9 @@ DINKMASTER is being built toward a **multi-tenant, multi-arena** system in phase
 | **1 — Auth foundation** | Better Auth user accounts; login/register pages; header sign-in/out; all arena mutations session-gated; arena view stays public. Destructive SQL seed removed. | ✅ Done |
 | **2 — Arenas** | `Arena` model + `arenaId` scoping on Player/Court/Match/Partnership; create/own arenas; arena directory at `/` and per-arena routing at `/arena/[id]`; owner-only management. | ✅ Done |
 | **3 — Membership & roles** | `ArenaMembership` with **Owner / Organizer / Member** roles; public join/leave; promote/demote/remove members; transfer ownership. | ✅ Done |
-| **4 — Player ↔ User linking** | Link a registered Player to a User account; per-user match-history and score views so people see their own stats. | ⏳ Planned |
+| **4 — Player ↔ User linking** | `Player.userId` links rack entries to accounts; creating or joining an arena auto-adds you as a queued player; owners can link walk-ins to members; per-arena **My Stats** tab and a global **/profile** page. Temporary players kept for walk-ins. | ✅ Done |
+| **5 — Join approval** | Public arenas; anyone can request to join, and the owner approves before they're in. | ⏳ Planned |
+| **6 — Skill rating** | A computed Elo/DUPR-style rating that moves per match, surfaced in the stats views. | ⏳ Planned |
 
 Phase tracking and detailed scope live in the GitHub issues.
 

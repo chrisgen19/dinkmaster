@@ -54,11 +54,14 @@ model ArenaMembership {
   @@index([userId])
 }
 
-/// A registered player. `queueOrder` is the position in the paddle rack
-/// (null when the player is on a court or otherwise not waiting).
+/// A player on an arena's rack. `queueOrder` is the position in the paddle
+/// rack (null when the player is on a court or otherwise not waiting).
+/// `userId` links the player to a registered account; it is null for
+/// temporary walk-in players who have no account.
 model Player {
   id          String   @id @default(cuid())
   arenaId     String
+  userId      String? // null = temporary walk-in player; set = a registered user
   firstName   String
   lastName    String? // optional: walk-ins often go by first name only
   gamesPlayed Int      @default(0)
@@ -72,10 +75,13 @@ model Player {
   createdAt   DateTime @default(now())
 
   arena      Arena       @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
   courtSlots CourtSlot[]
 
+  @@unique([arenaId, userId]) // one linked player per user per arena (multiple NULLs allowed)
   @@index([arenaId])
   @@index([queueOrder])
+  @@index([userId])
 }
 
 /// A physical court. `position` orders the courts in the UI.
@@ -160,8 +166,8 @@ model Partnership {
 // types must match Better Auth's defaults; Better Auth generates the `id`
 // values itself (no @default here). See https://www.better-auth.com.
 
-/// An authenticated account. Owns arenas and (in a later phase) can be
-/// linked to a Player so people see their own match history and scores.
+/// An authenticated account. Owns arenas and is linked to a Player in each
+/// arena it plays in, so people see their own match history and scores.
 model User {
   id            String   @id
   name          String // Better Auth core field; stored as "First Last"
@@ -181,6 +187,7 @@ model User {
   accounts    Account[]
   arenas      Arena[]
   memberships ArenaMembership[]
+  players     Player[]
 }
 
 /// A signed-in session (cookie-backed).

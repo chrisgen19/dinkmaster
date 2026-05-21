@@ -68,3 +68,80 @@ export async function getUserMemberships(userId) {
     select: { arenaId: true, role: true },
   });
 }
+
+/**
+ * Aggregate a user's player record across every arena they play in — powers
+ * the global `/profile` page.
+ * @param {string} userId
+ * @returns {Promise<{
+ *   totals:{arenas:number,gamesPlayed:number,wins:number,losses:number,winPct:number},
+ *   arenas:Array<{arenaId:string,arenaName:string,gamesPlayed:number,wins:number,losses:number,queueOrder:number|null}>,
+ *   recentMatches:Array<{matchId:string,arenaName:string,courtName:string,won:boolean,scoreFor:number,scoreAgainst:number,timestamp:string}>
+ * }>}
+ */
+export async function getUserPlayerStats(userId) {
+  const players = await prisma.player.findMany({
+    where: { userId },
+    include: { arena: { select: { name: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const sum = players.reduce(
+    (acc, p) => ({
+      gamesPlayed: acc.gamesPlayed + p.gamesPlayed,
+      wins: acc.wins + p.wins,
+      losses: acc.losses + p.losses,
+    }),
+    { gamesPlayed: 0, wins: 0, losses: 0 },
+  );
+  const decided = sum.wins + sum.losses;
+
+  const arenas = players.map((p) => ({
+    arenaId: p.arenaId,
+    arenaName: p.arena.name,
+    gamesPlayed: p.gamesPlayed,
+    wins: p.wins,
+    losses: p.losses,
+    queueOrder: p.queueOrder,
+  }));
+
+  // Recent matches across all the user's arenas. `MatchPlayer.playerId` is a
+  // plain id snapshot (no FK), so it is matched against the user's player ids.
+  const playerIds = players.map((p) => p.id);
+  const matchPlayers = playerIds.length
+    ? await prisma.matchPlayer.findMany({
+        where: { playerId: { in: playerIds } },
+        include: { match: { include: { arena: { select: { name: true } } } } },
+        orderBy: { match: { createdAt: 'desc' } },
+        take: 20,
+      })
+    : [];
+
+  const recentMatches = matchPlayers.map((mp) => {
+    const m = mp.match;
+    const scoreFor = mp.team === 1 ? m.score1 : m.score2;
+    const scoreAgainst = mp.team === 1 ? m.score2 : m.score1;
+    return {
+      matchId: m.id,
+      arenaName: m.arena.name,
+      courtName: m.courtName,
+      won: scoreFor > scoreAgainst,
+      scoreFor,
+      scoreAgainst,
+      // ISO string; formatted client-side in the viewer's locale.
+      timestamp: new Date(m.createdAt).toISOString(),
+    };
+  });
+
+  return {
+    totals: {
+      arenas: players.length,
+      gamesPlayed: sum.gamesPlayed,
+      wins: sum.wins,
+      losses: sum.losses,
+      winPct: decided ? Math.round((sum.wins / decided) * 100) : 0,
+    },
+    arenas,
+    recentMatches,
+  };
+}
