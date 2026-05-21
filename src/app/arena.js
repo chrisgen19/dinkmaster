@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useTransition } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   addPlayers,
   removePlayer,
@@ -11,9 +12,11 @@ import {
   addCourt,
   removeCourt,
   resetArena,
+  joinArena,
 } from './actions';
 import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { AuthStatus } from './auth-status';
+import { ArenaMembers } from './arena-members';
 
 const playPaddleSound = () => {
   try {
@@ -58,7 +61,17 @@ const playPaddleSound = () => {
   }
 };
 
-export default function Arena({ initialState, arenaId, arenaName, canManage }) {
+export default function Arena({
+  initialState,
+  arenaId,
+  arenaName,
+  canManage,
+  viewerRole,
+  viewerUserId,
+  isAuthenticated,
+  members,
+}) {
+  const router = useRouter();
   const [players, setPlayers] = useState(initialState.players);
   const [queue, setQueue] = useState(initialState.queue);
   const [courts, setCourts] = useState(initialState.courts);
@@ -172,6 +185,18 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
     run(() => resetArena(arenaId));
   };
 
+  // Join the arena as a member, then refresh so the server recomputes roles.
+  const handleJoin = () => {
+    startTransition(async () => {
+      const result = await joinArena(arenaId);
+      if (result?.error) {
+        setErrorMsg(result.error);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans selection:bg-emerald-100 selection:text-slate-900">
 
@@ -229,9 +254,29 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
       </header>
 
       {!canManage && (
-        <div className="mx-4 md:mx-8 mt-4 p-3 bg-slate-100 border border-slate-200 text-slate-600 rounded-xl text-xs font-medium flex items-center gap-2">
-          <span>👁️</span>
-          <span>You&apos;re viewing this arena. Only its owner can register players, run matches, or edit it.</span>
+        <div className="mx-4 md:mx-8 mt-4 p-3 bg-slate-100 border border-slate-200 text-slate-600 rounded-xl text-xs font-medium flex flex-wrap items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <span>👁️</span>
+            <span>
+              {viewerRole
+                ? "You're a member of this arena. An owner can promote you to organizer to manage it."
+                : "You're viewing this arena. Only its owner and organizers can manage it."}
+            </span>
+          </span>
+          {isAuthenticated && !viewerRole && (
+            <button
+              onClick={handleJoin}
+              disabled={isPending}
+              className="text-xs bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold px-3 py-1.5 rounded-lg transition shrink-0"
+            >
+              Join this arena
+            </button>
+          )}
+          {!isAuthenticated && (
+            <Link href="/login" className="text-xs text-emerald-700 font-bold hover:underline shrink-0">
+              Sign in to join
+            </Link>
+          )}
         </div>
       )}
 
@@ -453,6 +498,16 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
                 }`}
               >
                 Match Log
+              </button>
+              <button
+                onClick={() => setActiveTab('members')}
+                className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all ${
+                  activeTab === 'members'
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
+                }`}
+              >
+                Members
               </button>
             </div>
 
@@ -727,6 +782,15 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
                 </div>
               )}
             </div>
+          )}
+
+          {activeTab === 'members' && (
+            <ArenaMembers
+              arenaId={arenaId}
+              members={members}
+              viewerUserId={viewerUserId}
+              viewerRole={viewerRole}
+            />
           )}
 
         </div>

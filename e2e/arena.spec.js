@@ -48,9 +48,33 @@ test.describe('arenas', () => {
 
     // Sign out, then revisit the arena as a guest — viewing works, managing is locked.
     await page.getByRole('button', { name: 'Sign out' }).click();
-    await expect(page.getByRole('link', { name: 'Sign in' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
     await page.goto(arenaUrl);
     await expect(page.getByRole('heading', { name: arenaName })).toBeVisible();
     await expect(page.getByPlaceholder('Sign in as the owner to add players')).toBeDisabled();
+  });
+
+  test('a second user can join an arena', async ({ page }) => {
+    // User A creates an arena.
+    await registerFreshUser(page);
+    const arenaName = `Joinable Arena ${Date.now()}`;
+    await page.getByPlaceholder(/New arena name/).fill(arenaName);
+    await page.getByRole('button', { name: 'Create arena' }).click();
+    await expect(page).toHaveURL(/\/arena\/.+/);
+    const arenaUrl = page.url();
+
+    // User A signs out; user B registers and opens the arena.
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
+    await registerFreshUser(page);
+    await page.goto(arenaUrl);
+
+    // User B is not a member yet — join, then the member banner replaces the CTA.
+    const joinButton = page.getByRole('button', { name: 'Join this arena' });
+    await expect(joinButton).toBeVisible();
+    await joinButton.click();
+
+    await expect(page.getByText(/You're a member of this arena/)).toBeVisible();
+    await expect(joinButton).toBeHidden();
   });
 });

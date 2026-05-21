@@ -18,13 +18,32 @@ model Arena {
   ownerId   String
   createdAt DateTime @default(now())
 
-  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner        User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   players      Player[]
   courts       Court[]
   matches      Match[]
   partnerships Partnership[]
+  memberships  ArenaMembership[]
 
   @@index([ownerId])
+}
+
+/// A user's role within an arena. The owner is tracked canonically by
+/// `Arena.ownerId`; their membership row mirrors it with role OWNER and is
+/// kept in sync on ownership transfer. Roles: OWNER | ORGANIZER | MEMBER.
+model ArenaMembership {
+  id        String   @id @default(cuid())
+  arenaId   String
+  userId    String
+  role      String
+  createdAt DateTime @default(now())
+
+  arena Arena @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([arenaId, userId])
+  @@index([arenaId])
+  @@index([userId])
 }
 
 /// A registered player. `queueOrder` is the position in the paddle rack
@@ -142,9 +161,10 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  sessions Session[]
-  accounts Account[]
-  arenas   Arena[]
+  sessions    Session[]
+  accounts    Account[]
+  arenas      Arena[]
+  memberships ArenaMembership[]
 }
 
 /// A signed-in session (cookie-backed).

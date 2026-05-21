@@ -2,7 +2,8 @@
 
 import { prisma } from '@/lib/prisma';
 import { getState } from '@/lib/data';
-import { requireUser, requireArenaOwner } from '@/lib/session';
+import { requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
+import { ROLES } from '@/lib/roles';
 import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
 
 /** Canonical (sorted) pair so each partnership has exactly one row. */
@@ -68,6 +69,10 @@ export async function createArena(nameInput) {
           { name: 'Court 2', position: 2 },
         ],
       },
+      // The creator is the OWNER member, so the members list is uniform.
+      memberships: {
+        create: { userId: guard.user.id, role: ROLES.OWNER },
+      },
     },
   });
 
@@ -91,7 +96,7 @@ export async function renameArena(arenaId, nameInput) {
 
 /** Add players (comma-separated names) to the bottom of the rack. */
 export async function addPlayers(arenaId, namesString) {
-  const guard = await requireArenaOwner(arenaId);
+  const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
   const names = (namesString ?? '')
@@ -123,7 +128,7 @@ export async function addPlayers(arenaId, namesString) {
 
 /** Remove a player, unless they are mid-match on a court. */
 export async function removePlayer(arenaId, playerId) {
-  const guard = await requireArenaOwner(arenaId);
+  const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
   let blocked = false;
@@ -160,7 +165,7 @@ export async function removePlayer(arenaId, playerId) {
 
 /** Randomly reorder everyone currently waiting in the rack. */
 export async function shuffleQueue(arenaId) {
-  const guard = await requireArenaOwner(arenaId);
+  const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
   let shuffledAny = false;
@@ -190,7 +195,7 @@ export async function shuffleQueue(arenaId) {
 
 /** Stack the top 4 waiting players onto a court using the lowest-partnership matchup. */
 export async function fillCourt(arenaId, courtId) {
-  const guard = await requireArenaOwner(arenaId);
+  const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
   try {
@@ -275,7 +280,7 @@ export async function fillCourt(arenaId, courtId) {
 
 /** Record a finished match's score, update records, and recycle players to the rack. */
 export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
-  const guard = await requireArenaOwner(arenaId);
+  const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
   const s1 = parseInt(score1, 10) || 0;
@@ -403,7 +408,7 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
 
 /** Add a new vacant court at the end. */
 export async function addCourt(arenaId) {
-  const guard = await requireArenaOwner(arenaId);
+  const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
   // Serialize under the queue lock so concurrent adds can't read the same
@@ -422,7 +427,7 @@ export async function addCourt(arenaId) {
 
 /** Remove a court, unless a game is in progress on it. */
 export async function removeCourt(arenaId, courtId) {
-  const guard = await requireArenaOwner(arenaId);
+  const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
   let blocked = false;
@@ -458,7 +463,7 @@ export async function removeCourt(arenaId, courtId) {
  * Players and courts themselves are kept.
  */
 export async function resetArena(arenaId) {
-  const guard = await requireArenaOwner(arenaId);
+  const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
   await prisma.$transaction(async (tx) => {
@@ -484,4 +489,112 @@ export async function resetArena(arenaId) {
   });
 
   return { state: await getState(arenaId) };
+}
+
+// --- Membership (Phase 3) -------------------------------------------------
+
+/** Join an arena as a MEMBER. Idempotent; the owner is already a member. */
+export async function joinArena(arenaId) {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error };
+
+  const arena = await prisma.arena.findUnique({ where: { id: arenaId } });
+  if (!arena) return { error: 'Arena not found.' };
+  if (arena.ownerId === guard.user.id) return { ok: true };
+
+  await prisma.arenaMembership.upsert({
+    where: { arenaId_userId: { arenaId, userId: guard.user.id } },
+    create: { arenaId, userId: guard.user.id, role: ROLES.MEMBER },
+    update: {}, // already a member — keep the existing role
+  });
+  return { ok: true };
+}
+
+/** Leave an arena. The owner must transfer ownership before leaving. */
+export async function leaveArena(arenaId) {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error };
+
+  const arena = await prisma.arena.findUnique({ where: { id: arenaId } });
+  if (!arena) return { error: 'Arena not found.' };
+  if (arena.ownerId === guard.user.id) {
+    return { error: 'The owner cannot leave. Transfer ownership first.' };
+  }
+
+  await prisma.arenaMembership.deleteMany({ where: { arenaId, userId: guard.user.id } });
+  return { ok: true };
+}
+
+/** Promote or demote a member between ORGANIZER and MEMBER (owner only). */
+export async function updateMemberRole(arenaId, userId, role) {
+  const guard = await requireArenaOwner(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  if (role !== ROLES.ORGANIZER && role !== ROLES.MEMBER) {
+    return { error: 'Invalid role.' };
+  }
+  if (userId === guard.arena.ownerId) {
+    return { error: "The owner's role cannot be changed here." };
+  }
+
+  // role: { not: OWNER } is belt-and-suspenders — never touch the owner row.
+  const updated = await prisma.arenaMembership.updateMany({
+    where: { arenaId, userId, role: { not: ROLES.OWNER } },
+    data: { role },
+  });
+  if (updated.count === 0) return { error: 'That user is not a member of this arena.' };
+  return { ok: true };
+}
+
+/** Remove a member from the arena (owner only). The owner cannot be removed. */
+export async function removeMember(arenaId, userId) {
+  const guard = await requireArenaOwner(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  if (userId === guard.arena.ownerId) {
+    return { error: 'The owner cannot be removed.' };
+  }
+  await prisma.arenaMembership.deleteMany({
+    where: { arenaId, userId, role: { not: ROLES.OWNER } },
+  });
+  return { ok: true };
+}
+
+/**
+ * Transfer ownership to another member. The new owner must already be a
+ * member; the previous owner stays on as an ORGANIZER.
+ */
+export async function transferOwnership(arenaId, newOwnerUserId) {
+  const guard = await requireArenaOwner(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  const prevOwnerId = guard.arena.ownerId;
+  if (newOwnerUserId === prevOwnerId) {
+    return { error: 'That user already owns this arena.' };
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const target = await tx.arenaMembership.findUnique({
+        where: { arenaId_userId: { arenaId, userId: newOwnerUserId } },
+      });
+      if (!target) throw new Error('NOT_A_MEMBER');
+
+      await tx.arena.update({ where: { id: arenaId }, data: { ownerId: newOwnerUserId } });
+      await tx.arenaMembership.update({
+        where: { arenaId_userId: { arenaId, userId: newOwnerUserId } },
+        data: { role: ROLES.OWNER },
+      });
+      await tx.arenaMembership.update({
+        where: { arenaId_userId: { arenaId, userId: prevOwnerId } },
+        data: { role: ROLES.ORGANIZER },
+      });
+    });
+  } catch (err) {
+    if (err?.message === 'NOT_A_MEMBER') {
+      return { error: 'The new owner must join the arena as a member first.' };
+    }
+    throw err;
+  }
+  return { ok: true };
 }
