@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useTransition } from 'react';
 import Link from 'next/link';
 import {
-  addPlayers,
+  addPlayer,
   removePlayer,
   shuffleQueue,
   fillCourt,
@@ -14,6 +14,9 @@ import {
 } from './actions';
 import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { AuthStatus } from './auth-status';
+
+/** Display name: "First Last", or just "First" when no last name is set. */
+const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
 
 const playPaddleSound = () => {
   try {
@@ -72,7 +75,8 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
   const [team1Score, setTeam1Score] = useState(11);
   const [team2Score, setTeam2Score] = useState(11);
 
-  const [newPlayerName, setNewPlayerName] = useState('');
+  const [newFirstName, setNewFirstName] = useState('');
+  const [newLastName, setNewLastName] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [activeTab, setActiveTab] = useState('courts');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -130,12 +134,14 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
     run(() => fillCourt(arenaId, courtId));
   };
 
-  const handleAddPlayers = (e) => {
+  const handleAddPlayer = (e) => {
     e.preventDefault();
-    if (!canManage || !newPlayerName.trim()) return;
-    const names = newPlayerName;
-    setNewPlayerName('');
-    run(() => addPlayers(arenaId, names));
+    if (!canManage || !newFirstName.trim()) return;
+    const first = newFirstName;
+    const last = newLastName;
+    setNewFirstName('');
+    setNewLastName('');
+    run(() => addPlayer(arenaId, first, last));
   };
 
   const handleRemovePlayer = (id) => {
@@ -261,18 +267,26 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
                 Register Players
               </h3>
               <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-2 py-0.5 rounded-md">
-                Separated by commas
+                One player at a time
               </span>
             </div>
 
-            <form onSubmit={handleAddPlayers} className="flex gap-2">
+            <form onSubmit={handleAddPlayer} className="flex gap-2">
               <input
                 type="text"
-                placeholder={canManage ? 'e.g. Bradley, Jane, Chloe' : 'Sign in as the owner to add players'}
-                value={newPlayerName}
-                onChange={(e) => setNewPlayerName(e.target.value)}
+                placeholder={canManage ? 'First name' : 'Sign in as the owner to add players'}
+                value={newFirstName}
+                onChange={(e) => setNewFirstName(e.target.value)}
                 disabled={!canManage}
-                className="flex-1 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400 disabled:opacity-60 disabled:cursor-not-allowed"
+                className="flex-1 min-w-0 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400 disabled:opacity-60 disabled:cursor-not-allowed"
+              />
+              <input
+                type="text"
+                placeholder={canManage ? 'Last name (optional)' : ''}
+                value={newLastName}
+                onChange={(e) => setNewLastName(e.target.value)}
+                disabled={!canManage}
+                className="flex-1 min-w-0 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400 disabled:opacity-60 disabled:cursor-not-allowed"
               />
               <button
                 type="submit"
@@ -373,7 +387,7 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
 
                         <div>
                           <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-                            {player.name}
+                            {fullName(player)}
                             {player.waitRounds >= STARVE_THRESHOLD && (
                               <span
                                 className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
@@ -513,7 +527,7 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
                                 const p = players.find(x => x.id === id);
                                 return (
                                   <span key={id} className="truncate">
-                                    {p ? p.name.split(' ')[0] : 'Unknown'}
+                                    {p ? p.firstName : 'Unknown'}
                                     {idx < court.team1.length - 1 ? ' &' : ''}
                                   </span>
                                 );
@@ -535,7 +549,7 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
                                 const p = players.find(x => x.id === id);
                                 return (
                                   <span key={id} className="truncate">
-                                    {p ? p.name.split(' ')[0] : 'Unknown'}
+                                    {p ? p.firstName : 'Unknown'}
                                     {idx < court.team2.length - 1 ? ' &' : ''}
                                   </span>
                                 );
@@ -602,8 +616,8 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
                     <tr className="bg-slate-100 border-b border-slate-200">
                       <th className="p-3 font-extrabold text-slate-500 border-r border-slate-200 sticky left-0 bg-slate-100">Player</th>
                       {players.map(p => (
-                        <th key={p.id} className="p-3 font-extrabold text-slate-500 text-center truncate max-w-[80px]" title={p.name}>
-                          {p.name.split(' ')[0]}
+                        <th key={p.id} className="p-3 font-extrabold text-slate-500 text-center truncate max-w-[80px]" title={fullName(p)}>
+                          {p.firstName}
                         </th>
                       ))}
                     </tr>
@@ -612,7 +626,7 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
                     {players.map(rowPlayer => (
                       <tr key={rowPlayer.id} className="border-b border-slate-200/60 hover:bg-white transition">
                         <td className="p-3 font-bold text-slate-700 border-r border-slate-200 sticky left-0 bg-slate-50">
-                          {rowPlayer.name}
+                          {fullName(rowPlayer)}
                         </td>
                         {players.map(colPlayer => {
                           const isSelf = rowPlayer.id === colPlayer.id;
@@ -697,7 +711,7 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
                           }`}>
                             <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">Team A</div>
                             <div className="text-xs font-semibold text-slate-700 truncate">
-                              {match.team1.map(p => p.name.split(' ')[0]).join(' & ')}
+                              {match.team1.map(p => p.firstName).join(' & ')}
                             </div>
                             {team1Won && <span className="inline-block mt-1.5 text-[8px] font-black text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded uppercase">Win</span>}
                           </div>
@@ -716,7 +730,7 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
                           }`}>
                             <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">Team B</div>
                             <div className="text-xs font-semibold text-slate-700 truncate">
-                              {match.team2.map(p => p.name.split(' ')[0]).join(' & ')}
+                              {match.team2.map(p => p.firstName).join(' & ')}
                             </div>
                             {team2Won && <span className="inline-block mt-1.5 text-[8px] font-black text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded uppercase">Win</span>}
                           </div>
@@ -779,7 +793,7 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
               {/* Team 1 Minimal Input */}
               <div className="flex-1 text-center">
                 <span className="text-[10px] text-emerald-600 font-extrabold tracking-wider block mb-2 uppercase truncate px-1">
-                  {selectedCourtForScore.team1.map(id => players.find(x => x.id === id)?.name.split(' ')[0] || 'Unknown').join(' & ')}
+                  {selectedCourtForScore.team1.map(id => players.find(x => x.id === id)?.firstName || 'Unknown').join(' & ')}
                 </span>
                 <input
                   type="number"
@@ -795,7 +809,7 @@ export default function Arena({ initialState, arenaId, arenaName, canManage }) {
               {/* Team 2 Minimal Input */}
               <div className="flex-1 text-center">
                 <span className="text-[10px] text-sky-600 font-extrabold tracking-wider block mb-2 uppercase truncate px-1">
-                  {selectedCourtForScore.team2.map(id => players.find(x => x.id === id)?.name.split(' ')[0] || 'Unknown').join(' & ')}
+                  {selectedCourtForScore.team2.map(id => players.find(x => x.id === id)?.firstName || 'Unknown').join(' & ')}
                 </span>
                 <input
                   type="number"

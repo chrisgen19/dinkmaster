@@ -32,7 +32,8 @@ model Arena {
 model Player {
   id          String   @id @default(cuid())
   arenaId     String
-  name        String
+  firstName   String
+  lastName    String? // optional: walk-ins often go by first name only
   gamesPlayed Int      @default(0)
   wins        Int      @default(0)
   losses      Int      @default(0)
@@ -100,11 +101,12 @@ model Match {
 
 /// A player's participation in a finished match (snapshot, no FK to Player).
 model MatchPlayer {
-  id         String @id @default(cuid())
-  matchId    String
-  playerId   String // historical reference only, not a foreign key
-  playerName String
-  team       Int
+  id              String  @id @default(cuid())
+  matchId         String
+  playerId        String // historical reference only, not a foreign key
+  playerFirstName String
+  playerLastName  String?
+  team            Int
 
   match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
 
@@ -135,7 +137,13 @@ model Partnership {
 /// linked to a Player so people see their own match history and scores.
 model User {
   id            String   @id
-  name          String
+  name          String // Better Auth core field; stored as "First Last"
+  firstName     String
+  lastName      String
+  phone         String
+  address       String
+  birthday      DateTime
+  gender        String
   email         String   @unique
   emailVerified Boolean  @default(false)
   image         String?

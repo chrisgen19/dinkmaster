@@ -5,11 +5,22 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { signUp } from '@/lib/auth-client';
 
+// Shared input styling, reused across every field for visual consistency.
+const FIELD_CLASS =
+  'w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400';
+
+const GENDER_OPTIONS = ['Male', 'Female', 'Other', 'Prefer not to say'];
+
 export default function RegisterPage() {
   const router = useRouter();
-  const [name, setName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [birthday, setBirthday] = useState('');
+  const [gender, setGender] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -21,7 +32,19 @@ export default function RegisterPage() {
       return;
     }
     setLoading(true);
-    const { error: signUpError } = await signUp.email({ name, email, password });
+    // `name` is Better Auth's core field; keep it populated as "First Last".
+    const name = `${firstName.trim()} ${lastName.trim()}`.trim();
+    const { error: signUpError } = await signUp.email({
+      name,
+      email,
+      password,
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      phone: phone.trim(),
+      address: address.trim(),
+      birthday: new Date(birthday),
+      gender,
+    });
     setLoading(false);
     if (signUpError) {
       setError(signUpError.message || 'Could not create account.');
@@ -47,21 +70,31 @@ export default function RegisterPage() {
           <p className="text-xs text-slate-400 mt-1 mb-5">Run your own pickleball arena.</p>
 
           <form onSubmit={handleSubmit} className="space-y-3">
-            <input
-              type="text"
-              required
-              placeholder="Full name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400"
-            />
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                type="text"
+                required
+                placeholder="First name"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                className={FIELD_CLASS}
+              />
+              <input
+                type="text"
+                required
+                placeholder="Last name"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                className={FIELD_CLASS}
+              />
+            </div>
             <input
               type="email"
               required
               placeholder="Email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400"
+              className={FIELD_CLASS}
             />
             <input
               type="password"
@@ -69,8 +102,49 @@ export default function RegisterPage() {
               placeholder="Password (min. 8 characters)"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400"
+              className={FIELD_CLASS}
             />
+            <input
+              type="tel"
+              required
+              placeholder="Phone number"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className={FIELD_CLASS}
+            />
+            <input
+              type="text"
+              required
+              placeholder="Address"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              className={FIELD_CLASS}
+            />
+            <div>
+              <label className="text-[11px] font-semibold text-slate-400 ml-1">Birthday</label>
+              <input
+                type="date"
+                required
+                value={birthday}
+                onChange={(e) => setBirthday(e.target.value)}
+                className={`${FIELD_CLASS} mt-1`}
+              />
+            </div>
+            <select
+              required
+              value={gender}
+              onChange={(e) => setGender(e.target.value)}
+              className={`${FIELD_CLASS} ${gender ? '' : 'text-slate-400'}`}
+            >
+              <option value="" disabled>
+                Gender
+              </option>
+              {GENDER_OPTIONS.map((option) => (
+                <option key={option} value={option} className="text-slate-800">
+                  {option}
+                </option>
+              ))}
+            </select>
 
             {error && (
               <div role="alert" data-testid="auth-error" className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">

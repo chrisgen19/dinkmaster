@@ -89,21 +89,22 @@ export async function renameArena(arenaId, nameInput) {
 
 // --- Arena play (owner-gated, scoped by arenaId) --------------------------
 
-/** Add players (comma-separated names) to the bottom of the rack. */
-export async function addPlayers(arenaId, namesString) {
+/** Add one player (first name required, last name optional) to the bottom of the rack. */
+export async function addPlayer(arenaId, firstNameInput, lastNameInput) {
   const guard = await requireArenaOwner(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
-  const names = (namesString ?? '')
-    .split(',')
-    .map((n) => n.trim())
-    .filter((n) => n.length > 0);
+  const firstName = (firstNameInput ?? '').trim();
+  const lastName = (lastNameInput ?? '').trim();
 
-  if (names.length === 0) return { state: await getState(arenaId) };
+  if (firstName.length === 0) return { state: await getState(arenaId) };
+  if (firstName.length > 60 || lastName.length > 60) {
+    return { error: 'Player name is too long (max 60 characters).', state: await getState(arenaId) };
+  }
 
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
-    // Credit new players the current group's average ordering metric so they
+    // Credit the new player the current group's average ordering metric so they
     // slot in as peers (no catch-up advantage for games they weren't here for).
     const existing = await tx.player.findMany({
       where: { arenaId },
@@ -112,10 +113,10 @@ export async function addPlayers(arenaId, namesString) {
     const gamesOffset = existing.length
       ? Math.round(existing.reduce((sum, p) => sum + p.gamesPlayed + p.gamesOffset, 0) / existing.length)
       : 0;
-    let order = await maxQueueOrder(tx, arenaId);
-    for (const name of names) {
-      await tx.player.create({ data: { arenaId, name, queueOrder: ++order, gamesOffset } });
-    }
+    const order = (await maxQueueOrder(tx, arenaId)) + 1;
+    await tx.player.create({
+      data: { arenaId, firstName, lastName: lastName || null, queueOrder: order, gamesOffset },
+    });
   });
 
   return { state: await getState(arenaId) };
@@ -316,7 +317,8 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
           players: {
             create: slots.map((s) => ({
               playerId: s.playerId,
-              playerName: s.player.name,
+              playerFirstName: s.player.firstName,
+              playerLastName: s.player.lastName,
               team: s.team,
             })),
           },

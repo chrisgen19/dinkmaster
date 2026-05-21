@@ -14,5 +14,18 @@ import { prisma } from '@/lib/prisma';
 export const auth = betterAuth({
   database: prismaAdapter(prisma, { provider: 'postgresql' }),
   emailAndPassword: { enabled: true },
+  // Profile columns collected at registration alongside Better Auth's core
+  // `name`/`email`. All required; the register form enforces this client-side
+  // and Better Auth rejects sign-ups missing any of them.
+  user: {
+    additionalFields: {
+      firstName: { type: 'string', required: true },
+      lastName: { type: 'string', required: true },
+      phone: { type: 'string', required: true },
+      address: { type: 'string', required: true },
+      birthday: { type: 'date', required: true },
+      gender: { type: 'string', required: true },
+    },
+  },
   plugins: [nextCookies()],
 });
