@@ -39,17 +39,18 @@ Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM
    pnpm install
    ```
 
-2. Configure the database connection in `.env` (gitignored):
+2. Configure environment variables in `.env` (gitignored) — see `.env.example`:
 
    ```bash
    DATABASE_URL="postgres://USER:PASSWORD@localhost:5432/dinkmaster"
+   BETTER_AUTH_SECRET="<run: openssl rand -base64 32>"
+   BETTER_AUTH_URL="http://localhost:3000"
    ```
 
-3. Apply migrations and seed the starter roster:
+3. Apply migrations:
 
    ```bash
    pnpm prisma migrate deploy        # apply schema
-   set -a; . ./.env; pnpm db:seed    # load default players/courts/partnerships
    ```
 
 4. Run the dev server:
@@ -70,8 +71,15 @@ Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM
 | `pnpm db:migrate` | Create/apply a dev migration (`prisma migrate dev`) |
 | `pnpm db:deploy` | Apply pending migrations (`prisma migrate deploy`) |
 | `pnpm db:push` | Push schema without a migration |
-| `pnpm db:seed` | Seed default data from `prisma/seed.sql` (needs `DATABASE_URL` in env) |
 | `pnpm db:studio` | Open Prisma Studio |
+| `pnpm test` | Run Vitest unit/integration tests |
+| `pnpm test:watch` | Vitest in watch mode |
+| `pnpm test:e2e` | Run Playwright e2e tests (starts a dev server) |
+
+## Testing
+
+- **Vitest** — unit/integration tests co-located as `src/**/*.test.js`. `src/app/actions.test.js` verifies every mutating Server Action is auth-gated (Prisma and the session helper are mocked, so no database is needed).
+- **Playwright** — e2e specs in `e2e/`. `e2e/auth.spec.js` covers the `/register` and `/login` happy and failure paths against a real dev server and database. First run needs the browser: `pnpm exec playwright install chromium`.
 
 ## Data model
 
@@ -81,6 +89,29 @@ Defined in [`prisma/schema.prisma`](prisma/schema.prisma):
 - **Court** + **CourtSlot** — a court's live status and the four players assigned to it (a player can be on at most one court — DB-enforced).
 - **Match** + **MatchPlayer** — finished-match history with snapshotted player names.
 - **Partnership** — canonical pair counts powering the matchup optimiser.
+- **User** / **Session** / **Account** / **Verification** — Better Auth tables. Viewing the arena is public; managing it (registering players, running matches) requires a signed-in account.
+
+## Authentication
+
+Email + password auth via [Better Auth](https://www.better-auth.com), backed by the same PostgreSQL database through the Prisma adapter.
+
+- **Sign up** at `/register`, **sign in** at `/login`; the header shows the current user with a sign-out control.
+- **Viewing the arena is public.** Every mutating Server Action (`addPlayers`, `removePlayer`, `shuffleQueue`, `fillCourt`, `endMatch`, `addCourt`, `removeCourt`, `resetArena`) is gated behind a session via `requireUser()` — unauthenticated callers get a "please sign in" notice instead of a mutation.
+- Sessions are cookie-backed; config lives in `src/lib/auth.js`, the browser client in `src/lib/auth-client.js`, and the catch-all API handler at `src/app/api/auth/[...all]/route.js`.
+- Requires `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` in `.env` (see `.env.example`).
+
+## Roadmap
+
+DINKMASTER is being built toward a **multi-tenant, multi-arena** system in phases.
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| **1 — Auth foundation** | Better Auth user accounts; login/register pages; header sign-in/out; all arena mutations session-gated; arena view stays public. Destructive SQL seed removed. | ✅ Done |
+| **2 — Arenas** | `Arena` model + `arenaId` scoping on Player/Court/Match; each account owns its arena(s) (migration backfills existing data under an owner). | ⏳ Planned |
+| **3 — Membership & roles** | `ArenaMembership` with **Owner / Organizer / Member** roles; public arena browse + join; permissions per role. | ⏳ Planned |
+| **4 — Player ↔ User linking** | Link a registered Player to a User account; per-user match-history and score views so people see their own stats. | ⏳ Planned |
+
+Phase tracking and detailed scope live in the GitHub issues.
 
 ## Project structure
 
@@ -89,12 +120,19 @@ src/
   app/
     page.js        Server Component — reads state, renders the arena
     arena.js       Client UI (rack, courts, modals, badges)
-    actions.js     Server Actions — every mutation + the rotation algorithm
+    actions.js     Server Actions — every mutation (session-gated) + rotation algorithm
+    auth-status.js Header sign-in / sign-out control
+    login/         Sign-in page
+    register/      Sign-up page
+    api/auth/      Better Auth catch-all route handler
   lib/
     prisma.js      Prisma 7 client (node-postgres driver adapter)
     data.js        getState() — the shape the UI consumes
     matchmaking.js Shared thresholds/weights
-prisma/            schema, migrations, seed.sql
+    auth.js        Better Auth server instance
+    auth-client.js Better Auth browser client
+    session.js     getCurrentUser() / requireUser() helpers
+prisma/            schema, migrations
 ```
 
 ## Deployment
@@ -116,4 +154,4 @@ prisma/            schema, migrations, seed.sql
 
 ## Security note
 
-The Server Actions in `src/app/actions.js` (`resetArena`, `removePlayer`, `fillCourt`, etc.) are **unauthenticated** — they assume a trusted, single-operator local/club deployment. Add authentication/authorization before exposing this app publicly.
+As of Phase 1, every Server Action in `src/app/actions.js` (`resetArena`, `removePlayer`, `fillCourt`, etc.) is gated behind a Better Auth session via `requireUser()` — any signed-in user can manage the single shared arena. Per-arena ownership and role-based authorization arrive in Phases 2–3; until then, treat all authenticated users as trusted operators.

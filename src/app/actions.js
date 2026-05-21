@@ -2,6 +2,7 @@
 
 import { prisma } from '@/lib/prisma';
 import { getState } from '@/lib/data';
+import { requireUser } from '@/lib/session';
 import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
 
 /** Default roster used on first load and when the arena is reset. */
@@ -71,6 +72,9 @@ function shuffle(items) {
 
 /** Add players (comma-separated names) to the bottom of the rack. */
 export async function addPlayers(namesString) {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error, state: await getState() };
+
   const names = (namesString ?? '')
     .split(',')
     .map((n) => n.trim())
@@ -97,6 +101,9 @@ export async function addPlayers(namesString) {
 
 /** Remove a player, unless they are mid-match on a court. */
 export async function removePlayer(playerId) {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error, state: await getState() };
+
   let blocked = false;
   try {
     await prisma.$transaction(async (tx) => {
@@ -132,6 +139,9 @@ export async function removePlayer(playerId) {
 
 /** Randomly reorder everyone currently waiting in the rack. */
 export async function shuffleQueue() {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error, state: await getState() };
+
   let shuffledAny = false;
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx);
@@ -159,6 +169,9 @@ export async function shuffleQueue() {
 
 /** Stack the top 4 waiting players onto a court using the lowest-partnership matchup. */
 export async function fillCourt(courtId) {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error, state: await getState() };
+
   try {
     await prisma.$transaction(async (tx) => {
       await lockQueue(tx);
@@ -240,6 +253,9 @@ export async function fillCourt(courtId) {
 
 /** Record a finished match's score, update records, and recycle players to the rack. */
 export async function endMatch(courtId, score1, score2, autoMix) {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error, state: await getState() };
+
   const s1 = parseInt(score1, 10) || 0;
   const s2 = parseInt(score2, 10) || 0;
   const team1Won = s1 > s2;
@@ -360,6 +376,9 @@ export async function endMatch(courtId, score1, score2, autoMix) {
 
 /** Add a new vacant court at the end. */
 export async function addCourt() {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error, state: await getState() };
+
   // Serialize under the queue lock so concurrent adds can't read the same
   // count/position and create duplicate court names/positions.
   await prisma.$transaction(async (tx) => {
@@ -375,6 +394,9 @@ export async function addCourt() {
 
 /** Remove a court, unless a game is in progress on it. */
 export async function removeCourt(courtId) {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error, state: await getState() };
+
   let blocked = false;
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx);
@@ -397,6 +419,9 @@ export async function removeCourt(courtId) {
 
 /** Wipe the arena and restore the default roster, courts, and partnerships. */
 export async function resetArena() {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error, state: await getState() };
+
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx);
     await tx.matchPlayer.deleteMany();
