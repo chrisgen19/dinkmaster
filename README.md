@@ -72,6 +72,14 @@ Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM
 | `pnpm db:deploy` | Apply pending migrations (`prisma migrate deploy`) |
 | `pnpm db:push` | Push schema without a migration |
 | `pnpm db:studio` | Open Prisma Studio |
+| `pnpm test` | Run Vitest unit/integration tests |
+| `pnpm test:watch` | Vitest in watch mode |
+| `pnpm test:e2e` | Run Playwright e2e tests (starts a dev server) |
+
+## Testing
+
+- **Vitest** — unit/integration tests co-located as `src/**/*.test.js`. `src/app/actions.test.js` verifies every mutating Server Action is auth-gated (Prisma and the session helper are mocked, so no database is needed).
+- **Playwright** — e2e specs in `e2e/`. `e2e/auth.spec.js` covers the `/register` and `/login` happy and failure paths against a real dev server and database. First run needs the browser: `pnpm exec playwright install chromium`.
 
 ## Data model
 

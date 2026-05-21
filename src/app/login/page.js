@@ -23,7 +23,6 @@ export default function LoginPage() {
       return;
     }
     router.push('/');
-    router.refresh();
   };
 
   return (
@@ -61,7 +60,7 @@ export default function LoginPage() {
             />
 
             {error && (
-              <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">
+              <div role="alert" data-testid="auth-error" className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">
                 {error}
               </div>
             )}
