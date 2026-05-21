@@ -20,6 +20,9 @@ model Player {
   losses      Int      @default(0)
   queueOrder  Int? // null = not in queue; ascending = rack order
   waitRounds  Int      @default(0) // consecutive rounds spent waiting (fairness)
+  gamesOffset Int      @default(0) // games credited at join (group avg) so latecomers slot in as peers, not catch-up
+
+
   createdAt   DateTime @default(now())
 
   courtSlots CourtSlot[]

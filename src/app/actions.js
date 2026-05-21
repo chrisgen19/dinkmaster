@@ -80,9 +80,15 @@ export async function addPlayers(namesString) {
 
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx);
+    // Credit new players the current group's average ordering metric so they
+    // slot in as peers (no catch-up advantage for games they weren't here for).
+    const existing = await tx.player.findMany({ select: { gamesPlayed: true, gamesOffset: true } });
+    const gamesOffset = existing.length
+      ? Math.round(existing.reduce((sum, p) => sum + p.gamesPlayed + p.gamesOffset, 0) / existing.length)
+      : 0;
     let order = await maxQueueOrder(tx);
     for (const name of names) {
-      await tx.player.create({ data: { name, queueOrder: ++order } });
+      await tx.player.create({ data: { name, queueOrder: ++order, gamesOffset } });
     }
   });
 
@@ -316,13 +322,14 @@ export async function endMatch(courtId, score1, score2, autoMix) {
       // us reassign a position to a player who is now on a court.
       const queued = await tx.player.findMany({
         where: { queueOrder: { not: null } },
-        select: { id: true, gamesPlayed: true, waitRounds: true },
+        select: { id: true, gamesPlayed: true, gamesOffset: true, waitRounds: true },
       });
       if (queued.length === 0) return;
       // Sort lexicographically: band first (emergency > protected > fresh),
       // then in the emergency band strictly by wait, then by FEWEST games
-      // played (so a player who has played less always goes ahead of one who
-      // has played more), then a random tie-break for variety among equals.
+      // played-since-joining (gamesPlayed + gamesOffset, so a player who has
+      // played less goes ahead but a late joiner can't hog), then a random
+      // tie-break for variety among equals.
       const bandOf = (w) =>
         w >= EMERGENCY_WAIT ? 2 : w >= STARVE_THRESHOLD ? 1 : 0;
       const scored = queued
@@ -330,14 +337,14 @@ export async function endMatch(courtId, score1, score2, autoMix) {
           id: p.id,
           band: bandOf(p.waitRounds),
           waitRounds: p.waitRounds,
-          gamesPlayed: p.gamesPlayed,
+          games: p.gamesPlayed + p.gamesOffset,
           rand: Math.random(),
         }))
         .sort((a, b) => {
           if (a.band !== b.band) return b.band - a.band; // emergency > protected > fresh
           if (a.band === 2 && a.waitRounds !== b.waitRounds) return b.waitRounds - a.waitRounds; // strict longest-first
-          if (a.gamesPlayed !== b.gamesPlayed) return a.gamesPlayed - b.gamesPlayed; // fewest games first
-          return a.rand - b.rand; // random tie-break among equal game counts
+          if (a.games !== b.games) return a.games - b.games; // fewest games-since-joining first
+          return a.rand - b.rand; // random tie-break among equals
         });
       for (let i = 0; i < scored.length; i++) {
         await tx.player.update({ where: { id: scored[i].id }, data: { queueOrder: i + 1 } });
