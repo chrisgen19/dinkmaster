@@ -50,6 +50,18 @@ export function ArenaNavDrawer({
     return () => { document.body.style.overflow = prev; };
   }, [open]);
 
+  // The drawer is only rendered (via `md:hidden`) below the `md` breakpoint.
+  // If the viewport grows past it while the drawer is open — e.g. a tablet
+  // rotates to landscape — collapse it so the scroll lock above is released.
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const handleChange = (e) => {
+      if (e.matches) setOpen(false);
+    };
+    mq.addEventListener('change', handleChange);
+    return () => mq.removeEventListener('change', handleChange);
+  }, []);
+
   // Pointer events cover both touch and mouse, so the swipe gesture also works
   // when testing with a mouse in the browser's mobile layout.
   const handleTipPointerDown = (e) => {
@@ -165,8 +177,13 @@ export function ArenaNavDrawer({
           </span>
         </button>
 
-        {/* Menu body — revealed when the drawer is expanded */}
-        <div className="overflow-y-auto px-3 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+        {/* Menu body — revealed when the drawer is expanded. While collapsed it
+            stays mounted (so items can animate in) but is taken out of the
+            accessibility tree and tab order. */}
+        <div
+          aria-hidden={!open}
+          className="overflow-y-auto px-3 pb-[max(1.25rem,env(safe-area-inset-bottom))]"
+        >
           <div className="flex items-center justify-between px-2 pt-1 pb-2">
             <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-slate-400">
               Jump to
@@ -181,6 +198,7 @@ export function ArenaNavDrawer({
                 <button
                   key={tab.id}
                   onClick={() => handleSelect(tab.id)}
+                  tabIndex={open ? 0 : -1}
                   style={{ transitionDelay: open ? `${80 + i * 45}ms` : '0ms' }}
                   className={`group w-full flex items-center gap-3 pl-3.5 pr-3 py-3.5 rounded-2xl text-sm font-extrabold uppercase tracking-wide
                     transition-[transform,opacity,background-color,box-shadow] duration-300 active:scale-[0.985]
@@ -217,6 +235,7 @@ export function ArenaNavDrawer({
             <button
               onClick={handleCreate}
               disabled={isPending}
+              tabIndex={open ? 0 : -1}
               style={{ transitionDelay: open ? `${80 + navTabs.length * 45}ms` : '0ms' }}
               className={`w-full flex items-center justify-center gap-2 mt-3 px-4 py-3.5 rounded-2xl
                 text-sm font-extrabold uppercase tracking-wide text-white

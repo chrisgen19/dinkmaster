@@ -227,6 +227,13 @@ export default function Arena({
     { id: 'members', label: 'Members', badge: canManage && pendingRequests.length > 0 ? pendingRequests.length : null },
     ...(myPlayer ? [{ id: 'mystats', label: 'My Stats' }] : []),
   ];
+  // The "My Stats" tab is conditional on myPlayer. If it disappears (e.g. after
+  // a refresh) while selected, fall back to the courts tab so content isn't
+  // blank — corrected during render, React's recommended pattern over an effect.
+  if (!navTabs.some((t) => t.id === activeTab)) {
+    setActiveTab('courts');
+  }
+
   const activeTabLabel = navTabs.find((t) => t.id === activeTab)?.label ?? 'Active Courts';
 
   // Anchor placed just above the tab content so we can scroll to it on mobile.
