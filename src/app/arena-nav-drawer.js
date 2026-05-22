@@ -2,6 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+/** Fixed height of the always-visible drawer tip, in pixels. The collapsed
+ *  drawer is translated down by exactly this much so nothing of the menu body
+ *  peeks above the viewport edge. */
+const TIP_HEIGHT = 72;
+
 /**
  * Mobile-only bottom navigation drawer.
  *
@@ -83,81 +88,148 @@ export function ArenaNavDrawer({
     onCreateCourt();
   };
 
+  const tipBadge = canManage && pendingRequests.length > 0 ? pendingRequests.length : null;
+
   return (
     <>
-      {/* Dim backdrop, only interactive when the drawer is expanded */}
+      {/* Dim, lightly blurred backdrop — only interactive when expanded */}
       <div
         onClick={() => setOpen(false)}
-        className={`md:hidden fixed inset-0 z-[55] bg-slate-900/50 transition-opacity duration-300 ${
+        className={`md:hidden fixed inset-0 z-[55] bg-slate-950/40 backdrop-blur-[2px] transition-opacity duration-300 ${
           open ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
         aria-hidden="true"
       />
 
-      {/* Drawer — its tip peeks above the viewport edge while collapsed */}
+      {/* Drawer — collapsed, it is pushed down by exactly TIP_HEIGHT so only
+          the tip remains visible above the viewport edge. */}
       <div
-        className={`md:hidden fixed bottom-0 inset-x-0 z-[60] bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl transition-transform duration-300 ease-out ${
-          open ? 'translate-y-0' : 'translate-y-[calc(100%-72px)]'
-        }`}
+        style={{ '--tip': `${TIP_HEIGHT}px` }}
+        className={`md:hidden fixed bottom-0 inset-x-0 z-[60] max-h-[82vh] flex flex-col
+          bg-white rounded-t-[28px] ring-1 ring-slate-900/5
+          shadow-[0_-12px_48px_-12px_rgba(15,23,42,0.38)]
+          transition-transform duration-[360ms] [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]
+          ${open ? 'translate-y-0' : 'translate-y-[calc(100%-var(--tip))]'}`}
       >
-        {/* Tip — always visible; tap or swipe to toggle the drawer */}
+        {/* Tip — fixed height, always visible; tap or swipe to toggle */}
         <button
           type="button"
           onClick={handleTipClick}
           onPointerDown={handleTipPointerDown}
           onPointerUp={handleTipPointerUp}
           aria-expanded={open}
-          className="w-full flex flex-col items-center gap-1.5 pt-3 pb-3 px-4 touch-pan-y"
+          style={{ height: `${TIP_HEIGHT}px` }}
+          className="relative shrink-0 w-full flex items-center gap-3 px-5 touch-pan-y"
         >
-          <span className={`h-1.5 w-10 rounded-full transition-colors ${open ? 'bg-slate-300' : 'bg-slate-200'}`} />
-          <span className="w-full flex justify-between items-center">
-            <span className="flex items-center gap-2 min-w-0">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">View</span>
-              <span className="text-sm font-extrabold uppercase text-slate-900 truncate">{activeTabLabel}</span>
-              {canManage && pendingRequests.length > 0 && (
-                <span className="bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none shrink-0">
-                  {pendingRequests.length}
+          {/* Grab handle */}
+          <span
+            aria-hidden="true"
+            className={`absolute top-2.5 left-1/2 -translate-x-1/2 h-1.5 rounded-full transition-all duration-300 ${
+              open ? 'w-8 bg-slate-300' : 'w-11 bg-slate-200'
+            }`}
+          />
+
+          {/* Live status dot */}
+          <span className="relative flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
+            <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400/70 animate-ping" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/20" />
+          </span>
+
+          {/* Active tab label */}
+          <span className="flex flex-col items-start min-w-0 flex-1 pt-1">
+            <span className="text-[9px] font-extrabold uppercase tracking-[0.22em] text-slate-400 leading-none">
+              Now viewing
+            </span>
+            <span className="mt-1 flex items-center gap-2 min-w-0 max-w-full">
+              <span className="text-[15px] font-extrabold tracking-tight text-slate-900 truncate">
+                {activeTabLabel}
+              </span>
+              {tipBadge != null && (
+                <span className="shrink-0 bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none">
+                  {tipBadge}
                 </span>
               )}
             </span>
-            <span
-              className={`shrink-0 pl-3 text-slate-400 transition-transform duration-300 ${open ? 'rotate-180' : ''}`}
-              aria-hidden="true"
-            >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 15l-6-6-6 6" />
-              </svg>
-            </span>
+          </span>
+
+          {/* Toggle affordance */}
+          <span
+            aria-hidden="true"
+            className={`shrink-0 grid place-items-center h-9 w-9 rounded-xl transition-all duration-300 ${
+              open ? 'bg-slate-900 text-white rotate-180' : 'bg-slate-100 text-slate-500'
+            }`}
+          >
+            <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 15l-6-6-6 6" />
+            </svg>
           </span>
         </button>
 
         {/* Menu body — revealed when the drawer is expanded */}
-        <div className="px-3 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-1">
-          {navTabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => handleSelect(tab.id)}
-              className={`w-full flex items-center justify-between px-4 py-3.5 rounded-xl text-sm font-extrabold uppercase transition-all ${
-                activeTab === tab.id
-                  ? 'bg-slate-900 text-white'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <span>{tab.label}</span>
-              {tab.badge != null && (
-                <span className="bg-amber-500 text-white text-[10px] font-black rounded-full px-2 py-0.5 leading-none">
-                  {tab.badge}
-                </span>
-              )}
-            </button>
-          ))}
+        <div className="overflow-y-auto px-3 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+          <div className="flex items-center justify-between px-2 pt-1 pb-2">
+            <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-slate-400">
+              Jump to
+            </span>
+            <span className="h-px flex-1 mx-3 bg-gradient-to-r from-slate-200 to-transparent" />
+          </div>
+
+          <div className="space-y-1.5">
+            {navTabs.map((tab, i) => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => handleSelect(tab.id)}
+                  style={{ transitionDelay: open ? `${80 + i * 45}ms` : '0ms' }}
+                  className={`group w-full flex items-center gap-3 pl-3.5 pr-3 py-3.5 rounded-2xl text-sm font-extrabold uppercase tracking-wide
+                    transition-[transform,opacity,background-color,box-shadow] duration-300 active:scale-[0.985]
+                    ${open ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}
+                    ${isActive
+                      ? 'bg-slate-900 text-white shadow-lg shadow-slate-900/25'
+                      : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`h-5 w-1 rounded-full shrink-0 transition-colors ${
+                      isActive ? 'bg-emerald-400' : 'bg-slate-300 group-hover:bg-slate-400'
+                    }`}
+                  />
+                  <span className="flex-1 text-left truncate">{tab.label}</span>
+                  {tab.badge != null && (
+                    <span className={`shrink-0 text-[10px] font-black rounded-full px-2 py-0.5 leading-none ${
+                      isActive ? 'bg-emerald-400 text-slate-900' : 'bg-amber-500 text-white'
+                    }`}>
+                      {tab.badge}
+                    </span>
+                  )}
+                  {isActive && (
+                    <svg className="w-4 h-4 shrink-0 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
           {canManage && (
             <button
               onClick={handleCreate}
               disabled={isPending}
-              className="w-full flex items-center justify-center gap-1 mt-2 px-4 py-3.5 rounded-xl text-sm font-extrabold uppercase bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-all"
+              style={{ transitionDelay: open ? `${80 + navTabs.length * 45}ms` : '0ms' }}
+              className={`w-full flex items-center justify-center gap-2 mt-3 px-4 py-3.5 rounded-2xl
+                text-sm font-extrabold uppercase tracking-wide text-white
+                bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700
+                shadow-lg shadow-emerald-600/30 active:scale-[0.985]
+                disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
+                transition-[transform,opacity,background-color] duration-300
+                ${open ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}
             >
-              + Create Court
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              Create Court
             </button>
           )}
         </div>
