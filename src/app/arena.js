@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useTransition } from 'react';
+import React, { useState, useEffect, useRef, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -229,10 +229,31 @@ export default function Arena({
   ];
   const activeTabLabel = navTabs.find((t) => t.id === activeTab)?.label ?? 'Active Courts';
 
-  // Select a tab from the mobile bottom sheet, then close it.
+  // Anchor placed just above the tab content so we can scroll to it on mobile.
+  const contentAnchorRef = useRef(null);
+  // Tracks the Y position where a touch on the mobile nav bar started.
+  const barTouchStartY = useRef(null);
+
+  // Select a tab from the mobile bottom sheet, close it, then scroll the page
+  // down to the freshly rendered content. The delay lets the sheet finish its
+  // slide-out transition and the new tab content mount before we scroll.
   const handleSelectTab = (tabId) => {
     setActiveTab(tabId);
     setNavMenuOpen(false);
+    setTimeout(() => {
+      contentAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 320);
+  };
+
+  // Open the mobile sheet on an upward swipe across the compact nav bar.
+  const handleBarTouchStart = (e) => {
+    barTouchStartY.current = e.touches[0].clientY;
+  };
+  const handleBarTouchEnd = (e) => {
+    if (barTouchStartY.current == null) return;
+    const swipedUp = barTouchStartY.current - e.changedTouches[0].clientY;
+    if (swipedUp > 30) setNavMenuOpen(true);
+    barTouchStartY.current = null;
   };
 
   // Lock body scroll while the mobile nav sheet is open.
@@ -607,25 +628,30 @@ export default function Arena({
             )}
           </div>
 
-          {/* Mobile: compact bar that opens a bottom sheet */}
+          {/* Mobile: compact bar — tap or swipe up to open the bottom sheet */}
           <button
             type="button"
             onClick={() => setNavMenuOpen(true)}
-            className="md:hidden w-full flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm"
+            onTouchStart={handleBarTouchStart}
+            onTouchEnd={handleBarTouchEnd}
+            className="md:hidden w-full flex flex-col items-center gap-1 bg-white px-3 pt-1.5 pb-3 rounded-xl border border-slate-200 shadow-sm touch-pan-y"
           >
-            <span className="flex items-center gap-2 min-w-0">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">View</span>
-              <span className="text-sm font-extrabold uppercase text-slate-900 truncate">{activeTabLabel}</span>
-              {canManage && pendingRequests.length > 0 && (
-                <span className="bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none shrink-0">
-                  {pendingRequests.length}
-                </span>
-              )}
-            </span>
-            <span className="flex flex-col gap-[3px] items-end shrink-0 pl-3" aria-hidden="true">
-              <span className="block h-0.5 w-5 rounded-full bg-slate-900" />
-              <span className="block h-0.5 w-5 rounded-full bg-slate-900" />
-              <span className="block h-0.5 w-5 rounded-full bg-slate-900" />
+            <span className="h-1 w-8 rounded-full bg-slate-200" aria-hidden="true" />
+            <span className="w-full flex justify-between items-center">
+              <span className="flex items-center gap-2 min-w-0">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">View</span>
+                <span className="text-sm font-extrabold uppercase text-slate-900 truncate">{activeTabLabel}</span>
+                {canManage && pendingRequests.length > 0 && (
+                  <span className="bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none shrink-0">
+                    {pendingRequests.length}
+                  </span>
+                )}
+              </span>
+              <span className="flex flex-col gap-[3px] items-end shrink-0 pl-3" aria-hidden="true">
+                <span className="block h-0.5 w-5 rounded-full bg-slate-900" />
+                <span className="block h-0.5 w-5 rounded-full bg-slate-900" />
+                <span className="block h-0.5 w-5 rounded-full bg-slate-900" />
+              </span>
             </span>
           </button>
 
@@ -689,6 +715,9 @@ export default function Arena({
               </div>
             </div>
           </div>
+
+          {/* Scroll target — selecting a tab on mobile scrolls here. */}
+          <div ref={contentAnchorRef} className="scroll-mt-24" aria-hidden="true" />
 
           {activeTab === 'courts' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
