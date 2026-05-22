@@ -97,6 +97,7 @@ export default function Arena({
   const [errorMsg, setErrorMsg] = useState('');
   const [activeTab, setActiveTab] = useState('courts');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [navMenuOpen, setNavMenuOpen] = useState(false);
 
   const [autoMix, setAutoMix] = useState(true);
   const [notification, setNotification] = useState('');
@@ -218,6 +219,30 @@ export default function Arena({
     run(() => resetArena(arenaId));
   };
 
+  // Tab definitions — shared by the desktop tab bar and the mobile bottom sheet.
+  const navTabs = [
+    { id: 'courts', label: 'Active Courts' },
+    { id: 'stats', label: 'Partnership Matrix' },
+    { id: 'history', label: 'Match Log' },
+    { id: 'members', label: 'Members', badge: canManage && pendingRequests.length > 0 ? pendingRequests.length : null },
+    ...(myPlayer ? [{ id: 'mystats', label: 'My Stats' }] : []),
+  ];
+  const activeTabLabel = navTabs.find((t) => t.id === activeTab)?.label ?? 'Active Courts';
+
+  // Select a tab from the mobile bottom sheet, then close it.
+  const handleSelectTab = (tabId) => {
+    setActiveTab(tabId);
+    setNavMenuOpen(false);
+  };
+
+  // Lock body scroll while the mobile nav sheet is open.
+  useEffect(() => {
+    if (!navMenuOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [navMenuOpen]);
+
   // Request to join; an owner/organizer must approve before membership is granted.
   const handleRequestJoin = () => {
     startTransition(async () => {
@@ -256,6 +281,7 @@ export default function Arena({
 
         {/* Global Stats Indicators */}
         <div className="flex items-center space-x-4 md:space-x-6">
+          {/* Desktop / tablet: stacked stat chips */}
           <div className="hidden sm:flex space-x-3 text-xs">
             <div className="bg-slate-100 px-3.5 py-1.5 rounded-xl border border-slate-200/60">
               <span className="text-slate-500 block">Total Players</span>
@@ -271,6 +297,19 @@ export default function Arena({
                 {courts.filter(c => c.status === 'playing').length}
               </span>
             </div>
+          </div>
+
+          {/* Mobile: compact inline stat pills */}
+          <div className="flex sm:hidden gap-1.5 text-[11px]">
+            <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-slate-700">
+              {players.length}<span className="text-slate-400 font-semibold"> players</span>
+            </span>
+            <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-emerald-600">
+              {queue.length}<span className="text-slate-400 font-semibold"> queued</span>
+            </span>
+            <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-sky-600">
+              {courts.filter(c => c.status === 'playing').length}<span className="text-slate-400 font-semibold"> live</span>
+            </span>
           </div>
 
           {canManage && (
@@ -534,76 +573,121 @@ export default function Arena({
         {/* Right Column: Active Courts Grid */}
         <div className="lg:col-span-7 space-y-6">
 
-          <div className="flex justify-between items-center bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-            <div className="flex space-x-1">
-              <button
-                onClick={() => setActiveTab('courts')}
-                className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all ${
-                  activeTab === 'courts'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                }`}
-              >
-                Active Courts
-              </button>
-              <button
-                onClick={() => setActiveTab('stats')}
-                className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all ${
-                  activeTab === 'stats'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                }`}
-              >
-                Partnership Matrix
-              </button>
-              <button
-                onClick={() => setActiveTab('history')}
-                className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all ${
-                  activeTab === 'history'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                }`}
-              >
-                Match Log
-              </button>
-              <button
-                onClick={() => setActiveTab('members')}
-                className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all flex items-center gap-1.5 ${
-                  activeTab === 'members'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                }`}
-              >
-                Members
-                {canManage && pendingRequests.length > 0 && (
-                  <span className="bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none">
-                    {pendingRequests.length}
-                  </span>
-                )}
-              </button>
-              {myPlayer && (
+          {/* Desktop: horizontal tab bar */}
+          <div className="hidden md:flex justify-between items-center bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex flex-wrap gap-1">
+              {navTabs.map((tab) => (
                 <button
-                  onClick={() => setActiveTab('mystats')}
-                  className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all ${
-                    activeTab === 'mystats'
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all flex items-center gap-1.5 ${
+                    activeTab === tab.id
                       ? 'bg-slate-900 text-white shadow-sm'
                       : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
                   }`}
                 >
-                  My Stats
+                  {tab.label}
+                  {tab.badge != null && (
+                    <span className="bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none">
+                      {tab.badge}
+                    </span>
+                  )}
                 </button>
-              )}
+              ))}
             </div>
 
             {canManage && (
               <button
                 onClick={handleAddCourt}
                 disabled={isPending}
-                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-extrabold text-white px-4 py-2 rounded-lg transition-all flex items-center space-x-1 shadow-sm"
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-extrabold text-white px-4 py-2 rounded-lg transition-all flex items-center space-x-1 shadow-sm shrink-0"
               >
                 <span>+ Create Court</span>
               </button>
             )}
+          </div>
+
+          {/* Mobile: compact bar that opens a bottom sheet */}
+          <button
+            type="button"
+            onClick={() => setNavMenuOpen(true)}
+            className="md:hidden w-full flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm"
+          >
+            <span className="flex items-center gap-2 min-w-0">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">View</span>
+              <span className="text-sm font-extrabold uppercase text-slate-900 truncate">{activeTabLabel}</span>
+              {canManage && pendingRequests.length > 0 && (
+                <span className="bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none shrink-0">
+                  {pendingRequests.length}
+                </span>
+              )}
+            </span>
+            <span className="flex flex-col gap-[3px] items-end shrink-0 pl-3" aria-hidden="true">
+              <span className="block h-0.5 w-5 rounded-full bg-slate-900" />
+              <span className="block h-0.5 w-5 rounded-full bg-slate-900" />
+              <span className="block h-0.5 w-5 rounded-full bg-slate-900" />
+            </span>
+          </button>
+
+          {/* Mobile bottom sheet */}
+          <div
+            className={`md:hidden fixed inset-0 z-[60] ${navMenuOpen ? '' : 'pointer-events-none'}`}
+            aria-hidden={!navMenuOpen}
+          >
+            <div
+              onClick={() => setNavMenuOpen(false)}
+              className={`absolute inset-0 bg-slate-900/50 transition-opacity duration-300 ${
+                navMenuOpen ? 'opacity-100' : 'opacity-0'
+              }`}
+            />
+            <div
+              className={`absolute bottom-0 inset-x-0 bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl transition-transform duration-300 ease-out ${
+                navMenuOpen ? 'translate-y-0' : 'translate-y-full'
+              }`}
+            >
+              <div className="flex justify-center pt-3 pb-1">
+                <span className="h-1.5 w-10 rounded-full bg-slate-200" />
+              </div>
+              <div className="px-4 pb-2 flex items-center justify-between">
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Navigate</h3>
+                <button
+                  onClick={() => setNavMenuOpen(false)}
+                  className="text-slate-400 hover:text-slate-900 text-lg leading-none p-1"
+                  aria-label="Close menu"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="px-3 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-1">
+                {navTabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => handleSelectTab(tab.id)}
+                    className={`w-full flex items-center justify-between px-4 py-3.5 rounded-xl text-sm font-extrabold uppercase transition-all ${
+                      activeTab === tab.id
+                        ? 'bg-slate-900 text-white'
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    {tab.badge != null && (
+                      <span className="bg-amber-500 text-white text-[10px] font-black rounded-full px-2 py-0.5 leading-none">
+                        {tab.badge}
+                      </span>
+                    )}
+                  </button>
+                ))}
+                {canManage && (
+                  <button
+                    onClick={() => { setNavMenuOpen(false); handleAddCourt(); }}
+                    disabled={isPending}
+                    className="w-full flex items-center justify-center gap-1 mt-2 px-4 py-3.5 rounded-xl text-sm font-extrabold uppercase bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-all"
+                  >
+                    + Create Court
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
           {activeTab === 'courts' && (
