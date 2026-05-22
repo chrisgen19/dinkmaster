@@ -19,11 +19,9 @@ const TIP_HEIGHT = 72;
  * @param {Array<{id: string, label: string, badge?: number|null}>} props.navTabs - Tab definitions.
  * @param {string} props.activeTab - Currently selected tab id.
  * @param {string} props.activeTabLabel - Label of the active tab, shown in the tip.
- * @param {boolean} props.canManage - Whether the viewer may create courts.
+ * @param {boolean} props.canManage - Whether the viewer may manage the arena (drives the badge).
  * @param {Array} props.pendingRequests - Pending join requests (drives the badge).
- * @param {boolean} props.isPending - Whether a server action is in flight.
  * @param {(tabId: string) => void} props.onSelectTab - Called when a tab is chosen.
- * @param {() => void} props.onCreateCourt - Called when "Create Court" is pressed.
  */
 export function ArenaNavDrawer({
   navTabs,
@@ -31,9 +29,7 @@ export function ArenaNavDrawer({
   activeTabLabel,
   canManage,
   pendingRequests,
-  isPending,
   onSelectTab,
-  onCreateCourt,
 }) {
   const [open, setOpen] = useState(false);
   // Y position where the current pointer interaction on the tip began.
@@ -142,11 +138,6 @@ export function ArenaNavDrawer({
   const handleSelect = (tabId) => {
     setOpen(false);
     onSelectTab(tabId);
-  };
-
-  const handleCreate = () => {
-    setOpen(false);
-    onCreateCourt();
   };
 
   const tipBadge = canManage && pendingRequests.length > 0 ? pendingRequests.length : null;
@@ -283,27 +274,6 @@ export function ArenaNavDrawer({
               );
             })}
           </div>
-
-          {canManage && (
-            <button
-              onClick={handleCreate}
-              disabled={isPending}
-              tabIndex={open ? 0 : -1}
-              style={{ transitionDelay: open ? `${80 + navTabs.length * 45}ms` : '0ms' }}
-              className={`w-full flex items-center justify-center gap-2 mt-3 px-4 py-3.5 rounded-2xl
-                text-sm font-extrabold uppercase tracking-wide text-white
-                bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700
-                shadow-lg shadow-emerald-600/30 active:scale-[0.985]
-                disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
-                transition-[transform,opacity,background-color] duration-300
-                ${open ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              Create Court
-            </button>
-          )}
         </div>
       </div>
     </>
