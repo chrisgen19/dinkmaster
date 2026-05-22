@@ -245,21 +245,22 @@ export default function Arena({
     }, 320);
   };
 
-  // Open the mobile sheet on an upward swipe across the compact nav bar.
-  const handleBarTouchStart = (e) => {
-    barTouchStartY.current = e.touches[0].clientY;
+  // Pointer events cover both touch and mouse, so swipe gestures also work
+  // when testing with a mouse in the browser's mobile layout.
+  const handleBarPointerDown = (e) => {
+    barTouchStartY.current = e.clientY;
   };
-  const handleBarTouchEnd = (e) => {
+  // Open the mobile sheet on an upward swipe across the compact nav bar.
+  const handleBarPointerUp = (e) => {
     if (barTouchStartY.current == null) return;
-    const swipedUp = barTouchStartY.current - e.changedTouches[0].clientY;
+    const swipedUp = barTouchStartY.current - e.clientY;
     if (swipedUp > 30) setNavMenuOpen(true);
     barTouchStartY.current = null;
   };
-
   // Close the open sheet on a downward swipe across its grab handle.
-  const handleHandleTouchEnd = (e) => {
+  const handleHandlePointerUp = (e) => {
     if (barTouchStartY.current == null) return;
-    const swipedDown = e.changedTouches[0].clientY - barTouchStartY.current;
+    const swipedDown = e.clientY - barTouchStartY.current;
     if (swipedDown > 30) setNavMenuOpen(false);
     barTouchStartY.current = null;
   };
@@ -640,8 +641,8 @@ export default function Arena({
           <button
             type="button"
             onClick={() => setNavMenuOpen(true)}
-            onTouchStart={handleBarTouchStart}
-            onTouchEnd={handleBarTouchEnd}
+            onPointerDown={handleBarPointerDown}
+            onPointerUp={handleBarPointerUp}
             className="md:hidden w-full flex flex-col items-center gap-1 bg-white px-3 pt-1.5 pb-3 rounded-xl border border-slate-200 shadow-sm touch-pan-y"
           >
             <span className="h-1 w-8 rounded-full bg-slate-200" aria-hidden="true" />
@@ -683,8 +684,8 @@ export default function Arena({
               <button
                 type="button"
                 onClick={() => setNavMenuOpen(false)}
-                onTouchStart={handleBarTouchStart}
-                onTouchEnd={handleHandleTouchEnd}
+                onPointerDown={handleBarPointerDown}
+                onPointerUp={handleHandlePointerUp}
                 aria-label="Close menu"
                 className="w-full flex justify-center pt-3 pb-2 touch-pan-y group"
               >
