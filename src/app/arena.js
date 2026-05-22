@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useTransition } from 'react';
+import React, { useState, useEffect, useRef, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -19,6 +19,7 @@ import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { eloToDupr } from '@/lib/rating';
 import { AuthStatus } from './auth-status';
 import { ArenaMembers } from './arena-members';
+import { ArenaNavDrawer } from './arena-nav-drawer';
 
 /** Display name: "First Last", or just "First" when no last name is set. */
 const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
@@ -218,6 +219,44 @@ export default function Arena({
     run(() => resetArena(arenaId));
   };
 
+  // Tab definitions — shared by the desktop tab bar and the mobile bottom sheet.
+  const navTabs = [
+    { id: 'courts', label: 'Active Courts' },
+    { id: 'stats', label: 'Partnership Matrix' },
+    { id: 'history', label: 'Match Log' },
+    { id: 'members', label: 'Members', badge: canManage && pendingRequests.length > 0 ? pendingRequests.length : null },
+    ...(myPlayer ? [{ id: 'mystats', label: 'My Stats' }] : []),
+  ];
+  // The "My Stats" tab is conditional on myPlayer. If it disappears (e.g. after
+  // a refresh) while selected, fall back to the courts tab so content isn't
+  // blank — corrected during render, React's recommended pattern over an effect.
+  if (!navTabs.some((t) => t.id === activeTab)) {
+    setActiveTab('courts');
+  }
+
+  const activeTabLabel = navTabs.find((t) => t.id === activeTab)?.label ?? 'Active Courts';
+
+  // Anchor placed just above the tab content so we can scroll to it on mobile.
+  const contentAnchorRef = useRef(null);
+  // Pending scroll-to-content timer, so a rapid re-select can cancel a stale one.
+  const scrollTimerRef = useRef(null);
+
+  // Switch tab, then scroll the page down to the freshly rendered content. The
+  // delay lets the mobile drawer finish collapsing and the new tab content
+  // mount before we scroll.
+  const handleSelectTab = (tabId) => {
+    setActiveTab(tabId);
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    scrollTimerRef.current = setTimeout(() => {
+      contentAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 320);
+  };
+
+  // Cancel any pending scroll timer when the component unmounts.
+  useEffect(() => () => {
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+  }, []);
+
   // Request to join; an owner/organizer must approve before membership is granted.
   const handleRequestJoin = () => {
     startTransition(async () => {
@@ -256,6 +295,7 @@ export default function Arena({
 
         {/* Global Stats Indicators */}
         <div className="flex items-center space-x-4 md:space-x-6">
+          {/* Desktop / tablet: stacked stat chips */}
           <div className="hidden sm:flex space-x-3 text-xs">
             <div className="bg-slate-100 px-3.5 py-1.5 rounded-xl border border-slate-200/60">
               <span className="text-slate-500 block">Total Players</span>
@@ -271,6 +311,19 @@ export default function Arena({
                 {courts.filter(c => c.status === 'playing').length}
               </span>
             </div>
+          </div>
+
+          {/* Mobile: compact inline stat pills */}
+          <div className="flex sm:hidden gap-1.5 text-[11px]">
+            <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-slate-700">
+              {players.length}<span className="text-slate-400 font-semibold"> players</span>
+            </span>
+            <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-emerald-600">
+              {queue.length}<span className="text-slate-400 font-semibold"> queued</span>
+            </span>
+            <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-sky-600">
+              {courts.filter(c => c.status === 'playing').length}<span className="text-slate-400 font-semibold"> live</span>
+            </span>
           </div>
 
           {canManage && (
@@ -332,7 +385,7 @@ export default function Arena({
       )}
 
       {/* Main Grid Workspace */}
-      <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <main className="flex-1 p-4 pb-28 md:p-6 md:pb-6 lg:p-8 lg:pb-8 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
         {/* Left Column: Player Administration & Paddle Queue */}
         <div className="lg:col-span-5 space-y-6">
@@ -534,77 +587,54 @@ export default function Arena({
         {/* Right Column: Active Courts Grid */}
         <div className="lg:col-span-7 space-y-6">
 
-          <div className="flex justify-between items-center bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-            <div className="flex space-x-1">
-              <button
-                onClick={() => setActiveTab('courts')}
-                className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all ${
-                  activeTab === 'courts'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                }`}
-              >
-                Active Courts
-              </button>
-              <button
-                onClick={() => setActiveTab('stats')}
-                className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all ${
-                  activeTab === 'stats'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                }`}
-              >
-                Partnership Matrix
-              </button>
-              <button
-                onClick={() => setActiveTab('history')}
-                className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all ${
-                  activeTab === 'history'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                }`}
-              >
-                Match Log
-              </button>
-              <button
-                onClick={() => setActiveTab('members')}
-                className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all flex items-center gap-1.5 ${
-                  activeTab === 'members'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                }`}
-              >
-                Members
-                {canManage && pendingRequests.length > 0 && (
-                  <span className="bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none">
-                    {pendingRequests.length}
-                  </span>
-                )}
-              </button>
-              {myPlayer && (
+          {/* Desktop: horizontal tab bar */}
+          <div className="hidden md:flex justify-between items-center bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex flex-wrap gap-1">
+              {navTabs.map((tab) => (
                 <button
-                  onClick={() => setActiveTab('mystats')}
-                  className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all ${
-                    activeTab === 'mystats'
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all flex items-center gap-1.5 ${
+                    activeTab === tab.id
                       ? 'bg-slate-900 text-white shadow-sm'
                       : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
                   }`}
                 >
-                  My Stats
+                  {tab.label}
+                  {tab.badge != null && (
+                    <span className="bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none">
+                      {tab.badge}
+                    </span>
+                  )}
                 </button>
-              )}
+              ))}
             </div>
 
             {canManage && (
               <button
                 onClick={handleAddCourt}
                 disabled={isPending}
-                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-extrabold text-white px-4 py-2 rounded-lg transition-all flex items-center space-x-1 shadow-sm"
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-extrabold text-white px-4 py-2 rounded-lg transition-all flex items-center space-x-1 shadow-sm shrink-0"
               >
                 <span>+ Create Court</span>
               </button>
             )}
           </div>
+
+          {/* Mobile: persistent bottom navigation drawer */}
+          <ArenaNavDrawer
+            navTabs={navTabs}
+            activeTab={activeTab}
+            activeTabLabel={activeTabLabel}
+            canManage={canManage}
+            pendingRequests={pendingRequests}
+            isPending={isPending}
+            onSelectTab={handleSelectTab}
+            onCreateCourt={handleAddCourt}
+          />
+
+          {/* Scroll target — selecting a tab on mobile scrolls here. */}
+          <div ref={contentAnchorRef} className="scroll-mt-24" aria-hidden="true" />
 
           {activeTab === 'courts' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
