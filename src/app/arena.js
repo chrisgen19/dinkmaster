@@ -245,24 +245,36 @@ export default function Arena({
     }, 320);
   };
 
-  // Pointer events cover both touch and mouse, so swipe gestures also work
+  // Whether the last pointer interaction on the drawer tip was a swipe — used
+  // to stop the trailing click from undoing what the swipe just did.
+  const drawerDidSwipe = useRef(false);
+
+  // Pointer events cover both touch and mouse, so the swipe gesture also works
   // when testing with a mouse in the browser's mobile layout.
-  const handleBarPointerDown = (e) => {
+  const handleTipPointerDown = (e) => {
     barTouchStartY.current = e.clientY;
+    drawerDidSwipe.current = false;
   };
-  // Open the mobile sheet on an upward swipe across the compact nav bar.
-  const handleBarPointerUp = (e) => {
+  // Swipe the drawer tip up to expand, down to collapse.
+  const handleTipPointerUp = (e) => {
     if (barTouchStartY.current == null) return;
-    const swipedUp = barTouchStartY.current - e.clientY;
-    if (swipedUp > 30) setNavMenuOpen(true);
+    const swiped = barTouchStartY.current - e.clientY;
+    if (swiped > 30) {
+      setNavMenuOpen(true);
+      drawerDidSwipe.current = true;
+    } else if (swiped < -30) {
+      setNavMenuOpen(false);
+      drawerDidSwipe.current = true;
+    }
     barTouchStartY.current = null;
   };
-  // Close the open sheet on a downward swipe across its grab handle.
-  const handleHandlePointerUp = (e) => {
-    if (barTouchStartY.current == null) return;
-    const swipedDown = e.clientY - barTouchStartY.current;
-    if (swipedDown > 30) setNavMenuOpen(false);
-    barTouchStartY.current = null;
+  // A plain tap on the tip toggles the drawer; ignore the click that trails a swipe.
+  const handleTipClick = () => {
+    if (drawerDidSwipe.current) {
+      drawerDidSwipe.current = false;
+      return;
+    }
+    setNavMenuOpen((open) => !open);
   };
 
   // Lock body scroll while the mobile nav sheet is open.
@@ -401,7 +413,7 @@ export default function Arena({
       )}
 
       {/* Main Grid Workspace */}
-      <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <main className="flex-1 p-4 pb-28 md:p-6 md:pb-6 lg:p-8 lg:pb-8 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
         {/* Left Column: Player Administration & Paddle Queue */}
         <div className="lg:col-span-5 space-y-6">
@@ -637,99 +649,80 @@ export default function Arena({
             )}
           </div>
 
-          {/* Mobile: compact bar — tap or swipe up to open the bottom sheet */}
-          <button
-            type="button"
-            onClick={() => setNavMenuOpen(true)}
-            onPointerDown={handleBarPointerDown}
-            onPointerUp={handleBarPointerUp}
-            className="md:hidden w-full flex flex-col items-center gap-1 bg-white px-3 pt-1.5 pb-3 rounded-xl border border-slate-200 shadow-sm touch-pan-y"
-          >
-            <span className="h-1 w-8 rounded-full bg-slate-200" aria-hidden="true" />
-            <span className="w-full flex justify-between items-center">
-              <span className="flex items-center gap-2 min-w-0">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">View</span>
-                <span className="text-sm font-extrabold uppercase text-slate-900 truncate">{activeTabLabel}</span>
-                {canManage && pendingRequests.length > 0 && (
-                  <span className="bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none shrink-0">
-                    {pendingRequests.length}
-                  </span>
-                )}
-              </span>
-              <span className="flex flex-col gap-[3px] items-end shrink-0 pl-3" aria-hidden="true">
-                <span className="block h-0.5 w-5 rounded-full bg-slate-900" />
-                <span className="block h-0.5 w-5 rounded-full bg-slate-900" />
-                <span className="block h-0.5 w-5 rounded-full bg-slate-900" />
-              </span>
-            </span>
-          </button>
-
-          {/* Mobile bottom sheet */}
+          {/* Mobile: persistent bottom drawer. Its tip always peeks above the
+              viewport edge — tap or swipe the tip up to expand the menu. */}
           <div
-            className={`md:hidden fixed inset-0 z-[60] ${navMenuOpen ? '' : 'pointer-events-none'}`}
-            aria-hidden={!navMenuOpen}
+            onClick={() => setNavMenuOpen(false)}
+            className={`md:hidden fixed inset-0 z-[55] bg-slate-900/50 transition-opacity duration-300 ${
+              navMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            }`}
+            aria-hidden="true"
+          />
+          <div
+            className={`md:hidden fixed bottom-0 inset-x-0 z-[60] bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl transition-transform duration-300 ease-out ${
+              navMenuOpen ? 'translate-y-0' : 'translate-y-[calc(100%-72px)]'
+            }`}
           >
-            <div
-              onClick={() => setNavMenuOpen(false)}
-              className={`absolute inset-0 bg-slate-900/50 transition-opacity duration-300 ${
-                navMenuOpen ? 'opacity-100' : 'opacity-0'
-              }`}
-            />
-            <div
-              className={`absolute bottom-0 inset-x-0 bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl transition-transform duration-300 ease-out ${
-                navMenuOpen ? 'translate-y-0' : 'translate-y-full'
-              }`}
+            {/* Tip — always visible; tap or swipe to toggle the drawer */}
+            <button
+              type="button"
+              onClick={handleTipClick}
+              onPointerDown={handleTipPointerDown}
+              onPointerUp={handleTipPointerUp}
+              aria-expanded={navMenuOpen}
+              className="w-full flex flex-col items-center gap-1.5 pt-3 pb-3 px-4 touch-pan-y"
             >
-              {/* Grab handle — tap or swipe down to dismiss */}
-              <button
-                type="button"
-                onClick={() => setNavMenuOpen(false)}
-                onPointerDown={handleBarPointerDown}
-                onPointerUp={handleHandlePointerUp}
-                aria-label="Close menu"
-                className="w-full flex justify-center pt-3 pb-2 touch-pan-y group"
-              >
-                <span className="h-1.5 w-10 rounded-full bg-slate-200 group-hover:bg-slate-300 group-active:bg-slate-400 transition-colors" />
-              </button>
-              <div className="px-4 pb-2 flex items-center justify-between">
-                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Navigate</h3>
-                <button
-                  onClick={() => setNavMenuOpen(false)}
-                  className="text-slate-400 hover:text-slate-900 text-lg leading-none p-1"
-                  aria-label="Close menu"
+              <span className={`h-1.5 w-10 rounded-full transition-colors ${navMenuOpen ? 'bg-slate-300' : 'bg-slate-200'}`} />
+              <span className="w-full flex justify-between items-center">
+                <span className="flex items-center gap-2 min-w-0">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">View</span>
+                  <span className="text-sm font-extrabold uppercase text-slate-900 truncate">{activeTabLabel}</span>
+                  {canManage && pendingRequests.length > 0 && (
+                    <span className="bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none shrink-0">
+                      {pendingRequests.length}
+                    </span>
+                  )}
+                </span>
+                <span
+                  className={`shrink-0 pl-3 text-slate-400 transition-transform duration-300 ${navMenuOpen ? 'rotate-180' : ''}`}
+                  aria-hidden="true"
                 >
-                  ✕
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 15l-6-6-6 6" />
+                  </svg>
+                </span>
+              </span>
+            </button>
+
+            {/* Menu body — revealed when the drawer is expanded */}
+            <div className="px-3 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-1">
+              {navTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => handleSelectTab(tab.id)}
+                  className={`w-full flex items-center justify-between px-4 py-3.5 rounded-xl text-sm font-extrabold uppercase transition-all ${
+                    activeTab === tab.id
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  {tab.badge != null && (
+                    <span className="bg-amber-500 text-white text-[10px] font-black rounded-full px-2 py-0.5 leading-none">
+                      {tab.badge}
+                    </span>
+                  )}
                 </button>
-              </div>
-              <div className="px-3 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-1">
-                {navTabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => handleSelectTab(tab.id)}
-                    className={`w-full flex items-center justify-between px-4 py-3.5 rounded-xl text-sm font-extrabold uppercase transition-all ${
-                      activeTab === tab.id
-                        ? 'bg-slate-900 text-white'
-                        : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span>{tab.label}</span>
-                    {tab.badge != null && (
-                      <span className="bg-amber-500 text-white text-[10px] font-black rounded-full px-2 py-0.5 leading-none">
-                        {tab.badge}
-                      </span>
-                    )}
-                  </button>
-                ))}
-                {canManage && (
-                  <button
-                    onClick={() => { setNavMenuOpen(false); handleAddCourt(); }}
-                    disabled={isPending}
-                    className="w-full flex items-center justify-center gap-1 mt-2 px-4 py-3.5 rounded-xl text-sm font-extrabold uppercase bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-all"
-                  >
-                    + Create Court
-                  </button>
-                )}
-              </div>
+              ))}
+              {canManage && (
+                <button
+                  onClick={() => { setNavMenuOpen(false); handleAddCourt(); }}
+                  disabled={isPending}
+                  className="w-full flex items-center justify-center gap-1 mt-2 px-4 py-3.5 rounded-xl text-sm font-extrabold uppercase bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-all"
+                >
+                  + Create Court
+                </button>
+              )}
             </div>
           </div>
 
