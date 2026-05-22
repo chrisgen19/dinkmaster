@@ -256,6 +256,14 @@ export default function Arena({
     barTouchStartY.current = null;
   };
 
+  // Close the open sheet on a downward swipe across its grab handle.
+  const handleHandleTouchEnd = (e) => {
+    if (barTouchStartY.current == null) return;
+    const swipedDown = e.changedTouches[0].clientY - barTouchStartY.current;
+    if (swipedDown > 30) setNavMenuOpen(false);
+    barTouchStartY.current = null;
+  };
+
   // Lock body scroll while the mobile nav sheet is open.
   useEffect(() => {
     if (!navMenuOpen) return;
@@ -671,9 +679,17 @@ export default function Arena({
                 navMenuOpen ? 'translate-y-0' : 'translate-y-full'
               }`}
             >
-              <div className="flex justify-center pt-3 pb-1">
-                <span className="h-1.5 w-10 rounded-full bg-slate-200" />
-              </div>
+              {/* Grab handle — tap or swipe down to dismiss */}
+              <button
+                type="button"
+                onClick={() => setNavMenuOpen(false)}
+                onTouchStart={handleBarTouchStart}
+                onTouchEnd={handleHandleTouchEnd}
+                aria-label="Close menu"
+                className="w-full flex justify-center pt-3 pb-2 touch-pan-y group"
+              >
+                <span className="h-1.5 w-10 rounded-full bg-slate-200 group-hover:bg-slate-300 group-active:bg-slate-400 transition-colors" />
+              </button>
               <div className="px-4 pb-2 flex items-center justify-between">
                 <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Navigate</h3>
                 <button
