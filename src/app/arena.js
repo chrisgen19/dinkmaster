@@ -238,6 +238,9 @@ export default function Arena({
 
   // Anchor placed just above the tab content so we can scroll to it on mobile.
   const contentAnchorRef = useRef(null);
+  // Refs to each desktop tab button, keyed by tab id — used to move DOM focus
+  // when navigating the tablist with the arrow keys (ARIA roving tabindex).
+  const tabRefs = useRef({});
   // Pending scroll-to-content timer, so a rapid re-select can cancel a stale one.
   const scrollTimerRef = useRef(null);
 
@@ -256,6 +259,24 @@ export default function Arena({
   useEffect(() => () => {
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
   }, []);
+
+  // Keyboard navigation for the desktop tablist (ARIA tabs pattern): Left/Right
+  // move between tabs and Home/End jump to the ends, wrapping around. Selection
+  // follows focus, and we move DOM focus to the newly selected tab.
+  const handleTabKeyDown = (e) => {
+    const idx = navTabs.findIndex((t) => t.id === activeTab);
+    if (idx === -1) return;
+    let next = idx;
+    if (e.key === 'ArrowRight') next = (idx + 1) % navTabs.length;
+    else if (e.key === 'ArrowLeft') next = (idx - 1 + navTabs.length) % navTabs.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = navTabs.length - 1;
+    else return;
+    e.preventDefault();
+    const nextId = navTabs[next].id;
+    setActiveTab(nextId);
+    tabRefs.current[nextId]?.focus();
+  };
 
   // Request to join; an owner/organizer must approve before membership is granted.
   const handleRequestJoin = () => {
@@ -587,38 +608,48 @@ export default function Arena({
         {/* Right Column: Active Courts Grid */}
         <div className="lg:col-span-7 space-y-6">
 
-          {/* Desktop: horizontal tab bar */}
-          <div className="hidden md:flex justify-between items-center bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-            <div className="flex flex-wrap gap-1">
-              {navTabs.map((tab) => (
+          {/* Desktop: segmented tab control — equal-width segments on a single
+              row, so the bar never wraps regardless of how many tabs there are. */}
+          <div
+            role="tablist"
+            aria-label="Arena views"
+            onKeyDown={handleTabKeyDown}
+            className="hidden md:flex gap-1 p-1 rounded-2xl bg-slate-100/80 border border-slate-200/80 shadow-sm"
+          >
+            {navTabs.map((tab) => {
+              const isActive = activeTab === tab.id;
+              return (
                 <button
                   key={tab.id}
+                  ref={(el) => { tabRefs.current[tab.id] = el; }}
+                  role="tab"
+                  id={`arena-tab-${tab.id}`}
+                  aria-selected={isActive}
+                  aria-controls={`arena-panel-${tab.id}`}
+                  tabIndex={isActive ? 0 : -1}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`px-4 py-2 text-xs font-extrabold uppercase rounded-lg transition-all flex items-center gap-1.5 ${
-                    activeTab === tab.id
-                      ? 'bg-slate-900 text-white shadow-sm'
-                      : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
+                  className={`relative flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl
+                    text-[11px] font-extrabold uppercase tracking-[0.06em]
+                    transition-all duration-200 ${
+                    isActive
+                      ? 'bg-slate-900 text-white shadow-md shadow-slate-900/20'
+                      : 'text-slate-500 hover:text-slate-900 hover:bg-white/80'
                   }`}
                 >
-                  {tab.label}
+                  {isActive && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" aria-hidden="true" />
+                  )}
+                  <span className="truncate">{tab.label}</span>
                   {tab.badge != null && (
-                    <span className="bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none">
+                    <span className={`shrink-0 text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none ${
+                      isActive ? 'bg-emerald-400 text-slate-900' : 'bg-amber-500 text-white'
+                    }`}>
                       {tab.badge}
                     </span>
                   )}
                 </button>
-              ))}
-            </div>
-
-            {canManage && (
-              <button
-                onClick={handleAddCourt}
-                disabled={isPending}
-                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-extrabold text-white px-4 py-2 rounded-lg transition-all flex items-center space-x-1 shadow-sm shrink-0"
-              >
-                <span>+ Create Court</span>
-              </button>
-            )}
+              );
+            })}
           </div>
 
           {/* Mobile: persistent bottom navigation drawer */}
@@ -628,134 +659,177 @@ export default function Arena({
             activeTabLabel={activeTabLabel}
             canManage={canManage}
             pendingRequests={pendingRequests}
-            isPending={isPending}
             onSelectTab={handleSelectTab}
-            onCreateCourt={handleAddCourt}
           />
 
           {/* Scroll target — selecting a tab on mobile scrolls here. */}
           <div ref={contentAnchorRef} className="scroll-mt-24" aria-hidden="true" />
 
           {activeTab === 'courts' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {courts.map((court) => {
-                const isPlaying = court.status === 'playing';
-
-                return (
-                  <div
-                    key={court.id}
-                    className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col justify-between shadow-sm relative transition-all duration-300 hover:shadow-md"
+            <div
+              role="tabpanel"
+              id="arena-panel-courts"
+              aria-labelledby="arena-tab-courts"
+              className="space-y-5 animate-fade-in"
+            >
+              {/* Header — court counts + the Create Court action */}
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-extrabold uppercase tracking-widest text-slate-400">
+                    Active Courts
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1 font-medium">
+                    {courts.length} {courts.length === 1 ? 'court' : 'courts'}
+                    <span className="text-slate-300 mx-1.5">·</span>
+                    <span className="text-sky-600 font-bold">
+                      {courts.filter((c) => c.status === 'playing').length} live
+                    </span>
+                  </p>
+                </div>
+                {canManage && (
+                  <button
+                    onClick={handleAddCourt}
+                    disabled={isPending}
+                    className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl
+                      text-xs font-extrabold uppercase tracking-wide text-white
+                      bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700
+                      shadow-sm shadow-emerald-600/30 active:scale-[0.98]
+                      disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
+                      transition-all"
                   >
-                    <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                      <div>
-                        <h4 className="font-extrabold text-slate-900 text-sm md:text-base">{court.name}</h4>
-                        <div className="flex items-center mt-0.5">
-                          <span className={`inline-block w-2 h-2 rounded-full mr-1.5 ${
-                            isPlaying ? 'bg-sky-500 animate-pulse' : 'bg-slate-300'
-                          }`}></span>
-                          <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
-                            {isPlaying ? 'Live Match' : 'Vacant'}
-                          </span>
-                        </div>
-                      </div>
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                    Create Court
+                  </button>
+                )}
+              </div>
 
-                      {!isPlaying && canManage && (
-                        <button
-                          onClick={() => handleRemoveCourt(court.id)}
-                          className="text-slate-400 hover:text-red-500 text-sm transition-all p-1"
-                          title="Close Court"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {courts.map((court) => {
+                  const isPlaying = court.status === 'playing';
 
-                    <div className="p-5 flex-1 flex flex-col justify-center bg-white">
-                      {isPlaying ? (
-                        <div className="grid grid-cols-9 items-center gap-2 py-4">
-
-                          {/* Team A Horizontal layout */}
-                          <div className="col-span-4 bg-slate-50 border border-slate-100 p-3.5 rounded-xl text-center">
-                            <div className="text-[10px] text-emerald-600 font-bold uppercase tracking-wider mb-2.5">TEAM A</div>
-                            <div className="text-xs font-semibold text-slate-800 flex flex-wrap items-center justify-center gap-1">
-                              {court.team1.map((id, idx) => {
-                                const p = players.find(x => x.id === id);
-                                return (
-                                  <span key={id} className="truncate">
-                                    {p ? p.firstName : 'Unknown'}
-                                    {idx < court.team1.length - 1 ? ' &' : ''}
-                                  </span>
-                                );
-                              })}
-                            </div>
-                          </div>
-
-                          <div className="col-span-1 flex justify-center">
-                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-1 rounded">
-                              VS
+                  return (
+                    <div
+                      key={court.id}
+                      className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col justify-between shadow-sm relative transition-all duration-300 hover:shadow-md"
+                    >
+                      <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                        <div>
+                          <h4 className="font-extrabold text-slate-900 text-sm md:text-base">{court.name}</h4>
+                          <div className="flex items-center mt-0.5">
+                            <span className={`inline-block w-2 h-2 rounded-full mr-1.5 ${
+                              isPlaying ? 'bg-sky-500 animate-pulse' : 'bg-slate-300'
+                            }`}></span>
+                            <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
+                              {isPlaying ? 'Live Match' : 'Vacant'}
                             </span>
                           </div>
-
-                          {/* Team B Horizontal layout */}
-                          <div className="col-span-4 bg-slate-50 border border-slate-100 p-3.5 rounded-xl text-center">
-                            <div className="text-[10px] text-sky-600 font-bold uppercase tracking-wider mb-2.5">TEAM B</div>
-                            <div className="text-xs font-semibold text-slate-800 flex flex-wrap items-center justify-center gap-1">
-                              {court.team2.map((id, idx) => {
-                                const p = players.find(x => x.id === id);
-                                return (
-                                  <span key={id} className="truncate">
-                                    {p ? p.firstName : 'Unknown'}
-                                    {idx < court.team2.length - 1 ? ' &' : ''}
-                                  </span>
-                                );
-                              })}
+                        </div>
+  
+                        {!isPlaying && canManage && (
+                          <button
+                            onClick={() => handleRemoveCourt(court.id)}
+                            className="text-slate-400 hover:text-red-500 text-sm transition-all p-1"
+                            title="Close Court"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+  
+                      <div className="p-5 flex-1 flex flex-col justify-center bg-white">
+                        {isPlaying ? (
+                          <div className="grid grid-cols-9 items-center gap-2 py-4">
+  
+                            {/* Team A Horizontal layout */}
+                            <div className="col-span-4 bg-slate-50 border border-slate-100 p-3.5 rounded-xl text-center">
+                              <div className="text-[10px] text-emerald-600 font-bold uppercase tracking-wider mb-2.5">TEAM A</div>
+                              <div className="text-xs font-semibold text-slate-800 flex flex-wrap items-center justify-center gap-1">
+                                {court.team1.map((id, idx) => {
+                                  const p = players.find(x => x.id === id);
+                                  return (
+                                    <span key={id} className="truncate">
+                                      {p ? p.firstName : 'Unknown'}
+                                      {idx < court.team1.length - 1 ? ' &' : ''}
+                                    </span>
+                                  );
+                                })}
+                              </div>
                             </div>
+  
+                            <div className="col-span-1 flex justify-center">
+                              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-1 rounded">
+                                VS
+                              </span>
+                            </div>
+  
+                            {/* Team B Horizontal layout */}
+                            <div className="col-span-4 bg-slate-50 border border-slate-100 p-3.5 rounded-xl text-center">
+                              <div className="text-[10px] text-sky-600 font-bold uppercase tracking-wider mb-2.5">TEAM B</div>
+                              <div className="text-xs font-semibold text-slate-800 flex flex-wrap items-center justify-center gap-1">
+                                {court.team2.map((id, idx) => {
+                                  const p = players.find(x => x.id === id);
+                                  return (
+                                    <span key={id} className="truncate">
+                                      {p ? p.firstName : 'Unknown'}
+                                      {idx < court.team2.length - 1 ? ' &' : ''}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+  
                           </div>
-
-                        </div>
-                      ) : (
-                        <div className="py-10 text-center border border-dashed border-slate-200 bg-slate-50/50 rounded-xl flex flex-col items-center justify-center">
-                          <p className="text-slate-700 font-semibold text-xs">Court is Vacant</p>
-                          <p className="text-[11px] text-slate-400 mt-1">Requires 4 players in the queue to start.</p>
-                        </div>
-                      )}
+                        ) : (
+                          <div className="py-10 text-center border border-dashed border-slate-200 bg-slate-50/50 rounded-xl flex flex-col items-center justify-center">
+                            <p className="text-slate-700 font-semibold text-xs">Court is Vacant</p>
+                            <p className="text-[11px] text-slate-400 mt-1">Requires 4 players in the queue to start.</p>
+                          </div>
+                        )}
+                      </div>
+  
+                      <div className="p-4 border-t border-slate-100 bg-slate-50/30">
+                        {isPlaying ? (
+                          <button
+                            onClick={() => handleTriggerScoreModal(court)}
+                            disabled={isPending || !canManage}
+                            className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm"
+                          >
+                            Finish Game & Record Score
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleFillCourt(court.id)}
+                            disabled={queue.length < 4 || isPending || !canManage}
+                            className={`w-full py-3 rounded-xl font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm ${
+                              queue.length >= 4 && canManage
+                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
+                                : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200/50'
+                            }`}
+                          >
+                            {!canManage
+                              ? 'View Only'
+                              : queue.length >= 4
+                                ? 'Stack Next 4 Paddles'
+                                : 'Need 4 Players in Rack'}
+                          </button>
+                        )}
+                      </div>
                     </div>
-
-                    <div className="p-4 border-t border-slate-100 bg-slate-50/30">
-                      {isPlaying ? (
-                        <button
-                          onClick={() => handleTriggerScoreModal(court)}
-                          disabled={isPending || !canManage}
-                          className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm"
-                        >
-                          Finish Game & Record Score
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleFillCourt(court.id)}
-                          disabled={queue.length < 4 || isPending || !canManage}
-                          className={`w-full py-3 rounded-xl font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm ${
-                            queue.length >= 4 && canManage
-                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
-                              : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200/50'
-                          }`}
-                        >
-                          {!canManage
-                            ? 'View Only'
-                            : queue.length >= 4
-                              ? 'Stack Next 4 Paddles'
-                              : 'Need 4 Players in Rack'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           )}
 
           {activeTab === 'stats' && (
-            <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in">
+            <div
+              role="tabpanel"
+              id="arena-panel-stats"
+              aria-labelledby="arena-tab-stats"
+              className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in"
+            >
               <div>
                 <h3 className="text-sm font-extrabold uppercase tracking-widest text-slate-400">
                   Partnership Pairing Matrix
@@ -831,7 +905,12 @@ export default function Arena({
           )}
 
           {activeTab === 'history' && (
-            <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in">
+            <div
+              role="tabpanel"
+              id="arena-panel-history"
+              aria-labelledby="arena-tab-history"
+              className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in"
+            >
               <div>
                 <h3 className="text-sm font-extrabold uppercase tracking-widest text-slate-400">
                   Match History Log
@@ -902,18 +981,25 @@ export default function Arena({
           )}
 
           {activeTab === 'members' && (
-            <ArenaMembers
-              arenaId={arenaId}
-              members={members}
-              viewerUserId={viewerUserId}
-              viewerRole={viewerRole}
-              canManage={canManage}
-              pendingRequests={pendingRequests}
-            />
+            <div role="tabpanel" id="arena-panel-members" aria-labelledby="arena-tab-members">
+              <ArenaMembers
+                arenaId={arenaId}
+                members={members}
+                viewerUserId={viewerUserId}
+                viewerRole={viewerRole}
+                canManage={canManage}
+                pendingRequests={pendingRequests}
+              />
+            </div>
           )}
 
           {activeTab === 'mystats' && myPlayer && (
-            <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in">
+            <div
+              role="tabpanel"
+              id="arena-panel-mystats"
+              aria-labelledby="arena-tab-mystats"
+              className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in"
+            >
               <div>
                 <h3 className="text-sm font-extrabold uppercase tracking-widest text-slate-400">
                   My Stats — {fullName(myPlayer)}
