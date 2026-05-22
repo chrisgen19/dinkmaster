@@ -238,16 +238,24 @@ export default function Arena({
 
   // Anchor placed just above the tab content so we can scroll to it on mobile.
   const contentAnchorRef = useRef(null);
+  // Pending scroll-to-content timer, so a rapid re-select can cancel a stale one.
+  const scrollTimerRef = useRef(null);
 
   // Switch tab, then scroll the page down to the freshly rendered content. The
   // delay lets the mobile drawer finish collapsing and the new tab content
   // mount before we scroll.
   const handleSelectTab = (tabId) => {
     setActiveTab(tabId);
-    setTimeout(() => {
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    scrollTimerRef.current = setTimeout(() => {
       contentAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 320);
   };
+
+  // Cancel any pending scroll timer when the component unmounts.
+  useEffect(() => () => {
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+  }, []);
 
   // Request to join; an owner/organizer must approve before membership is granted.
   const handleRequestJoin = () => {

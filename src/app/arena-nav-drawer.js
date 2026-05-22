@@ -41,6 +41,11 @@ export function ArenaNavDrawer({
   // Whether the last tip interaction was a swipe — used to stop the trailing
   // click from undoing what the swipe just did.
   const didSwipe = useRef(false);
+  // The drawer panel and the tip button — for focus management.
+  const drawerRef = useRef(null);
+  const tipRef = useRef(null);
+  // Tracks the previous `open` value so we can restore focus on close.
+  const prevOpen = useRef(false);
 
   // Lock body scroll while the drawer is expanded.
   useEffect(() => {
@@ -48,6 +53,44 @@ export function ArenaNavDrawer({
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
+  }, [open]);
+
+  // Focus management: move focus into the menu on open, and back to the tip on
+  // close, so keyboard users follow the drawer.
+  useEffect(() => {
+    if (open) {
+      drawerRef.current?.querySelector('[data-menu-item]')?.focus();
+    } else if (prevOpen.current) {
+      tipRef.current?.focus();
+    }
+    prevOpen.current = open;
+  }, [open]);
+
+  // While open: close on Escape and trap Tab focus within the drawer.
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const focusable = drawerRef.current?.querySelectorAll(
+        'button:not([tabindex="-1"]):not([disabled])',
+      );
+      if (!focusable || focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
   }, [open]);
 
   // The drawer is only rendered (via `md:hidden`) below the `md` breakpoint.
@@ -80,6 +123,12 @@ export function ArenaNavDrawer({
       didSwipe.current = true;
     }
     touchStartY.current = null;
+  };
+  // A cancelled pointer (e.g. the OS hijacks the gesture) leaves no pointerup,
+  // so clear the swipe state to avoid acting on a stale start position.
+  const handleTipPointerCancel = () => {
+    touchStartY.current = null;
+    didSwipe.current = false;
   };
   // A plain tap toggles the drawer; ignore the click that trails a swipe.
   const handleTipClick = () => {
@@ -116,6 +165,7 @@ export function ArenaNavDrawer({
       {/* Drawer — collapsed, it is pushed down by exactly TIP_HEIGHT so only
           the tip remains visible above the viewport edge. */}
       <div
+        ref={drawerRef}
         style={{ '--tip': `${TIP_HEIGHT}px` }}
         className={`md:hidden fixed bottom-0 inset-x-0 z-[60] max-h-[82vh] flex flex-col
           bg-white rounded-t-[28px] ring-1 ring-slate-900/5
@@ -125,11 +175,15 @@ export function ArenaNavDrawer({
       >
         {/* Tip — fixed height, always visible; tap or swipe to toggle */}
         <button
+          ref={tipRef}
           type="button"
           onClick={handleTipClick}
           onPointerDown={handleTipPointerDown}
           onPointerUp={handleTipPointerUp}
+          onPointerCancel={handleTipPointerCancel}
           aria-expanded={open}
+          aria-controls="arena-nav-menu"
+          aria-label={`Arena navigation — currently viewing ${activeTabLabel}`}
           style={{ height: `${TIP_HEIGHT}px` }}
           className="relative shrink-0 w-full flex items-center gap-3 px-5 touch-pan-y"
         >
@@ -141,11 +195,8 @@ export function ArenaNavDrawer({
             }`}
           />
 
-          {/* Live status dot */}
-          <span className="relative flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
-            <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400/70 animate-ping" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/20" />
-          </span>
+          {/* Brand accent dot (decorative) */}
+          <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden="true" />
 
           {/* Active tab label */}
           <span className="flex flex-col items-start min-w-0 flex-1 pt-1">
@@ -181,6 +232,7 @@ export function ArenaNavDrawer({
             stays mounted (so items can animate in) but is taken out of the
             accessibility tree and tab order. */}
         <div
+          id="arena-nav-menu"
           aria-hidden={!open}
           className="overflow-y-auto px-3 pb-[max(1.25rem,env(safe-area-inset-bottom))]"
         >
@@ -197,6 +249,7 @@ export function ArenaNavDrawer({
               return (
                 <button
                   key={tab.id}
+                  data-menu-item
                   onClick={() => handleSelect(tab.id)}
                   tabIndex={open ? 0 : -1}
                   style={{ transitionDelay: open ? `${80 + i * 45}ms` : '0ms' }}
