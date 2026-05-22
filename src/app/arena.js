@@ -19,6 +19,7 @@ import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { eloToDupr } from '@/lib/rating';
 import { AuthStatus } from './auth-status';
 import { ArenaMembers } from './arena-members';
+import { ArenaNavDrawer } from './arena-nav-drawer';
 
 /** Display name: "First Last", or just "First" when no last name is set. */
 const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
@@ -97,7 +98,6 @@ export default function Arena({
   const [errorMsg, setErrorMsg] = useState('');
   const [activeTab, setActiveTab] = useState('courts');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [navMenuOpen, setNavMenuOpen] = useState(false);
 
   const [autoMix, setAutoMix] = useState(true);
   const [notification, setNotification] = useState('');
@@ -231,59 +231,16 @@ export default function Arena({
 
   // Anchor placed just above the tab content so we can scroll to it on mobile.
   const contentAnchorRef = useRef(null);
-  // Tracks the Y position where a touch on the mobile nav bar started.
-  const barTouchStartY = useRef(null);
 
-  // Select a tab from the mobile bottom sheet, close it, then scroll the page
-  // down to the freshly rendered content. The delay lets the sheet finish its
-  // slide-out transition and the new tab content mount before we scroll.
+  // Switch tab, then scroll the page down to the freshly rendered content. The
+  // delay lets the mobile drawer finish collapsing and the new tab content
+  // mount before we scroll.
   const handleSelectTab = (tabId) => {
     setActiveTab(tabId);
-    setNavMenuOpen(false);
     setTimeout(() => {
       contentAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 320);
   };
-
-  // Whether the last pointer interaction on the drawer tip was a swipe — used
-  // to stop the trailing click from undoing what the swipe just did.
-  const drawerDidSwipe = useRef(false);
-
-  // Pointer events cover both touch and mouse, so the swipe gesture also works
-  // when testing with a mouse in the browser's mobile layout.
-  const handleTipPointerDown = (e) => {
-    barTouchStartY.current = e.clientY;
-    drawerDidSwipe.current = false;
-  };
-  // Swipe the drawer tip up to expand, down to collapse.
-  const handleTipPointerUp = (e) => {
-    if (barTouchStartY.current == null) return;
-    const swiped = barTouchStartY.current - e.clientY;
-    if (swiped > 30) {
-      setNavMenuOpen(true);
-      drawerDidSwipe.current = true;
-    } else if (swiped < -30) {
-      setNavMenuOpen(false);
-      drawerDidSwipe.current = true;
-    }
-    barTouchStartY.current = null;
-  };
-  // A plain tap on the tip toggles the drawer; ignore the click that trails a swipe.
-  const handleTipClick = () => {
-    if (drawerDidSwipe.current) {
-      drawerDidSwipe.current = false;
-      return;
-    }
-    setNavMenuOpen((open) => !open);
-  };
-
-  // Lock body scroll while the mobile nav sheet is open.
-  useEffect(() => {
-    if (!navMenuOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
-  }, [navMenuOpen]);
 
   // Request to join; an owner/organizer must approve before membership is granted.
   const handleRequestJoin = () => {
@@ -649,82 +606,17 @@ export default function Arena({
             )}
           </div>
 
-          {/* Mobile: persistent bottom drawer. Its tip always peeks above the
-              viewport edge — tap or swipe the tip up to expand the menu. */}
-          <div
-            onClick={() => setNavMenuOpen(false)}
-            className={`md:hidden fixed inset-0 z-[55] bg-slate-900/50 transition-opacity duration-300 ${
-              navMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
-            }`}
-            aria-hidden="true"
+          {/* Mobile: persistent bottom navigation drawer */}
+          <ArenaNavDrawer
+            navTabs={navTabs}
+            activeTab={activeTab}
+            activeTabLabel={activeTabLabel}
+            canManage={canManage}
+            pendingRequests={pendingRequests}
+            isPending={isPending}
+            onSelectTab={handleSelectTab}
+            onCreateCourt={handleAddCourt}
           />
-          <div
-            className={`md:hidden fixed bottom-0 inset-x-0 z-[60] bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl transition-transform duration-300 ease-out ${
-              navMenuOpen ? 'translate-y-0' : 'translate-y-[calc(100%-72px)]'
-            }`}
-          >
-            {/* Tip — always visible; tap or swipe to toggle the drawer */}
-            <button
-              type="button"
-              onClick={handleTipClick}
-              onPointerDown={handleTipPointerDown}
-              onPointerUp={handleTipPointerUp}
-              aria-expanded={navMenuOpen}
-              className="w-full flex flex-col items-center gap-1.5 pt-3 pb-3 px-4 touch-pan-y"
-            >
-              <span className={`h-1.5 w-10 rounded-full transition-colors ${navMenuOpen ? 'bg-slate-300' : 'bg-slate-200'}`} />
-              <span className="w-full flex justify-between items-center">
-                <span className="flex items-center gap-2 min-w-0">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">View</span>
-                  <span className="text-sm font-extrabold uppercase text-slate-900 truncate">{activeTabLabel}</span>
-                  {canManage && pendingRequests.length > 0 && (
-                    <span className="bg-amber-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none shrink-0">
-                      {pendingRequests.length}
-                    </span>
-                  )}
-                </span>
-                <span
-                  className={`shrink-0 pl-3 text-slate-400 transition-transform duration-300 ${navMenuOpen ? 'rotate-180' : ''}`}
-                  aria-hidden="true"
-                >
-                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M18 15l-6-6-6 6" />
-                  </svg>
-                </span>
-              </span>
-            </button>
-
-            {/* Menu body — revealed when the drawer is expanded */}
-            <div className="px-3 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-1">
-              {navTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => handleSelectTab(tab.id)}
-                  className={`w-full flex items-center justify-between px-4 py-3.5 rounded-xl text-sm font-extrabold uppercase transition-all ${
-                    activeTab === tab.id
-                      ? 'bg-slate-900 text-white'
-                      : 'text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <span>{tab.label}</span>
-                  {tab.badge != null && (
-                    <span className="bg-amber-500 text-white text-[10px] font-black rounded-full px-2 py-0.5 leading-none">
-                      {tab.badge}
-                    </span>
-                  )}
-                </button>
-              ))}
-              {canManage && (
-                <button
-                  onClick={() => { setNavMenuOpen(false); handleAddCourt(); }}
-                  disabled={isPending}
-                  className="w-full flex items-center justify-center gap-1 mt-2 px-4 py-3.5 rounded-xl text-sm font-extrabold uppercase bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-all"
-                >
-                  + Create Court
-                </button>
-              )}
-            </div>
-          </div>
 
           {/* Scroll target — selecting a tab on mobile scrolls here. */}
           <div ref={contentAnchorRef} className="scroll-mt-24" aria-hidden="true" />
