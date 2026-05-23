@@ -3,7 +3,7 @@ import { getWeeklyLeaderboard } from '@/lib/leaderboard-server';
 
 /**
  * List every arena for the public directory, with owner and content counts.
- * @returns {Promise<Array<{id:string,name:string,ownerId:string,ownerName:string,playerCount:number,courtCount:number,matchCount:number}>>}
+ * @returns {Promise<Array<{id:string,name:string,description:string|null,ownerId:string,ownerName:string,playerCount:number,courtCount:number,matchCount:number}>>}
  */
 export async function listArenas() {
   const arenas = await prisma.arena.findMany({
@@ -19,6 +19,7 @@ export async function listArenas() {
   return arenas.map((a) => ({
     id: a.id,
     name: a.name,
+    description: a.description,
     ownerId: a.ownerId,
     ownerName: a.owner.name,
     playerCount: a._count.players,
@@ -28,13 +29,24 @@ export async function listArenas() {
 }
 
 /**
- * Fetch one arena with its owner, or null if it does not exist.
+ * Fetch one arena's scalar fields, or null if it does not exist. Explicitly
+ * selected (not `include`) so a manager-facing page only receives known-safe
+ * columns rather than every future Arena field.
  * @param {string} id
  */
 export async function getArena(id) {
   return prisma.arena.findUnique({
     where: { id },
-    include: { owner: { select: { id: true, name: true } } },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      ownerId: true,
+      scheduleDays: true,
+      scheduleStart: true,
+      scheduleEnd: true,
+      timezone: true,
+    },
   });
 }
 

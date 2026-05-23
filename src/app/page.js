@@ -79,6 +79,9 @@ export default async function Page() {
                     ) : null}
                   </div>
                   <p className="text-xs text-slate-400 mt-1">by {arena.ownerName}</p>
+                  {arena.description && (
+                    <p className="text-xs text-slate-500 mt-2 line-clamp-2">{arena.description}</p>
+                  )}
                   <div className="flex gap-3 mt-4 text-xs text-slate-500">
                     <span><strong className="text-slate-700">{arena.playerCount}</strong> players</span>
                     <span><strong className="text-slate-700">{arena.courtCount}</strong> courts</span>

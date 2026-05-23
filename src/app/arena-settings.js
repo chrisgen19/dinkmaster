@@ -4,23 +4,7 @@ import { useState, useTransition, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { updateArenaGeneral, updateArenaSchedule, resetArena, transferOwnership, deleteArena } from './actions';
-
-/** Weekday options, Monday-first; `value` matches JS `Date.getDay()`. */
-const WEEKDAYS = [
-  { value: 1, short: 'Mon' },
-  { value: 2, short: 'Tue' },
-  { value: 3, short: 'Wed' },
-  { value: 4, short: 'Thu' },
-  { value: 5, short: 'Fri' },
-  { value: 6, short: 'Sat' },
-  { value: 0, short: 'Sun' },
-];
-
-/** Friendly zone shortlist for the picker; any IANA zone is still accepted. */
-const TIMEZONES = [
-  'Asia/Manila', 'Asia/Singapore', 'Asia/Hong_Kong', 'Asia/Tokyo',
-  'Australia/Sydney', 'America/Los_Angeles', 'America/New_York', 'Europe/London', 'UTC',
-];
+import { ScheduleFields } from './schedule-fields';
 
 const inputClass =
   'w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 text-sm font-bold text-slate-800 focus:bg-white focus:border-emerald-500 outline-none transition';
@@ -76,6 +60,20 @@ export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwn
   // today — but guard against an unknown `section` id rendering a blank panel.
   const effectiveSection = SECTIONS.some((s) => s.id === section) ? section : SECTIONS[0].id;
 
+  // Roving arrow-key navigation across the tablist (matches the arena tab bar).
+  const selectByIndex = (i) => {
+    const next = SECTIONS[(i + SECTIONS.length) % SECTIONS.length];
+    setSection(next.id);
+    document.getElementById(`settings-tab-${next.id}`)?.focus();
+  };
+  const onTabKeyDown = (e, idx) => {
+    const map = { ArrowDown: idx + 1, ArrowRight: idx + 1, ArrowUp: idx - 1, ArrowLeft: idx - 1, Home: 0, End: SECTIONS.length - 1 };
+    if (e.key in map) {
+      e.preventDefault();
+      selectByIndex(map[e.key]);
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Page heading — mirrors the icon + title + back-link pattern used elsewhere. */}
@@ -100,15 +98,20 @@ export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwn
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-6">
-        <nav className="flex md:flex-col gap-1.5 md:sticky md:top-24 md:self-start" aria-label="Settings sections">
-          {SECTIONS.map((s) => {
+        <nav className="flex md:flex-col gap-1.5 md:sticky md:top-24 md:self-start" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
+          {SECTIONS.map((s, i) => {
             const active = effectiveSection === s.id;
             const danger = s.id === 'danger';
             return (
               <button
                 key={s.id}
+                id={`settings-tab-${s.id}`}
+                role="tab"
+                aria-selected={active}
+                aria-controls={`settings-panel-${s.id}`}
+                tabIndex={active ? 0 : -1}
                 onClick={() => setSection(s.id)}
-                aria-current={active ? 'true' : undefined}
+                onKeyDown={(e) => onTabKeyDown(e, i)}
                 className={`text-left px-3 py-2 rounded-xl text-sm font-bold transition-colors border ${
                   active
                     ? danger
@@ -123,7 +126,13 @@ export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwn
           })}
         </nav>
 
-        <div className="min-w-0">
+        <div
+          className="min-w-0"
+          role="tabpanel"
+          id={`settings-panel-${effectiveSection}`}
+          aria-labelledby={`settings-tab-${effectiveSection}`}
+          tabIndex={0}
+        >
           {effectiveSection === 'general' && (
             <GeneralSection arenaId={arenaId} initialName={arenaName} initialDescription={description} />
           )}
@@ -222,9 +231,6 @@ function ScheduleSection({ arenaId, schedule }) {
   const [saved, flashSaved, clearSaved] = useSavedFlag();
   const [isPending, startTransition] = useTransition();
 
-  const toggleDay = (value) =>
-    setDays((prev) => (prev.includes(value) ? prev.filter((d) => d !== value) : [...prev, value]));
-
   const save = () => {
     clearSaved();
     if (start && end && end <= start) return setError('End time must be after start time.');
@@ -244,53 +250,18 @@ function ScheduleSection({ arenaId, schedule }) {
 
   return (
     <Card title="Schedule" hint="Sets the timezone for the Mon–Sun Player of the Week window; days/times show for context.">
-      <div className="space-y-5 max-w-xl">
-        <div>
-          <span className={labelClass}>Play days</span>
-          <div className="flex flex-wrap gap-2">
-            {WEEKDAYS.map((d) => {
-              const on = days.includes(d.value);
-              return (
-                <button
-                  key={d.value}
-                  type="button"
-                  onClick={() => toggleDay(d.value)}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition ${
-                    on ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300'
-                  }`}
-                >
-                  {d.short}
-                </button>
-              );
-            })}
-          </div>
-          <p className="text-[10px] text-slate-400 mt-1.5">Leave all unset to count every day.</p>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className={labelClass}>Start</span>
-            <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className={inputClass} />
-          </label>
-          <label className="block">
-            <span className={labelClass}>End</span>
-            <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className={inputClass} />
-          </label>
-        </div>
-
-        <label className="block">
-          <span className={labelClass}>Timezone</span>
-          <input
-            list="arena-settings-timezones"
-            value={timezone}
-            onChange={(e) => setTimezone(e.target.value)}
-            placeholder="e.g. Asia/Manila"
-            className={inputClass}
-          />
-          <datalist id="arena-settings-timezones">
-            {TIMEZONES.map((tz) => <option key={tz} value={tz} />)}
-          </datalist>
-        </label>
+      <div className="max-w-xl">
+        <ScheduleFields
+          days={days}
+          setDays={setDays}
+          start={start}
+          setStart={setStart}
+          end={end}
+          setEnd={setEnd}
+          timezone={timezone}
+          setTimezone={setTimezone}
+          datalistId="arena-settings-timezones"
+        />
       </div>
       <Status error={error} saved={saved} />
       <div className="mt-5">

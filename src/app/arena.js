@@ -111,6 +111,7 @@ export default function Arena({
   initialState,
   arenaId,
   arenaName,
+  description = '',
   schedule: initialSchedule = { days: [], start: null, end: null, timezone: 'Asia/Manila' },
   canManage,
   viewerRole,
@@ -368,7 +369,7 @@ export default function Arena({
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans selection:bg-emerald-100 selection:text-slate-900">
 
-      <SiteHeader variant="arena" arenaName={arenaName}>
+      <SiteHeader variant="arena" arenaName={arenaName} arenaSubtitle={description}>
         {/* Desktop / tablet: stat chips */}
         <div className="hidden md:flex items-stretch gap-2 text-xs">
           <div className="bg-slate-50 px-3.5 py-1.5 rounded-xl border border-slate-200/70">
