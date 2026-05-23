@@ -15,7 +15,7 @@ datasource db {
 model Arena {
   id          String   @id @default(cuid())
   name        String
-  description String?  // optional, owner/organizer-set blurb shown on the arena
+  description String?  // optional, manager-set blurb (surfacing on the arena view is tracked in #33)
   ownerId     String
   createdAt   DateTime @default(now())
 

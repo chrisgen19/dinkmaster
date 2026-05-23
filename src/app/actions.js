@@ -224,6 +224,8 @@ export async function updateArenaGeneral(arenaId, { name: nameInput, description
 
   // updateMany (not update) so a concurrent delete is a clean count===0
   // instead of a thrown P2025; scoped to id only since any manager may write.
+  // A manager demoted between the guard and this write still succeeds — a
+  // narrow TOCTOU window we accept, same as the other manager-gated actions.
   const updated = await prisma.arena.updateMany({ where: { id: arenaId }, data: { name, description } });
   if (updated.count !== 1) return { error: 'This arena no longer exists.' };
   return { arena: { id: arenaId, name, description } };
@@ -280,6 +282,8 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
 
   // updateMany (not update) so a concurrent delete is a clean count===0
   // instead of a thrown P2025; scoped to id only since any manager may write.
+  // A manager demoted between the guard and this write still succeeds — a
+  // narrow TOCTOU window we accept, same as the other manager-gated actions.
   const updated = await prisma.arena.updateMany({
     where: { id: arenaId },
     data: { scheduleDays: normalizedDays, scheduleStart: startTime, scheduleEnd: endTime, timezone: tz },

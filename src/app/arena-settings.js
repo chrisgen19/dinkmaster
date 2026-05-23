@@ -50,8 +50,8 @@ const SECTIONS = [
  */
 export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwner, viewerUserId, members }) {
   const [section, setSection] = useState('general');
-  // Fall back to the first section if the active id ever disappears — e.g. a
-  // successful ownership transfer re-renders this with a narrower set.
+  // Defensive: every section is shown to all managers, so this never shrinks
+  // today — but guard against an unknown `section` id rendering a blank panel.
   const effectiveSection = SECTIONS.some((s) => s.id === section) ? section : SECTIONS[0].id;
 
   return (
@@ -291,11 +291,13 @@ function DangerZone({ arenaId, arenaName, isOwner, viewerUserId, members }) {
   const [error, setError] = useState('');
   const [resetConfirm, setResetConfirm] = useState(false);
   const [transferTo, setTransferTo] = useState('');
+  const [transferConfirm, setTransferConfirm] = useState(false);
   const [deleteText, setDeleteText] = useState('');
   const [isPending, startTransition] = useTransition();
 
   // Members who could become owner (anyone but the current owner / viewer).
   const transferTargets = members.filter((m) => m.userId !== viewerUserId);
+  const transferName = transferTargets.find((m) => m.userId === transferTo)?.name ?? 'this member';
 
   const run = (fn, after) =>
     startTransition(async () => {
@@ -348,6 +350,22 @@ function DangerZone({ arenaId, arenaName, isOwner, viewerUserId, members }) {
               <p className="text-xs text-slate-500 mt-0.5 mb-3">Hand the arena to another member; you stay on as an organizer.</p>
               {transferTargets.length === 0 ? (
                 <p className="text-xs text-slate-400">No other members to transfer to yet.</p>
+              ) : transferConfirm ? (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-700">
+                    Transfer ownership to <span className="font-bold">{transferName}</span>? You&apos;ll become an organizer. This can only be undone by another transfer.
+                  </p>
+                  <div className="flex gap-2">
+                    <button onClick={() => setTransferConfirm(false)} className="px-3 py-2 text-xs font-bold text-slate-500 bg-slate-100 rounded-lg hover:bg-slate-200 transition">Cancel</button>
+                    <button
+                      onClick={() => run(() => transferOwnership(arenaId, transferTo), () => router.refresh())}
+                      disabled={isPending}
+                      className="px-3 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition disabled:opacity-50"
+                    >
+                      Confirm transfer
+                    </button>
+                  </div>
+                </div>
               ) : (
                 <div className="flex flex-wrap gap-2">
                   <select value={transferTo} onChange={(e) => setTransferTo(e.target.value)} className={`${inputClass} max-w-xs`}>
@@ -355,7 +373,7 @@ function DangerZone({ arenaId, arenaName, isOwner, viewerUserId, members }) {
                     {transferTargets.map((m) => <option key={m.userId} value={m.userId}>{m.name}</option>)}
                   </select>
                   <button
-                    onClick={() => run(() => transferOwnership(arenaId, transferTo), () => router.refresh())}
+                    onClick={() => setTransferConfirm(true)}
                     disabled={isPending || !transferTo}
                     className="px-3 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition disabled:opacity-50"
                   >
