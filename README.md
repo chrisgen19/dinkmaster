@@ -141,12 +141,12 @@ DINKMASTER is being built toward a **multi-tenant, multi-arena** system in phase
 | **6 — Skill rating** | Elo-based per-player rating updated at the end of each match; DUPR-style 2.0–8.0 display; surfaced in **My Stats** and **/profile**. | ✅ Done |
 | **7 — Player of the Week** | Per-arena recurring **schedule** (days/time/timezone, manager-set); a **This Week** tab ranking the top 5 by wins for the scheduled week, derived live from match history; weekly wins/rank on **/profile**. | ✅ Done |
 | **8 — Arena Settings (foundation)** | A dedicated, **manager-gated** `/arena/[id]/settings` page with left-nav sections, consolidating today's scattered controls: **General** (rename + new arena `description`), **Schedule** (the existing days/time/timezone editor), and a **Danger Zone** (reset for managers; owner-only transfer ownership + a new **delete arena**). Adds a Settings entry point from the arena. | ✅ Done |
-| **9a — Configurable matchmaking** | Per-arena **starve / emergency wait thresholds** (new `Arena` columns + migration; defaults match the prior constants). Threaded into the auto-mix sort and the ⏳ badge; settable from **Arena Settings → Matchmaking** by managers. | 🚧 In progress |
-| **9b — Match & leaderboard defaults** | Per-arena overrides for **target score** (score-modal seed), **auto-mix default** (initial toggle state), **leaderboard top-N** (size of the **This Week** board), and whether **off-schedule games count** (restricts the weekly tally to scheduled days when off). Threaded into the score modal seed, the Auto-Mix toggle's initial state, and the weekly leaderboard (`computeWeeklyLeaderboard` + the server reader); settable from **Arena Settings → Match Defaults**. Defaults preserve prior behaviour. Team size stays fixed at doubles (2v2). | 🚧 In progress |
+| **9a — Configurable matchmaking** | Per-arena **starve / emergency wait thresholds** (new `Arena` columns + migration; defaults match the prior constants). Threaded into the auto-mix sort and the ⏳ badge; settable from **Arena Settings → Matchmaking** by managers. | ✅ Done |
+| **9b — Match & leaderboard defaults** | Per-arena overrides for **target score** (score-modal seed), **auto-mix default** (initial toggle state), **leaderboard top-N** (size of the **This Week** board), and whether **off-schedule games count** (restricts the weekly tally to scheduled days when off). Threaded into the score modal seed, the Auto-Mix toggle's initial state, and the weekly leaderboard (`computeWeeklyLeaderboard` + the server reader); settable from **Arena Settings → Match Defaults**. Defaults preserve prior behaviour. Team size stays fixed at doubles (2v2). | ✅ Done |
 
 Phase tracking and detailed scope live in the GitHub issues.
 
-> **Phases 8–9 ship incrementally** — Phase 8 landed the settings page + consolidation; Phase 9 ships in two PRs (9a: matchmaking thresholds, 9b: match & leaderboard defaults).
+> **Phases 8–9 shipped incrementally** — Phase 8 landed the settings page + consolidation; Phase 9 followed in two PRs (9a: matchmaking thresholds; 9b: match & leaderboard defaults).
 
 ## Skill rating
 
