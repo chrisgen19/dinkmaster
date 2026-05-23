@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useState, useTransition, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { updateArenaGeneral, updateArenaSchedule, resetArena, transferOwnership, deleteArena } from './actions';
@@ -25,6 +25,28 @@ const TIMEZONES = [
 const inputClass =
   'w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 text-sm font-bold text-slate-800 focus:bg-white focus:border-emerald-500 outline-none transition';
 const labelClass = 'block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5';
+
+/**
+ * A transient "Saved." flag that auto-clears after `ms`. The timer is tracked
+ * in a ref and cleared on unmount and before re-arming, so navigating away or
+ * a rapid second save can't fire a stray clear on the wrong render.
+ * @returns {[boolean, () => void, () => void]} [saved, flash, clear]
+ */
+function useSavedFlag(ms = 2500) {
+  const [saved, setSaved] = useState(false);
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const clear = () => {
+    clearTimeout(timer.current);
+    setSaved(false);
+  };
+  const flash = () => {
+    clearTimeout(timer.current);
+    setSaved(true);
+    timer.current = setTimeout(() => setSaved(false), ms);
+  };
+  return [saved, flash, clear];
+}
 
 /** Section definitions for the left nav. All are visible to managers; the
  *  owner-only actions (transfer, delete) are gated inside Danger Zone. */
@@ -138,18 +160,17 @@ function GeneralSection({ arenaId, initialName, initialDescription }) {
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(initialDescription);
   const [error, setError] = useState('');
-  const [saved, setSaved] = useState(false);
+  const [saved, flashSaved, clearSaved] = useSavedFlag();
   const [isPending, startTransition] = useTransition();
 
   const save = () => {
     setError('');
-    setSaved(false);
+    clearSaved();
     startTransition(async () => {
       try {
         const result = await updateArenaGeneral(arenaId, { name, description });
         if (result?.error) return setError(result.error);
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2500);
+        flashSaved();
         router.refresh();
       } catch {
         setError('Failed to save changes. Please try again.');
@@ -198,14 +219,14 @@ function ScheduleSection({ arenaId, schedule }) {
   const [end, setEnd] = useState(schedule.end ?? '');
   const [timezone, setTimezone] = useState(schedule.timezone || 'Asia/Manila');
   const [error, setError] = useState('');
-  const [saved, setSaved] = useState(false);
+  const [saved, flashSaved, clearSaved] = useSavedFlag();
   const [isPending, startTransition] = useTransition();
 
   const toggleDay = (value) =>
     setDays((prev) => (prev.includes(value) ? prev.filter((d) => d !== value) : [...prev, value]));
 
   const save = () => {
-    setSaved(false);
+    clearSaved();
     if (start && end && end <= start) return setError('End time must be after start time.');
     setError('');
     startTransition(async () => {
@@ -213,8 +234,7 @@ function ScheduleSection({ arenaId, schedule }) {
         const result = await updateArenaSchedule(arenaId, { days, start, end, timezone });
         if (result?.error) return setError(result.error);
         if (!result?.schedule) return setError('Failed to update schedule.');
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2500);
+        flashSaved();
         router.refresh();
       } catch {
         setError('Failed to save schedule. Please try again.');

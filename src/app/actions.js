@@ -227,7 +227,7 @@ export async function updateArenaGeneral(arenaId, { name: nameInput, description
   // A manager demoted between the guard and this write still succeeds — a
   // narrow TOCTOU window we accept, same as the other manager-gated actions.
   const updated = await prisma.arena.updateMany({ where: { id: arenaId }, data: { name, description } });
-  if (updated.count !== 1) return { error: 'This arena no longer exists.' };
+  if (updated.count === 0) return { error: 'This arena no longer exists.' };
   return { arena: { id: arenaId, name, description } };
 }
 
@@ -288,7 +288,7 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
     where: { id: arenaId },
     data: { scheduleDays: normalizedDays, scheduleStart: startTime, scheduleEnd: endTime, timezone: tz },
   });
-  if (updated.count !== 1) return { error: 'This arena no longer exists.' };
+  if (updated.count === 0) return { error: 'This arena no longer exists.' };
   return { schedule: { days: normalizedDays, start: startTime, end: endTime, timezone: tz } };
 }
 
