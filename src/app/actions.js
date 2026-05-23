@@ -5,6 +5,12 @@ import { getState } from '@/lib/data';
 import { requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
 import { ROLES } from '@/lib/roles';
 import { MAX_WAIT_THRESHOLD, bandOf } from '@/lib/matchmaking';
+import {
+  MIN_TARGET_SCORE,
+  MAX_TARGET_SCORE,
+  MIN_LEADERBOARD_SIZE,
+  MAX_LEADERBOARD_SIZE,
+} from '@/lib/match-defaults';
 import { computeMatchRatings, RATING_BASELINE } from '@/lib/rating';
 
 /** Canonical (sorted) pair so each partnership has exactly one row. */
@@ -313,15 +319,6 @@ export async function updateArenaMatchmaking(
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
   return { matchmaking: { starveThreshold: starve, emergencyWait: emergency } };
 }
-
-/**
- * Reasonable bounds for the match & leaderboard defaults — wide enough for any
- * sensible pickleball variant (11/15/21/etc.), tight enough to reject typos.
- */
-const MIN_TARGET_SCORE = 1;
-const MAX_TARGET_SCORE = 99;
-const MIN_LEADERBOARD_SIZE = 1;
-const MAX_LEADERBOARD_SIZE = 50;
 
 /**
  * Update an arena's match + leaderboard defaults. Manager-gated. All four

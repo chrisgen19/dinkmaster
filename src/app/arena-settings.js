@@ -6,6 +6,12 @@ import { useRouter } from 'next/navigation';
 import { updateArenaGeneral, updateArenaSchedule, updateArenaMatchmaking, updateArenaMatchDefaults, resetArena, transferOwnership, deleteArena } from './actions';
 import { ScheduleFields } from './schedule-fields';
 import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
+import {
+  MIN_TARGET_SCORE,
+  MAX_TARGET_SCORE,
+  MIN_LEADERBOARD_SIZE,
+  MAX_LEADERBOARD_SIZE,
+} from '@/lib/match-defaults';
 
 const inputClass =
   'w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 text-sm font-bold text-slate-800 focus:bg-white focus:border-emerald-500 outline-none transition';
@@ -382,9 +388,11 @@ function MatchmakingSection({ arenaId, matchmaking }) {
 
 function MatchDefaultsSection({ arenaId, defaults }) {
   const router = useRouter();
-  const [targetScore, setTargetScore] = useState(defaults.targetScore);
+  // Inputs kept as strings so clearing the field doesn't snap to 0 — parse on
+  // save. Same pattern as MatchmakingSection (PR #36 round 2).
+  const [targetScore, setTargetScore] = useState(String(defaults.targetScore));
   const [autoMixDefault, setAutoMixDefault] = useState(defaults.autoMixDefault);
-  const [leaderboardSize, setLeaderboardSize] = useState(defaults.leaderboardSize);
+  const [leaderboardSize, setLeaderboardSize] = useState(String(defaults.leaderboardSize));
   const [countOffScheduleGames, setCountOffScheduleGames] = useState(defaults.countOffScheduleGames);
   const [error, setError] = useState('');
   const [saved, flashSaved, clearSaved] = useSavedFlag();
@@ -392,15 +400,22 @@ function MatchDefaultsSection({ arenaId, defaults }) {
 
   const save = () => {
     clearSaved();
-    if (!Number.isInteger(targetScore) || targetScore < 1) return setError('Target score must be a whole number ≥ 1.');
-    if (!Number.isInteger(leaderboardSize) || leaderboardSize < 1) return setError('Leaderboard size must be a whole number ≥ 1.');
+    const target = Number(targetScore);
+    const size = Number(leaderboardSize);
+    // Mirror the server validation so the user gets instant feedback without a round-trip.
+    if (!Number.isInteger(target) || target < MIN_TARGET_SCORE || target > MAX_TARGET_SCORE) {
+      return setError(`Target score must be a whole number between ${MIN_TARGET_SCORE} and ${MAX_TARGET_SCORE}.`);
+    }
+    if (!Number.isInteger(size) || size < MIN_LEADERBOARD_SIZE || size > MAX_LEADERBOARD_SIZE) {
+      return setError(`Leaderboard size must be a whole number between ${MIN_LEADERBOARD_SIZE} and ${MAX_LEADERBOARD_SIZE}.`);
+    }
     setError('');
     startTransition(async () => {
       try {
         const result = await updateArenaMatchDefaults(arenaId, {
-          targetScore,
+          targetScore: target,
           autoMixDefault,
-          leaderboardSize,
+          leaderboardSize: size,
           countOffScheduleGames,
         });
         if (result?.error) return setError(result.error);
@@ -419,10 +434,10 @@ function MatchDefaultsSection({ arenaId, defaults }) {
           <span className={labelClass}>Target score</span>
           <input
             type="number"
-            min={1}
-            max={99}
+            min={MIN_TARGET_SCORE}
+            max={MAX_TARGET_SCORE}
             value={targetScore}
-            onChange={(e) => setTargetScore(Number(e.target.value))}
+            onChange={(e) => setTargetScore(e.target.value)}
             className={inputClass}
           />
           <span className="block text-[10px] text-slate-400 mt-1">
@@ -449,10 +464,10 @@ function MatchDefaultsSection({ arenaId, defaults }) {
           <span className={labelClass}>Leaderboard size (top N)</span>
           <input
             type="number"
-            min={1}
-            max={50}
+            min={MIN_LEADERBOARD_SIZE}
+            max={MAX_LEADERBOARD_SIZE}
             value={leaderboardSize}
-            onChange={(e) => setLeaderboardSize(Number(e.target.value))}
+            onChange={(e) => setLeaderboardSize(e.target.value)}
             className={inputClass}
           />
           <span className="block text-[10px] text-slate-400 mt-1">
@@ -470,7 +485,7 @@ function MatchDefaultsSection({ arenaId, defaults }) {
           <span>
             <span className="block text-sm font-bold text-slate-800">Count off-schedule games</span>
             <span className="block text-[11px] text-slate-500 mt-0.5">
-              When on (default), every game in the week counts toward the leaderboard. Turn off to only count games played on the schedule&apos;s days.
+              When on (default), every game in the week counts toward the leaderboard. Turn off to only count games played on the schedule&apos;s days — <strong>only takes effect once the schedule has play days set</strong>; with no days configured the leaderboard treats every day as scheduled.
             </span>
           </span>
         </label>
