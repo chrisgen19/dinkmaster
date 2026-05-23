@@ -39,7 +39,7 @@ const labelClass = 'block text-[10px] font-bold uppercase tracking-wider text-sl
  */
 export function ScheduleFields({ days, setDays, start, setStart, end, setEnd, timezone, setTimezone, datalistId = 'schedule-timezones' }) {
   const toggleDay = (value) =>
-    setDays(days.includes(value) ? days.filter((d) => d !== value) : [...days, value]);
+    setDays((prev) => (prev.includes(value) ? prev.filter((d) => d !== value) : [...prev, value]));
 
   return (
     <div className="space-y-5">

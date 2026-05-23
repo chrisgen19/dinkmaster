@@ -61,10 +61,11 @@ export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwn
   const effectiveSection = SECTIONS.some((s) => s.id === section) ? section : SECTIONS[0].id;
 
   // Roving arrow-key navigation across the tablist (matches the arena tab bar).
+  const tabRefs = useRef({});
   const selectByIndex = (i) => {
     const next = SECTIONS[(i + SECTIONS.length) % SECTIONS.length];
     setSection(next.id);
-    document.getElementById(`settings-tab-${next.id}`)?.focus();
+    tabRefs.current[next.id]?.focus();
   };
   const onTabKeyDown = (e, idx) => {
     const map = { ArrowDown: idx + 1, ArrowRight: idx + 1, ArrowUp: idx - 1, ArrowLeft: idx - 1, Home: 0, End: SECTIONS.length - 1 };
@@ -98,7 +99,7 @@ export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwn
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-6">
-        <nav className="flex md:flex-col gap-1.5 md:sticky md:top-24 md:self-start" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
+        <nav className="flex md:flex-col gap-1.5 md:sticky md:top-24 md:self-start" role="tablist" aria-label="Settings sections">
           {SECTIONS.map((s, i) => {
             const active = effectiveSection === s.id;
             const danger = s.id === 'danger';
@@ -106,6 +107,7 @@ export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwn
               <button
                 key={s.id}
                 id={`settings-tab-${s.id}`}
+                ref={(el) => { tabRefs.current[s.id] = el; }}
                 role="tab"
                 aria-selected={active}
                 aria-controls={`settings-panel-${s.id}`}
