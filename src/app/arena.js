@@ -18,6 +18,7 @@ import {
 import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { eloToDupr } from '@/lib/rating';
 import { AuthStatus } from './auth-status';
+import { SiteHeader } from './site-header';
 import { ArenaMembers } from './arena-members';
 import { ArenaNavDrawer } from './arena-nav-drawer';
 
@@ -293,72 +294,49 @@ export default function Arena({
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans selection:bg-emerald-100 selection:text-slate-900">
 
-      {/* Premium Light Header Banner */}
-      <header className="border-b border-slate-200 bg-white/95 backdrop-blur sticky top-0 z-50 px-4 py-4 md:px-8 flex flex-wrap justify-between items-center gap-4 shadow-sm">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center shadow-sm">
-            <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm-3 5c.83 0 1.5.67 1.5 1.5S9.83 10 9 10s-1.5-.67-1.5-1.5S8.17 7 9 7zm-2 6.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm6 5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1-5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm3.5-3.5c-.83 0-1.5-.67-1.5-1.5S16.17 7 17 7s1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm0 5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm-5-10c-.83 0-1.5-.67-1.5-1.5S12.17 3 13 3s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
-            </svg>
+      <SiteHeader variant="arena" arenaName={arenaName}>
+        {/* Desktop / tablet: stat chips */}
+        <div className="hidden md:flex items-stretch gap-2 text-xs">
+          <div className="bg-slate-50 px-3.5 py-1.5 rounded-xl border border-slate-200/70">
+            <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wide">Players</span>
+            <span className="text-sm font-bold text-slate-800">{players.length}</span>
           </div>
-          <div>
-            <Link
-              href="/"
-              className="text-[11px] text-slate-400 hover:text-emerald-600 font-semibold flex items-center gap-1 transition"
-            >
-              ← All Arenas
-            </Link>
-            <h1 className="text-xl font-extrabold tracking-tight text-slate-900 flex items-center gap-2">
-              {arenaName}
-            </h1>
+          <div className="bg-slate-50 px-3.5 py-1.5 rounded-xl border border-slate-200/70">
+            <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wide">In queue</span>
+            <span className="text-sm font-bold text-emerald-600">{queue.length}</span>
+          </div>
+          <div className="bg-slate-50 px-3.5 py-1.5 rounded-xl border border-slate-200/70">
+            <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wide">Live</span>
+            <span className="text-sm font-bold text-sky-600">
+              {courts.filter(c => c.status === 'playing').length}
+            </span>
           </div>
         </div>
 
-        {/* Global Stats Indicators */}
-        <div className="flex items-center space-x-4 md:space-x-6">
-          {/* Desktop / tablet: stacked stat chips */}
-          <div className="hidden sm:flex space-x-3 text-xs">
-            <div className="bg-slate-100 px-3.5 py-1.5 rounded-xl border border-slate-200/60">
-              <span className="text-slate-500 block">Total Players</span>
-              <span className="text-sm font-bold text-slate-800">{players.length}</span>
-            </div>
-            <div className="bg-slate-100 px-3.5 py-1.5 rounded-xl border border-slate-200/60">
-              <span className="text-slate-500 block">In Queue</span>
-              <span className="text-sm font-bold text-emerald-600">{queue.length}</span>
-            </div>
-            <div className="bg-slate-100 px-3.5 py-1.5 rounded-xl border border-slate-200/60">
-              <span className="text-slate-500 block">Active Games</span>
-              <span className="text-sm font-bold text-sky-600">
-                {courts.filter(c => c.status === 'playing').length}
-              </span>
-            </div>
-          </div>
-
-          {/* Mobile: compact inline stat pills */}
-          <div className="flex sm:hidden gap-1.5 text-[11px]">
-            <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-slate-700">
-              {players.length}<span className="text-slate-400 font-semibold"> players</span>
-            </span>
-            <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-emerald-600">
-              {queue.length}<span className="text-slate-400 font-semibold"> queued</span>
-            </span>
-            <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-sky-600">
-              {courts.filter(c => c.status === 'playing').length}<span className="text-slate-400 font-semibold"> live</span>
-            </span>
-          </div>
-
-          {canManage && (
-            <button
-              onClick={() => setShowResetConfirm(true)}
-              className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3.5 py-2.5 rounded-xl border border-red-200/60 transition-all font-semibold shadow-sm"
-            >
-              Reset Arena
-            </button>
-          )}
-
-          <AuthStatus />
+        {/* Mobile: compact inline stat pills */}
+        <div className="flex md:hidden gap-1.5 text-[11px]">
+          <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-slate-700">
+            {players.length}<span className="text-slate-400 font-semibold"> players</span>
+          </span>
+          <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-emerald-600">
+            {queue.length}<span className="text-slate-400 font-semibold"> queued</span>
+          </span>
+          <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-sky-600">
+            {courts.filter(c => c.status === 'playing').length}<span className="text-slate-400 font-semibold"> live</span>
+          </span>
         </div>
-      </header>
+
+        {canManage && (
+          <button
+            onClick={() => setShowResetConfirm(true)}
+            className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-2 md:px-3.5 md:py-2.5 rounded-xl border border-red-200/60 transition-all font-semibold"
+          >
+            Reset Arena
+          </button>
+        )}
+
+        <AuthStatus />
+      </SiteHeader>
 
       {!canManage && (
         <div className="mx-4 md:mx-8 mt-4 p-3 bg-slate-100 border border-slate-200 text-slate-600 rounded-xl text-xs font-medium flex flex-wrap items-center justify-between gap-2">
