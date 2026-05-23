@@ -110,7 +110,7 @@ export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwn
                 ref={(el) => { tabRefs.current[s.id] = el; }}
                 role="tab"
                 aria-selected={active}
-                aria-controls={`settings-panel-${s.id}`}
+                aria-controls={active ? `settings-panel-${s.id}` : undefined}
                 tabIndex={active ? 0 : -1}
                 onClick={() => setSection(s.id)}
                 onKeyDown={(e) => onTabKeyDown(e, i)}

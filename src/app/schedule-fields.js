@@ -52,6 +52,7 @@ export function ScheduleFields({ days, setDays, start, setStart, end, setEnd, ti
               <button
                 key={d.value}
                 type="button"
+                aria-pressed={on}
                 onClick={() => toggleDay(d.value)}
                 className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition ${
                   on ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300'
