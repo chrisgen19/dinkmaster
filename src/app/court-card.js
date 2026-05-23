@@ -1,9 +1,11 @@
 'use client';
 
+import { formatShortName } from '@/lib/player-display';
+
 /**
- * One court tile: a header (name + live/vacant status dot), a body (the two
- * teams when playing, or a vacant placeholder), and the action button
- * ("Finish Game" when live, "Stack Next 4 Paddles" when vacant).
+ * One court tile: header (court number + name + live/open status), body
+ * (Team A | VS | Team B when playing, or an "open" placeholder), and a
+ * primary action button.
  *
  * Pure presentation — all data and behaviour arrive via props.
  *
@@ -29,87 +31,116 @@ export function CourtCard({
 }) {
   const isPlaying = court.status === 'playing';
 
-  /** Render a team's players as "First & First" using the live player list. */
-  const renderTeam = (slots) =>
-    slots.map((id, idx) => {
-      const p = players.find((x) => x.id === id);
-      return (
-        <span key={id} className="truncate">
-          {p ? p.firstName : 'Unknown'}
-          {idx < slots.length - 1 ? ' &' : ''}
-        </span>
-      );
-    });
+  // Pull a short label out of the court name for the header tile, e.g.
+  // "Court 1" -> "1". Falls back to the first character if no digits.
+  const courtBadge = court.name?.match(/\d+/)?.[0] ?? court.name?.charAt(0) ?? '?';
+
+  /** Resolve a slot id to a short display name and the full name for tooltips. */
+  const resolvePlayer = (id) => formatShortName(players.find((x) => x.id === id));
+
+  // Stacked name list, left- or right-aligned, with per-row truncation so each
+  // name ellipsizes independently and both teams render at the same height.
+  const renderNames = (slots, align) => (
+    <ul className={`space-y-1 ${align === 'right' ? 'text-right' : 'text-left'}`}>
+      {slots.map((id) => {
+        const p = resolvePlayer(id);
+        return (
+          <li
+            key={id}
+            className="text-sm font-bold text-slate-800 truncate leading-tight"
+            title={p.full}
+          >
+            {p.display}
+          </li>
+        );
+      })}
+    </ul>
+  );
 
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col justify-between shadow-sm relative transition-all duration-300 hover:shadow-md">
-      <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-        <div>
-          <h4 className="font-extrabold text-slate-900 text-sm md:text-base">{court.name}</h4>
-          <div className="flex items-center mt-0.5">
-            <span className={`inline-block w-2 h-2 rounded-full mr-1.5 ${
-              isPlaying ? 'bg-sky-500 animate-pulse' : 'bg-slate-300'
-            }`}></span>
-            <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
-              {isPlaying ? 'Live Match' : 'Vacant'}
-            </span>
+    <div className="group bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col shadow-sm transition-all duration-300 hover:shadow-md hover:-translate-y-0.5">
+      {/* Header — court tile, name, live/open chip, optional close button */}
+      <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-3 bg-gradient-to-r from-slate-50/80 to-white">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div
+            aria-hidden="true"
+            className="shrink-0 w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center font-extrabold text-sm shadow-sm"
+          >
+            {courtBadge}
           </div>
+          <h4 className="font-extrabold text-slate-900 text-sm truncate">{court.name}</h4>
         </div>
 
-        {!isPlaying && canManage && (
-          <button
-            onClick={() => onRemove(court.id)}
-            disabled={isPending}
-            aria-label="Close court"
-            className="text-slate-400 hover:text-red-500 text-sm transition-all p-1 disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Close Court"
-          >
-            ✕
-          </button>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {isPlaying ? (
+            <span className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.16em] text-sky-700 bg-sky-50 ring-1 ring-sky-200/70 rounded-full px-2 py-0.5">
+              <span className="relative inline-flex w-1.5 h-1.5" aria-hidden="true">
+                <span className="absolute inline-flex w-full h-full rounded-full bg-sky-400 opacity-75 animate-ping" />
+                <span className="relative inline-flex w-1.5 h-1.5 rounded-full bg-sky-500" />
+              </span>
+              Live
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.16em] text-slate-500 bg-slate-100 ring-1 ring-slate-200/70 rounded-full px-2 py-0.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-300" aria-hidden="true" />
+              Open
+            </span>
+          )}
+          {!isPlaying && canManage && (
+            <button
+              onClick={() => onRemove(court.id)}
+              disabled={isPending}
+              aria-label="Close court"
+              title="Close court"
+              className="w-7 h-7 rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 flex items-center justify-center transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="p-5 flex-1 flex flex-col justify-center bg-white">
+      {/* Body — Team A | VS | Team B on every viewport. Names stack vertically
+          inside each side, outward-aligned (left for A, right for B). */}
+      <div className="px-4 py-4 flex-1 flex flex-col justify-center">
         {isPlaying ? (
-          <div className="grid grid-cols-9 items-center gap-2 py-4">
-
-            {/* Team A Horizontal layout */}
-            <div className="col-span-4 bg-slate-50 border border-slate-100 p-3.5 rounded-xl text-center">
-              <div className="text-[10px] text-emerald-600 font-bold uppercase tracking-wider mb-2.5">TEAM A</div>
-              <div className="text-xs font-semibold text-slate-800 flex flex-wrap items-center justify-center gap-1">
-                {renderTeam(court.team1)}
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+            <div className="min-w-0">
+              <div className="text-[9px] font-extrabold uppercase tracking-[0.18em] text-emerald-600 mb-1.5">
+                Team A
               </div>
+              {renderNames(court.team1, 'left')}
             </div>
 
-            <div className="col-span-1 flex justify-center">
-              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-1 rounded">
-                VS
-              </span>
-            </div>
+            <span
+              aria-hidden="true"
+              className="shrink-0 inline-flex w-9 h-9 rounded-full bg-slate-100 text-slate-500 items-center justify-center text-[10px] font-black tracking-[0.18em]"
+            >
+              VS
+            </span>
 
-            {/* Team B Horizontal layout */}
-            <div className="col-span-4 bg-slate-50 border border-slate-100 p-3.5 rounded-xl text-center">
-              <div className="text-[10px] text-sky-600 font-bold uppercase tracking-wider mb-2.5">TEAM B</div>
-              <div className="text-xs font-semibold text-slate-800 flex flex-wrap items-center justify-center gap-1">
-                {renderTeam(court.team2)}
+            <div className="min-w-0">
+              <div className="text-[9px] font-extrabold uppercase tracking-[0.18em] text-sky-600 mb-1.5 text-right">
+                Team B
               </div>
+              {renderNames(court.team2, 'right')}
             </div>
-
           </div>
         ) : (
-          <div className="py-10 text-center border border-dashed border-slate-200 bg-slate-50/50 rounded-xl flex flex-col items-center justify-center">
-            <p className="text-slate-700 font-semibold text-xs">Court is Vacant</p>
-            <p className="text-[11px] text-slate-400 mt-1">Requires 4 players in the queue to start.</p>
+          <div className="py-6 px-4 text-center border border-dashed border-emerald-200/70 bg-emerald-50/30 rounded-xl">
+            <p className="text-slate-700 font-bold text-sm">Court is open</p>
+            <p className="text-[11px] text-slate-500 mt-1">Stack 4 paddles to start a match.</p>
           </div>
         )}
       </div>
 
-      <div className="p-4 border-t border-slate-100 bg-slate-50/30">
+      {/* Footer — primary action */}
+      <div className="px-3 py-3 border-t border-slate-100 bg-slate-50/40">
         {isPlaying ? (
           <button
             onClick={() => onFinish(court)}
             disabled={isPending || !canManage}
-            className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm"
+            className="w-full py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-[11px] uppercase tracking-[0.14em] transition shadow-sm shadow-red-600/20"
           >
             Finish Game & Record Score
           </button>
@@ -117,14 +148,14 @@ export function CourtCard({
           <button
             onClick={() => onFill(court.id)}
             disabled={queueLength < 4 || isPending || !canManage}
-            className={`w-full py-3 rounded-xl font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm ${
+            className={`w-full py-2.5 rounded-xl font-extrabold text-[11px] uppercase tracking-[0.14em] transition ${
               queueLength >= 4 && canManage
-                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
-                : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200/50'
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm shadow-emerald-600/20'
+                : 'bg-slate-100 text-slate-400 cursor-not-allowed'
             }`}
           >
             {!canManage
-              ? 'View Only'
+              ? 'View only'
               : queueLength >= 4
                 ? 'Stack Next 4 Paddles'
                 : 'Need 4 Players in Rack'}
