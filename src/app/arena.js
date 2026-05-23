@@ -114,7 +114,6 @@ export default function Arena({
   description = '',
   schedule: initialSchedule = { days: [], start: null, end: null, timezone: 'Asia/Manila' },
   matchmaking: matchmakingProp = { starveThreshold: DEFAULT_STARVE_THRESHOLD, emergencyWait: DEFAULT_EMERGENCY_WAIT },
-  matchDefaults = { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true },
   canManage,
   viewerRole,
   viewerUserId,
@@ -134,15 +133,15 @@ export default function Arena({
 
   const [scoreModalOpen, setScoreModalOpen] = useState(false);
   const [selectedCourtForScore, setSelectedCourtForScore] = useState(null);
-  const [team1Score, setTeam1Score] = useState(matchDefaults.targetScore);
-  const [team2Score, setTeam2Score] = useState(matchDefaults.targetScore);
+  const [team1Score, setTeam1Score] = useState(11);
+  const [team2Score, setTeam2Score] = useState(11);
 
   const [newFirstName, setNewFirstName] = useState('');
   const [newLastName, setNewLastName] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [activeTab, setActiveTab] = useState('courts');
 
-  const [autoMix, setAutoMix] = useState(matchDefaults.autoMixDefault);
+  const [autoMix, setAutoMix] = useState(true);
   const [notification, setNotification] = useState('');
 
   // Arena schedule (powers the "This Week" leaderboard window) + its editor.
@@ -183,17 +182,11 @@ export default function Arena({
     : [];
 
   // Player of the Week — recomputed from match history (refreshed after every
-  // finish), the schedule, and the arena's match defaults, so the board updates
-  // live as scores land. Same pure ranking the /profile read uses, so client
-  // and server never diverge.
+  // finish) and the schedule, so the board updates live as scores land. Same
+  // pure ranking the /profile read uses, so client and server never diverge.
   const leaderboard = useMemo(
-    () => computeWeeklyLeaderboard({
-      matches: matchHistory,
-      schedule,
-      countOffSchedule: matchDefaults.countOffScheduleGames,
-      limit: matchDefaults.leaderboardSize,
-    }),
-    [matchHistory, schedule, matchDefaults.countOffScheduleGames, matchDefaults.leaderboardSize],
+    () => computeWeeklyLeaderboard({ matches: matchHistory, schedule }),
+    [matchHistory, schedule],
   );
 
   // Apply a server action result to local state (state, error, notification).
@@ -260,8 +253,8 @@ export default function Arena({
   const handleTriggerScoreModal = (court) => {
     if (!canManage) return;
     setSelectedCourtForScore(court);
-    setTeam1Score(matchDefaults.targetScore);
-    setTeam2Score(matchDefaults.targetScore);
+    setTeam1Score(11);
+    setTeam2Score(11);
     setScoreModalOpen(true);
   };
 
