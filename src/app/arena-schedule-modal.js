@@ -36,14 +36,18 @@ const TIMEZONES = [
  *   onSave: (next:{days:number[], start:string, end:string, timezone:string}) => void,
  *   onClose: () => void,
  *   isPending?: boolean,
+ *   error?: string,
  * }} props
  */
-export function ArenaScheduleModal({ schedule, onSave, onClose, isPending = false }) {
+export function ArenaScheduleModal({ schedule, onSave, onClose, isPending = false, error: externalError = '' }) {
   const [days, setDays] = useState(schedule.days ?? []);
   const [start, setStart] = useState(schedule.start ?? '');
   const [end, setEnd] = useState(schedule.end ?? '');
   const [timezone, setTimezone] = useState(schedule.timezone || 'Asia/Manila');
-  const [error, setError] = useState('');
+  const [localError, setLocalError] = useState('');
+
+  // Either the parent's save failure or our client-side pre-save check.
+  const error = externalError || localError;
 
   const toggleDay = (value) =>
     setDays((prev) => (prev.includes(value) ? prev.filter((d) => d !== value) : [...prev, value]));
@@ -51,10 +55,10 @@ export function ArenaScheduleModal({ schedule, onSave, onClose, isPending = fals
   const handleSave = () => {
     // Mirror the server validation so the user gets instant feedback.
     if (start && end && end <= start) {
-      setError('End time must be after start time.');
+      setLocalError('End time must be after start time.');
       return;
     }
-    setError('');
+    setLocalError('');
     onSave({ days, start, end, timezone });
   };
 
@@ -71,7 +75,8 @@ export function ArenaScheduleModal({ schedule, onSave, onClose, isPending = fals
             Edit Play Schedule
           </h3>
           <p className="text-xs text-slate-400 mt-1">
-            Sets which days count toward this week&apos;s Player of the Week.
+            Used as context on the leaderboard. The timezone sets the Mon–Sun
+            week boundary; every game in that week counts.
           </p>
         </div>
 
