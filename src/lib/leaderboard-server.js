@@ -3,20 +3,27 @@
 // (the arena "This Week" tab) without pulling Prisma into the browser bundle.
 
 import { prisma } from '@/lib/prisma';
-import { computeWeeklyLeaderboard, weekWindow, DEFAULT_TIMEZONE, LEADERBOARD_SIZE } from '@/lib/leaderboard';
+import { computeWeeklyLeaderboard, weekWindow, DEFAULT_TIMEZONE } from '@/lib/leaderboard';
 
 /**
- * This week's leaderboard for one arena. Fetches the arena schedule and the
- * week's matches, then ranks with the shared pure function.
+ * This week's leaderboard for one arena. Fetches the arena schedule + match
+ * defaults, then ranks with the shared pure function. The caller may override
+ * `limit` (e.g. `/profile` passes `Infinity` to find the viewer's full rank);
+ * otherwise the per-arena `leaderboardSize` setting is used.
  * @param {string} arenaId
  * @param {{now?: Date, limit?: number}} [opts]
  */
-export async function getWeeklyLeaderboard(arenaId, { now, limit = LEADERBOARD_SIZE } = {}) {
+export async function getWeeklyLeaderboard(arenaId, { now, limit } = {}) {
   if (!arenaId) throw new Error('getWeeklyLeaderboard requires an arenaId');
 
   const arena = await prisma.arena.findUnique({
     where: { id: arenaId },
-    select: { scheduleDays: true, timezone: true },
+    select: {
+      scheduleDays: true,
+      timezone: true,
+      leaderboardSize: true,
+      countOffScheduleGames: true,
+    },
   });
   const timeZone = arena?.timezone || DEFAULT_TIMEZONE;
   // Capture one instant so the DB window and the in-memory ranking can't land
@@ -45,7 +52,8 @@ export async function getWeeklyLeaderboard(arenaId, { now, limit = LEADERBOARD_S
   return computeWeeklyLeaderboard({
     matches: shaped,
     schedule: { days: arena?.scheduleDays ?? [], timezone: timeZone },
+    countOffSchedule: arena?.countOffScheduleGames ?? true,
     now: nowDate,
-    limit,
+    limit: limit ?? arena?.leaderboardSize,
   });
 }
