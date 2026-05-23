@@ -21,8 +21,10 @@ model Arena {
 
   // Recurring play schedule — powers the schedule-aware weekly leaderboard
   // ("This Week" / Player of the Week). `scheduleDays` holds weekday numbers
-  // (0 = Sunday … 6 = Saturday, matching JS `Date.getDay()`); empty = no
-  // schedule set, so the leaderboard counts every day of the week.
+  // (0 = Sunday … 6 = Saturday, matching JS `Date.getDay()`); empty is treated
+  // as "every day" by the leaderboard's day filter, so a partial config never
+  // produces an empty board (see `countOffScheduleGames` below for the toggle
+  // that controls whether off-schedule games are excluded at all).
   // `scheduleStart`/`scheduleEnd` are local "HH:MM" 24h strings (display only,
   // not used to clip matches). `timezone` is an IANA zone used to compute the
   // Mon–Sun week boundary; defaults to the project's primary locale.
@@ -38,6 +40,18 @@ model Arena {
   // `emergencyWait`; `emergencyWait` must be ≥ `starveThreshold`.
   starveThreshold Int @default(2)
   emergencyWait   Int @default(4)
+
+  // Per-arena match + leaderboard defaults (Phase 9b). Defaults preserve the
+  // prior hardcoded behaviour, so existing arenas play exactly as before.
+  // `targetScore` seeds the score-modal inputs; `autoMixDefault` seeds the
+  // "Auto-mix" toggle; `leaderboardSize` caps the **This Week** board (and
+  // the per-player rank visible on /profile); `countOffScheduleGames` decides
+  // whether games played outside the schedule's days/times still count
+  // toward the weekly leaderboard.
+  targetScore           Int     @default(11)
+  autoMixDefault        Boolean @default(true)
+  leaderboardSize       Int     @default(5)
+  countOffScheduleGames Boolean @default(true)
 
   owner        User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   players      Player[]

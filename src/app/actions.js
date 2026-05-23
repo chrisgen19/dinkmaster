@@ -314,6 +314,59 @@ export async function updateArenaMatchmaking(
   return { matchmaking: { starveThreshold: starve, emergencyWait: emergency } };
 }
 
+/**
+ * Reasonable bounds for the match & leaderboard defaults — wide enough for any
+ * sensible pickleball variant (11/15/21/etc.), tight enough to reject typos.
+ */
+const MIN_TARGET_SCORE = 1;
+const MAX_TARGET_SCORE = 99;
+const MIN_LEADERBOARD_SIZE = 1;
+const MAX_LEADERBOARD_SIZE = 50;
+
+/**
+ * Update an arena's match + leaderboard defaults. Manager-gated. All four
+ * fields are required; the UI sends the current values for any unchanged
+ * inputs so partial updates aren't a concern.
+ */
+export async function updateArenaMatchDefaults(
+  arenaId,
+  {
+    targetScore: targetInput,
+    autoMixDefault: autoMixInput,
+    leaderboardSize: sizeInput,
+    countOffScheduleGames: countOffInput,
+  } = {},
+) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  const targetScore = Number(targetInput);
+  if (!Number.isInteger(targetScore) || targetScore < MIN_TARGET_SCORE || targetScore > MAX_TARGET_SCORE) {
+    return { error: `Target score must be a whole number between ${MIN_TARGET_SCORE} and ${MAX_TARGET_SCORE}.` };
+  }
+
+  const leaderboardSize = Number(sizeInput);
+  if (!Number.isInteger(leaderboardSize) || leaderboardSize < MIN_LEADERBOARD_SIZE || leaderboardSize > MAX_LEADERBOARD_SIZE) {
+    return { error: `Leaderboard size must be a whole number between ${MIN_LEADERBOARD_SIZE} and ${MAX_LEADERBOARD_SIZE}.` };
+  }
+
+  // Booleans must be strictly true/false — coerce so HTML form values
+  // ("true"/"false" strings) are accepted, but reject anything else.
+  const asBool = (v) => (v === true || v === 'true' ? true : v === false || v === 'false' ? false : null);
+  const autoMixDefault = asBool(autoMixInput);
+  const countOffScheduleGames = asBool(countOffInput);
+  if (autoMixDefault === null || countOffScheduleGames === null) {
+    return { error: 'Auto-mix and off-schedule settings must be true or false.' };
+  }
+
+  const updated = await prisma.arena.updateMany({
+    where: { id: arenaId },
+    data: { targetScore, autoMixDefault, leaderboardSize, countOffScheduleGames },
+  });
+  if (updated.count === 0) return { error: 'This arena no longer exists.' };
+  return { matchDefaults: { targetScore, autoMixDefault, leaderboardSize, countOffScheduleGames } };
+}
+
 // --- Arena play (owner-gated, scoped by arenaId) --------------------------
 
 /** Add one player (first name required, last name optional) to the bottom of the rack. */
