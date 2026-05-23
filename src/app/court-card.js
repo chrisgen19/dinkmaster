@@ -59,7 +59,9 @@ export function CourtCard({
         {!isPlaying && canManage && (
           <button
             onClick={() => onRemove(court.id)}
-            className="text-slate-400 hover:text-red-500 text-sm transition-all p-1"
+            disabled={isPending}
+            aria-label="Close court"
+            className="text-slate-400 hover:text-red-500 text-sm transition-all p-1 disabled:opacity-40 disabled:cursor-not-allowed"
             title="Close Court"
           >
             ✕

@@ -153,16 +153,29 @@ export async function getUserPlayerStats(userId) {
   // This week's standing per active arena: run the same weekly leaderboard the
   // arena tab shows and pick out this user's row (wins + rank). Departed arenas
   // are skipped — a left player isn't competing this week.
-  const weeklyByArena = new Map();
+  //
+  // De-dupe by arenaId before fetching: today a user has at most one player
+  // per arena, but the read is expensive enough (schedule + week matches +
+  // match players) that we keep one leaderboard call per unique arena and
+  // pass a single `now` so every board lands in the same week window even if
+  // /profile is loaded at the Monday boundary.
+  const activePlayers = players.filter((p) => p.leftAt === null);
+  const uniqueArenaIds = [...new Set(activePlayers.map((p) => p.arenaId))];
+  const now = new Date();
+  const boardByArena = new Map();
   await Promise.all(
-    players
-      .filter((p) => p.leftAt === null)
-      .map(async (p) => {
-        const board = await getWeeklyLeaderboard(p.arenaId, { limit: Infinity });
-        const me = board.leaders.find((l) => l.playerId === p.id);
-        weeklyByArena.set(p.arenaId, { wins: me?.wins ?? 0, rank: me?.rank ?? null });
-      }),
+    uniqueArenaIds.map(async (arenaId) => {
+      const board = await getWeeklyLeaderboard(arenaId, { now, limit: Infinity });
+      boardByArena.set(arenaId, board);
+    }),
   );
+
+  const weeklyByArena = new Map();
+  for (const p of activePlayers) {
+    const board = boardByArena.get(p.arenaId);
+    const me = board?.leaders.find((l) => l.playerId === p.id);
+    weeklyByArena.set(p.arenaId, { wins: me?.wins ?? 0, rank: me?.rank ?? null });
+  }
 
   const arenas = players.map((p) => {
     const weekly = p.leftAt === null ? weeklyByArena.get(p.arenaId) : null;
@@ -190,7 +203,6 @@ export async function getUserPlayerStats(userId) {
   // (weight = games played there). An unconverged baseline row in a new or
   // secondary arena has few/zero games, so it barely moves — or is excluded
   // entirely (0 games) — and can't deflate a strong player's global rating.
-  const activePlayers = players.filter((p) => p.leftAt === null);
   const ratingWeight = activePlayers.reduce((acc, p) => acc + p.gamesPlayed, 0);
   const rating = ratingWeight
     ? activePlayers.reduce((acc, p) => acc + p.rating * p.gamesPlayed, 0) / ratingWeight

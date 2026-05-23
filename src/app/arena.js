@@ -147,6 +147,9 @@ export default function Arena({
   // Arena schedule (powers the "This Week" leaderboard window) + its editor.
   const [schedule, setSchedule] = useState(initialSchedule);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  // Schedule-save failures surface in the modal (not the page-level banner),
+  // so the user sees the error against the form they were editing.
+  const [scheduleError, setScheduleError] = useState('');
 
   // Locale-format timestamps only after mount: the server renders in its own
   // locale/timezone, so formatting during SSR/hydration would mismatch. Until
@@ -283,18 +286,18 @@ export default function Arena({
       try {
         const result = await updateArenaSchedule(arenaId, next);
         if (result?.error) {
-          setErrorMsg(result.error);
+          setScheduleError(result.error);
           return;
         }
         if (!result?.schedule) {
-          setErrorMsg('Failed to update schedule.');
+          setScheduleError('Failed to update schedule.');
           return;
         }
-        setErrorMsg('');
+        setScheduleError('');
         setSchedule(result.schedule);
         setScheduleModalOpen(false);
       } catch {
-        setErrorMsg('Failed to update schedule. Please try again.');
+        setScheduleError('Failed to update schedule. Please try again.');
       }
     });
   };
@@ -1105,8 +1108,12 @@ export default function Arena({
         <ArenaScheduleModal
           schedule={schedule}
           onSave={handleSaveSchedule}
-          onClose={() => setScheduleModalOpen(false)}
+          onClose={() => {
+            setScheduleError('');
+            setScheduleModalOpen(false);
+          }}
           isPending={isPending}
+          error={scheduleError}
         />
       )}
 

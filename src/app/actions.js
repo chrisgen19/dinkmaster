@@ -227,9 +227,15 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
   if (guard.error) return { error: guard.error };
 
   const dayList = Array.isArray(days) ? days : [];
-  // Strict parse: `parseInt` truncates "1x" → 1, which would pass the range
-  // check, so coerce via Number (NaN on any non-numeric suffix) instead.
-  const parsedDays = dayList.map((d) => (typeof d === 'string' ? Number(d.trim()) : d));
+  // Strict parse: blanks and non-decimal strings (`''`, `'   '`, `'0x1'`) must
+  // not coerce to a valid weekday, so require a pure decimal token before
+  // converting to Number; everything else becomes NaN and fails the range check.
+  const parsedDays = dayList.map((d) => {
+    if (typeof d === 'number') return d;
+    if (typeof d !== 'string') return NaN;
+    const token = d.trim();
+    return /^\d+$/.test(token) ? Number(token) : NaN;
+  });
   if (parsedDays.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) {
     return { error: 'Schedule days must be between Sunday (0) and Saturday (6).' };
   }
@@ -246,10 +252,17 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
   const tz = (timezone ?? '').trim() || 'Asia/Manila';
   if (!isValidTimeZone(tz)) return { error: 'Unrecognized timezone.' };
 
-  await prisma.arena.update({
-    where: { id: arenaId },
+  // Make ownership part of the write: `requireArenaOwner` ran above, but a
+  // concurrent transferOwnership could move ownership before this UPDATE
+  // lands. Scoping to the caller's id means the row only updates while they
+  // are still the canonical owner — otherwise we report the race cleanly.
+  const updated = await prisma.arena.updateMany({
+    where: { id: arenaId, ownerId: guard.user.id },
     data: { scheduleDays: normalizedDays, scheduleStart: startTime, scheduleEnd: endTime, timezone: tz },
   });
+  if (updated.count !== 1) {
+    return { error: 'Ownership changed while processing. Please try again.' };
+  }
   return { schedule: { days: normalizedDays, start: startTime, end: endTime, timezone: tz } };
 }
 
