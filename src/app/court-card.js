@@ -1,5 +1,7 @@
 'use client';
 
+import { formatShortName } from '@/lib/player-display';
+
 /**
  * One court tile: header (court number + name + live/open status), body
  * (Team A | VS | Team B when playing, or an "open" placeholder), and a
@@ -33,21 +35,8 @@ export function CourtCard({
   // "Court 1" -> "1". Falls back to the first character if no digits.
   const courtBadge = court.name?.match(/\d+/)?.[0] ?? court.name?.charAt(0) ?? '?';
 
-  /** Resolve a slot id to a short display name and the full name for tooltips.
-   *  Display rule: only the first word of firstName + last name initial,
-   *  e.g. "Christian Genesis" / "Diomampo" -> "Christian D.". When there is no
-   *  last name, just the first word of firstName. */
-  const resolvePlayer = (id) => {
-    const p = players.find((x) => x.id === id);
-    if (!p) return { display: 'Unknown', full: 'Unknown' };
-    const firstName = (p.firstName ?? 'Unknown').trim();
-    const firstWord = firstName.split(/\s+/)[0] || firstName;
-    const lastInitial = p.lastName?.trim().charAt(0).toUpperCase();
-    return {
-      display: lastInitial ? `${firstWord} ${lastInitial}.` : firstWord,
-      full: p.lastName ? `${firstName} ${p.lastName}` : firstName,
-    };
-  };
+  /** Resolve a slot id to a short display name and the full name for tooltips. */
+  const resolvePlayer = (id) => formatShortName(players.find((x) => x.id === id));
 
   // Stacked name list, left- or right-aligned, with per-row truncation so each
   // name ellipsizes independently and both teams render at the same height.

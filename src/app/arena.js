@@ -19,6 +19,8 @@ import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT } from '@/lib/matchmak
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE } from '@/lib/match-defaults';
 import { eloToDupr } from '@/lib/rating';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
+import { stepScore, validateMatchScore } from '@/lib/scoring';
+import { formatShortName } from '@/lib/player-display';
 import { AuthStatus } from './auth-status';
 import { SiteHeader } from './site-header';
 import { ArenaMembers } from './arena-members';
@@ -65,48 +67,9 @@ const describeSchedule = ({ days = [], start, end, timezone } = {}) => {
   return `${dayPart}${timePart}${timezone ? ` (${timezone})` : ''}`;
 };
 
-/** True if `s` is a non-empty string of only digits — i.e. a valid score input. */
-const isValidScoreInput = (s) => {
-  const t = String(s).trim();
-  return t.length > 0 && /^\d+$/.test(t);
-};
-
-/** Step a score string by `delta`, clamping at 0. Empty/invalid becomes 0 first. */
-const stepScore = (current, delta) => {
-  const n = parseInt(current, 10);
-  const base = Number.isNaN(n) ? 0 : n;
-  return String(Math.max(0, base + delta));
-};
-
-/** Accept only digits or an empty string into the score input. */
+/** Accept only digits or an empty string into a controlled score input. */
 const onScoreChange = (setter, raw) => {
   if (raw === '' || /^\d+$/.test(raw)) setter(raw);
-};
-
-/**
- * Validate a pickleball match scoreline against the arena's target score.
- * Standard rules: the winner reaches the target, must win by 2, no ties.
- * Returns `{ ok, complete, reason }`. `complete` is true once both fields have
- * been filled — so the UI can stay quiet while the organizer is still typing.
- */
-const validateMatchScore = (s1, s2, targetScore) => {
-  if (!isValidScoreInput(s1) || !isValidScoreInput(s2)) {
-    return { ok: false, complete: false, reason: '' };
-  }
-  const n1 = parseInt(s1, 10);
-  const n2 = parseInt(s2, 10);
-  if (n1 === n2) {
-    return { ok: false, complete: true, reason: "Pickleball games can't end in a tie." };
-  }
-  const winner = Math.max(n1, n2);
-  const loser = Math.min(n1, n2);
-  if (winner < targetScore) {
-    return { ok: false, complete: true, reason: `Winner must reach ${targetScore}.` };
-  }
-  if (winner - loser < 2) {
-    return { ok: false, complete: true, reason: 'A game must be won by 2.' };
-  }
-  return { ok: true, complete: true, reason: '' };
 };
 
 const playPaddleSound = () => {
@@ -212,6 +175,21 @@ export default function Arena({
   useEffect(() => setMounted(true), []);
   const formatTimestamp = (iso) =>
     mounted ? new Date(iso).toLocaleString() : iso.replace('T', ' ').slice(0, 16);
+
+  // Escape closes the score-entry modal — conventional keyboard partner to the
+  // backdrop click and the ✕ button. Listener is only attached while the modal
+  // is open so we never see a stale court id on close.
+  useEffect(() => {
+    if (!scoreModalOpen) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setScoreModalOpen(false);
+        setSelectedCourtForScore(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [scoreModalOpen]);
 
   // The viewer's own linked player in this arena (null for guests / non-players).
   const myPlayer = viewerUserId
@@ -1183,21 +1161,11 @@ export default function Arena({
           selectedCourtForScore.name?.match(/\d+/)?.[0]
           ?? selectedCourtForScore.name?.charAt(0)
           ?? '?';
-        // Display rule mirrors the CourtCard: first word of firstName + last
-        // name initial, e.g. "Christian Genesis" / "Diomampo" -> "Christian D.".
-        const resolveName = (id) => {
-          const p = players.find((x) => x.id === id);
-          if (!p) return { display: 'Unknown', full: 'Unknown' };
-          const firstName = (p.firstName ?? 'Unknown').trim();
-          const firstWord = firstName.split(/\s+/)[0] || firstName;
-          const lastInitial = p.lastName?.trim().charAt(0).toUpperCase();
-          return {
-            display: lastInitial ? `${firstWord} ${lastInitial}.` : firstWord,
-            full: p.lastName ? `${firstName} ${p.lastName}` : firstName,
-          };
-        };
-        const t1 = selectedCourtForScore.team1.map(resolveName);
-        const t2 = selectedCourtForScore.team2.map(resolveName);
+        // Carry the player id along with the formatted name so the list items
+        // get a stable React key (not the array index).
+        const resolveSlot = (id) => ({ id, ...formatShortName(players.find((p) => p.id === id)) });
+        const t1 = selectedCourtForScore.team1.map(resolveSlot);
+        const t2 = selectedCourtForScore.team2.map(resolveSlot);
         const validation = validateMatchScore(team1Score, team2Score, matchDefaults.targetScore);
         const canSubmit = validation.ok;
         const closeModal = () => {
@@ -1268,9 +1236,9 @@ export default function Arena({
                       Team A
                     </div>
                     <ul className="space-y-1">
-                      {t1.map((p, i) => (
+                      {t1.map((p) => (
                         <li
-                          key={i}
+                          key={p.id}
                           className="text-sm font-bold text-slate-800 truncate leading-tight"
                           title={p.full}
                         >
@@ -1290,9 +1258,9 @@ export default function Arena({
                       Team B
                     </div>
                     <ul className="space-y-1">
-                      {t2.map((p, i) => (
+                      {t2.map((p) => (
                         <li
-                          key={i}
+                          key={p.id}
                           className="text-sm font-bold text-slate-800 truncate leading-tight"
                           title={p.full}
                         >

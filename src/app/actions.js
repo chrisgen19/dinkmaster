@@ -6,12 +6,14 @@ import { requireUser, requireArenaOwner, requireArenaManager } from '@/lib/sessi
 import { ROLES } from '@/lib/roles';
 import { MAX_WAIT_THRESHOLD, bandOf } from '@/lib/matchmaking';
 import {
+  DEFAULT_TARGET_SCORE,
   MIN_TARGET_SCORE,
   MAX_TARGET_SCORE,
   MIN_LEADERBOARD_SIZE,
   MAX_LEADERBOARD_SIZE,
 } from '@/lib/match-defaults';
 import { computeMatchRatings, RATING_BASELINE } from '@/lib/rating';
+import { validateMatchScore } from '@/lib/scoring';
 
 /** Canonical (sorted) pair so each partnership has exactly one row. */
 function canonicalPair(x, y) {
@@ -658,8 +660,20 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
-  const s1 = parseInt(score1, 10) || 0;
-  const s2 = parseInt(score2, 10) || 0;
+  // Mirror the client-side pickleball rules (target, win-by-2, no ties) on the
+  // server so a stale tab or a hand-rolled action call can't write a bad
+  // scoreline into match history / Elo / the weekly leaderboard.
+  const target = guard.arena?.targetScore ?? DEFAULT_TARGET_SCORE;
+  const check = validateMatchScore(score1, score2, target);
+  if (!check.ok) {
+    return {
+      error: check.reason || 'Both scores are required.',
+      state: await getState(arenaId),
+    };
+  }
+
+  const s1 = parseInt(score1, 10);
+  const s2 = parseInt(score2, 10);
   const team1Won = s1 > s2;
   const team2Won = s2 > s1;
 
