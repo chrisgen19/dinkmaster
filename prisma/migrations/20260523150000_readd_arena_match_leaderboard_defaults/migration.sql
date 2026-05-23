@@ -11,7 +11,14 @@
 --
 -- Defaults match the prior hardcoded behaviour, so existing arenas play
 -- exactly as before until a manager edits them in Arena Settings.
-ALTER TABLE "Arena" ADD COLUMN     "autoMixDefault" BOOLEAN NOT NULL DEFAULT true,
-ADD COLUMN     "countOffScheduleGames" BOOLEAN NOT NULL DEFAULT true,
-ADD COLUMN     "leaderboardSize" INTEGER NOT NULL DEFAULT 5,
-ADD COLUMN     "targetScore" INTEGER NOT NULL DEFAULT 11;
+--
+-- IF NOT EXISTS on each ADD COLUMN makes this idempotent: it's a no-op on
+-- any DB that still has the columns from the rolled-back #38 (e.g. a deploy
+-- where 20260523140000_revert_arena_match_leaderboard_defaults did not run
+-- for some reason). Without it the migration would fail with "column already
+-- exists" on that skew.
+ALTER TABLE "Arena"
+  ADD COLUMN IF NOT EXISTS "autoMixDefault" BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS "countOffScheduleGames" BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS "leaderboardSize" INTEGER NOT NULL DEFAULT 5,
+  ADD COLUMN IF NOT EXISTS "targetScore" INTEGER NOT NULL DEFAULT 11;

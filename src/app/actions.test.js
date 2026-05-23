@@ -37,6 +37,7 @@ import { requireUser, requireArenaOwner, requireArenaManager } from '@/lib/sessi
 import { prisma } from '@/lib/prisma';
 import { ROLES } from '@/lib/roles';
 import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
+import { MAX_TARGET_SCORE, MAX_LEADERBOARD_SIZE } from '@/lib/match-defaults';
 import * as actions from '@/app/actions';
 
 const ARENA = 'arena_test';
@@ -275,7 +276,8 @@ describe('arena server actions — authorization', () => {
       it.each([
         ['a zero target score', { targetScore: 0, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true }],
         ['a fractional target score', { targetScore: 11.5, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true }],
-        ['an out-of-range leaderboard size', { targetScore: 11, autoMixDefault: true, leaderboardSize: 999, countOffScheduleGames: true }],
+        ['an out-of-range target score', { targetScore: MAX_TARGET_SCORE + 1, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true }],
+        ['an out-of-range leaderboard size', { targetScore: 11, autoMixDefault: true, leaderboardSize: MAX_LEADERBOARD_SIZE + 1, countOffScheduleGames: true }],
         ['a non-boolean autoMixDefault', { targetScore: 11, autoMixDefault: 'maybe', leaderboardSize: 5, countOffScheduleGames: true }],
         ['a non-boolean countOffScheduleGames', { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: 1 }],
       ])('rejects %s and writes nothing', async (_label, input) => {

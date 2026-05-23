@@ -16,8 +16,9 @@ import {
   updateArenaSchedule,
 } from './actions';
 import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT } from '@/lib/matchmaking';
+import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE } from '@/lib/match-defaults';
 import { eloToDupr } from '@/lib/rating';
-import { computeWeeklyLeaderboard } from '@/lib/leaderboard';
+import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
 import { AuthStatus } from './auth-status';
 import { SiteHeader } from './site-header';
 import { ArenaMembers } from './arena-members';
@@ -114,7 +115,12 @@ export default function Arena({
   description = '',
   schedule: initialSchedule = { days: [], start: null, end: null, timezone: 'Asia/Manila' },
   matchmaking: matchmakingProp = { starveThreshold: DEFAULT_STARVE_THRESHOLD, emergencyWait: DEFAULT_EMERGENCY_WAIT },
-  matchDefaults = { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true },
+  matchDefaults = {
+    targetScore: DEFAULT_TARGET_SCORE,
+    autoMixDefault: DEFAULT_AUTO_MIX,
+    leaderboardSize: DEFAULT_LEADERBOARD_SIZE,
+    countOffScheduleGames: DEFAULT_COUNT_OFF_SCHEDULE,
+  },
   canManage,
   viewerRole,
   viewerUserId,

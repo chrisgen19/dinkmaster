@@ -402,11 +402,15 @@ function MatchDefaultsSection({ arenaId, defaults }) {
     clearSaved();
     const target = Number(targetScore);
     const size = Number(leaderboardSize);
-    // Mirror the server validation so the user gets instant feedback without a round-trip.
-    if (!Number.isInteger(target) || target < MIN_TARGET_SCORE || target > MAX_TARGET_SCORE) {
+    // Mirror the server validation. An empty string parses to 0 which trips
+    // the range check with a confusing "must be between …" message; check the
+    // raw value first so we can surface a clearer empty-field error.
+    const invalid = (raw, n, min, max) =>
+      raw === '' || !Number.isInteger(n) || n < min || n > max;
+    if (invalid(targetScore, target, MIN_TARGET_SCORE, MAX_TARGET_SCORE)) {
       return setError(`Target score must be a whole number between ${MIN_TARGET_SCORE} and ${MAX_TARGET_SCORE}.`);
     }
-    if (!Number.isInteger(size) || size < MIN_LEADERBOARD_SIZE || size > MAX_LEADERBOARD_SIZE) {
+    if (invalid(leaderboardSize, size, MIN_LEADERBOARD_SIZE, MAX_LEADERBOARD_SIZE)) {
       return setError(`Leaderboard size must be a whole number between ${MIN_LEADERBOARD_SIZE} and ${MAX_LEADERBOARD_SIZE}.`);
     }
     setError('');
