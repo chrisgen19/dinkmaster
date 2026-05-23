@@ -2,9 +2,9 @@ import { notFound, redirect } from 'next/navigation';
 import { getArena, getArenaMembers } from '@/lib/arenas';
 import { getCurrentUser } from '@/lib/session';
 import { canManageArena } from '@/lib/roles';
-import { SiteHeader } from '../../../site-header';
-import { AuthStatus } from '../../../auth-status';
-import { ArenaSettings } from '../../../arena-settings';
+import { SiteHeader } from '@/app/site-header';
+import { AuthStatus } from '@/app/auth-status';
+import { ArenaSettings } from '@/app/arena-settings';
 
 // Settings reads/writes live arena config; never serve a cached copy.
 export const dynamic = 'force-dynamic';

@@ -222,7 +222,10 @@ export async function updateArenaGeneral(arenaId, { name: nameInput, description
     return { error: 'Description is too long (max 280 characters).' };
   }
 
-  await prisma.arena.update({ where: { id: arenaId }, data: { name, description } });
+  // updateMany (not update) so a concurrent delete is a clean count===0
+  // instead of a thrown P2025; scoped to id only since any manager may write.
+  const updated = await prisma.arena.updateMany({ where: { id: arenaId }, data: { name, description } });
+  if (updated.count !== 1) return { error: 'This arena no longer exists.' };
   return { arena: { id: arenaId, name, description } };
 }
 
@@ -275,10 +278,13 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
   const tz = (timezone ?? '').trim() || 'Asia/Manila';
   if (!isValidTimeZone(tz)) return { error: 'Unrecognized timezone.' };
 
-  await prisma.arena.update({
+  // updateMany (not update) so a concurrent delete is a clean count===0
+  // instead of a thrown P2025; scoped to id only since any manager may write.
+  const updated = await prisma.arena.updateMany({
     where: { id: arenaId },
     data: { scheduleDays: normalizedDays, scheduleStart: startTime, scheduleEnd: endTime, timezone: tz },
   });
+  if (updated.count !== 1) return { error: 'This arena no longer exists.' };
   return { schedule: { days: normalizedDays, start: startTime, end: endTime, timezone: tz } };
 }
 

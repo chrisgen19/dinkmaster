@@ -145,10 +145,15 @@ function GeneralSection({ arenaId, initialName, initialDescription }) {
     setError('');
     setSaved(false);
     startTransition(async () => {
-      const result = await updateArenaGeneral(arenaId, { name, description });
-      if (result?.error) return setError(result.error);
-      setSaved(true);
-      router.refresh();
+      try {
+        const result = await updateArenaGeneral(arenaId, { name, description });
+        if (result?.error) return setError(result.error);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2500);
+        router.refresh();
+      } catch {
+        setError('Failed to save changes. Please try again.');
+      }
     });
   };
 
@@ -204,11 +209,16 @@ function ScheduleSection({ arenaId, schedule }) {
     if (start && end && end <= start) return setError('End time must be after start time.');
     setError('');
     startTransition(async () => {
-      const result = await updateArenaSchedule(arenaId, { days, start, end, timezone });
-      if (result?.error) return setError(result.error);
-      if (!result?.schedule) return setError('Failed to update schedule.');
-      setSaved(true);
-      router.refresh();
+      try {
+        const result = await updateArenaSchedule(arenaId, { days, start, end, timezone });
+        if (result?.error) return setError(result.error);
+        if (!result?.schedule) return setError('Failed to update schedule.');
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2500);
+        router.refresh();
+      } catch {
+        setError('Failed to save schedule. Please try again.');
+      }
     });
   };
 
@@ -290,9 +300,13 @@ function DangerZone({ arenaId, arenaName, isOwner, viewerUserId, members }) {
   const run = (fn, after) =>
     startTransition(async () => {
       setError('');
-      const result = await fn();
-      if (result?.error) return setError(result.error);
-      after?.();
+      try {
+        const result = await fn();
+        if (result?.error) return setError(result.error);
+        after?.();
+      } catch {
+        setError('Something went wrong. Please try again.');
+      }
     });
 
   return (

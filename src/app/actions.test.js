@@ -126,6 +126,11 @@ describe('arena server actions — authorization', () => {
     });
 
     describe('updateArenaSchedule()', () => {
+      beforeEach(() => {
+        // The write is a count-checked updateMany; default to "the row exists".
+        prisma.arena.updateMany.mockResolvedValue({ count: 1 });
+      });
+
       it('normalizes days (dedupes + sorts) and persists a valid schedule', async () => {
         const result = await actions.updateArenaSchedule(ARENA, {
           days: [5, 1, 3, 1],
@@ -134,7 +139,7 @@ describe('arena server actions — authorization', () => {
           timezone: 'Asia/Manila',
         });
         expect(result.error).toBeUndefined();
-        expect(prisma.arena.update).toHaveBeenCalledWith({
+        expect(prisma.arena.updateMany).toHaveBeenCalledWith({
           where: { id: ARENA },
           data: { scheduleDays: [1, 3, 5], scheduleStart: '18:00', scheduleEnd: '22:00', timezone: 'Asia/Manila' },
         });
@@ -144,10 +149,16 @@ describe('arena server actions — authorization', () => {
       it('defaults an empty timezone to Asia/Manila and allows empty times', async () => {
         const result = await actions.updateArenaSchedule(ARENA, { days: [], start: '', end: '' });
         expect(result.error).toBeUndefined();
-        expect(prisma.arena.update).toHaveBeenCalledWith({
+        expect(prisma.arena.updateMany).toHaveBeenCalledWith({
           where: { id: ARENA },
           data: { scheduleDays: [], scheduleStart: null, scheduleEnd: null, timezone: 'Asia/Manila' },
         });
+      });
+
+      it('reports a clean error when the arena no longer exists (concurrent delete)', async () => {
+        prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
+        const result = await actions.updateArenaSchedule(ARENA, { days: [1] });
+        expect(result.error).toMatch(/no longer exists/i);
       });
 
       it.each([
@@ -162,18 +173,28 @@ describe('arena server actions — authorization', () => {
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaSchedule(ARENA, input);
         expect(result.error).toBeTruthy();
-        expect(prisma.arena.update).not.toHaveBeenCalled();
+        expect(prisma.arena.updateMany).not.toHaveBeenCalled();
       });
     });
 
     describe('updateArenaGeneral()', () => {
+      beforeEach(() => {
+        prisma.arena.updateMany.mockResolvedValue({ count: 1 });
+      });
+
       it('persists a trimmed name and null-coerces a blank description', async () => {
         const result = await actions.updateArenaGeneral(ARENA, { name: '  Court Kings  ', description: '   ' });
         expect(result.error).toBeUndefined();
-        expect(prisma.arena.update).toHaveBeenCalledWith({
+        expect(prisma.arena.updateMany).toHaveBeenCalledWith({
           where: { id: ARENA },
           data: { name: 'Court Kings', description: null },
         });
+      });
+
+      it('reports a clean error when the arena no longer exists (concurrent delete)', async () => {
+        prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
+        const result = await actions.updateArenaGeneral(ARENA, { name: 'Court Kings' });
+        expect(result.error).toMatch(/no longer exists/i);
       });
 
       it.each([
@@ -183,7 +204,7 @@ describe('arena server actions — authorization', () => {
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaGeneral(ARENA, input);
         expect(result.error).toBeTruthy();
-        expect(prisma.arena.update).not.toHaveBeenCalled();
+        expect(prisma.arena.updateMany).not.toHaveBeenCalled();
       });
     });
 
