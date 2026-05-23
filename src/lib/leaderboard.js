@@ -35,12 +35,6 @@ function zonedParts(instant, timeZone) {
   };
 }
 
-/** Weekday (0 = Sunday … 6 = Saturday) of an instant in a given timezone. */
-function zonedWeekday(instant, timeZone) {
-  const p = zonedParts(instant, timeZone);
-  return new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay();
-}
-
 /**
  * Convert a local wall-clock time in `timeZone` to the matching UTC instant.
  * Two passes correct for any offset change at the boundary (DST-safe; the
@@ -104,13 +98,14 @@ export function computeWeeklyLeaderboard({ matches = [], schedule = {}, now, lim
   const nowDate = now ? new Date(now) : new Date();
   const { start, end } = weekWindow(nowDate, timeZone);
 
-  // Tally wins/games per player across matches inside the window that fall on a
-  // scheduled weekday (all days when no schedule is configured).
+  // Tally wins/games per player across every match inside this week's window.
+  // The schedule sets the timezone (week boundary) and is shown for context,
+  // but does NOT exclude off-schedule games — any game played this week counts,
+  // so the board is never empty while play is happening.
   const tally = new Map(); // playerId -> { name, wins, games, lastWinAt }
   for (const m of matches) {
     const when = new Date(m.timestamp);
     if (when < start || when >= end) continue;
-    if (days.length > 0 && !days.includes(zonedWeekday(when, timeZone))) continue;
 
     const winningTeam = m.score1 > m.score2 ? m.team1 : m.score2 > m.score1 ? m.team2 : null;
     const winnerIds = new Set((winningTeam ?? []).map((p) => p.id));

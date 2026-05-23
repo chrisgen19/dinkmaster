@@ -64,14 +64,14 @@ describe('computeWeeklyLeaderboard', () => {
     expect(r.leaders.map((l) => l.playerId).sort()).toEqual(['a', 'x']);
   });
 
-  it('counts only matches on scheduled weekdays', () => {
+  it('counts games on any weekday, even off the schedule', () => {
     const matches = [
-      match(['a', 'x'], ['b', 'y'], 1, 18), // Monday — counts
-      match(['a', 'x'], ['b', 'y'], 1, 20), // Wednesday — excluded
+      match(['a', 'x'], ['b', 'y'], 1, 18), // Monday (a scheduled day)
+      match(['a', 'x'], ['b', 'y'], 1, 20), // Wednesday (off-schedule) — still counts
     ];
-    // schedule.days uses JS getDay(): Monday = 1.
+    // schedule.days = [1] (Monday only) must NOT exclude the Wednesday game.
     const r = computeWeeklyLeaderboard({ matches, schedule: { timezone: 'UTC', days: [1] }, now: NOW });
-    expect(r.leaders[0]).toMatchObject({ playerId: 'a', wins: 1, games: 1 });
+    expect(r.leaders[0]).toMatchObject({ playerId: 'a', wins: 2, games: 2 });
   });
 
   it('ignores matches outside the current week', () => {

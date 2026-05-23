@@ -11,7 +11,7 @@ Smart pickleball **paddle-stacking & partnership-mixing arena**. Register player
 - **Waiting badge** — a `⏳ N` badge appears on players who've waited ≥ 2 rounds (amber), turning red at ≥ 4, so you can see who's overdue.
 - **Match log & stats** — full history of finished matches (with snapshotted names that survive player deletion) plus per-player games/wins/losses.
 - **Skill rating** — every player carries an Elo-based **skill rating**, shown DUPR-style on a 2.0–8.0 scale, that moves after each finished match. Surfaced in the per-arena **My Stats** tab and the global **/profile** page.
-- **Player of the Week** — a **This Week** tab ranks the top 5 players by wins for the current scheduled week (everyone who played is eligible; ties broken by win %). It's derived live from match history, so it updates on every score. Owners set the arena's recurring **schedule** (play days + time window + timezone) which defines the week; the viewer's own weekly wins/rank also appear on **/profile**.
+- **Player of the Week** — a **This Week** tab ranks the top 5 players by wins for the current week (everyone who played is eligible; ties broken by win %). It's derived live from match history, so it updates on every score. Owners set the arena's recurring **schedule** (play days + time window + timezone); the **timezone** fixes the Mon–Sun week boundary and the schedule shows for context, while *every* game in the week counts (off-schedule games included). The viewer's own weekly wins/rank also appear on **/profile**.
 
 ## How the rotation algorithm works
 
@@ -87,7 +87,7 @@ Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM
 
 Defined in [`prisma/schema.prisma`](prisma/schema.prisma):
 
-- **Arena** — an isolated session owned by a `User`. Players, courts, matches, and partnerships are all scoped by `arenaId`. Also carries a recurring **schedule** (`scheduleDays` 0–6, `scheduleStart`/`scheduleEnd` `"HH:MM"`, `timezone`) that defines the Mon–Sun window for the weekly **Player of the Week** leaderboard.
+- **Arena** — an isolated session owned by a `User`. Players, courts, matches, and partnerships are all scoped by `arenaId`. Also carries a recurring **schedule** (`scheduleDays` 0–6, `scheduleStart`/`scheduleEnd` `"HH:MM"`, `timezone`); the `timezone` fixes the Mon–Sun window for the weekly **Player of the Week** leaderboard, and the days/times show for context.
 - **Player** — a rack entry: `firstName`/`lastName`, `gamesPlayed`, `wins`, `losses`, `queueOrder` (null when not in the rack), `waitRounds`, `gamesOffset` (games credited at join so late joiners rotate as peers, not catch-up), `rating` (Elo skill rating, see [Skill rating](#skill-rating)). `userId` links the player to a registered account; it is null for temporary walk-in players. `leftAt` marks a departed member: the row (stats + history) is kept but excluded from the active rack, and a rejoin reactivates it.
 - **Court** + **CourtSlot** — a court's live status and the four players assigned to it (a player can be on at most one court — DB-enforced).
 - **Match** + **MatchPlayer** — finished-match history with snapshotted player names.
