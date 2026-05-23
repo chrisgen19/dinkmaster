@@ -151,7 +151,7 @@ function GeneralSection({ arenaId, initialName, initialDescription }) {
 
   return (
     <Card title="General" hint="The arena's name and an optional description.">
-      <div className="space-y-4">
+      <div className="space-y-4 max-w-xl">
         <label className="block">
           <span className={labelClass}>Arena name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} className={inputClass} />
@@ -211,7 +211,7 @@ function ScheduleSection({ arenaId, schedule }) {
 
   return (
     <Card title="Schedule" hint="Sets the timezone for the Mon–Sun Player of the Week window; days/times show for context.">
-      <div className="space-y-5">
+      <div className="space-y-5 max-w-xl">
         <div>
           <span className={labelClass}>Play days</span>
           <div className="flex flex-wrap gap-2">
