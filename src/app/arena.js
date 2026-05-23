@@ -24,6 +24,7 @@ import { SiteHeader } from './site-header';
 import { ArenaMembers } from './arena-members';
 import { ArenaNavDrawer } from './arena-nav-drawer';
 import { ArenaScheduleModal } from './arena-schedule-modal';
+import { ArenaCourtsPanel } from './arena-courts-panel';
 
 /** Display name: "First Last", or just "First" when no last name is set. */
 const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
@@ -723,161 +724,17 @@ export default function Arena({
           <div ref={contentAnchorRef} className="scroll-mt-24" aria-hidden="true" />
 
           {activeTab === 'courts' && (
-            <div
-              role="tabpanel"
-              id="arena-panel-courts"
-              aria-labelledby="arena-tab-courts"
-              className="space-y-5 animate-fade-in"
-            >
-              {/* Header — court counts + the Create Court action */}
-              <div className="flex items-end justify-between gap-4">
-                <div>
-                  <h3 className="text-sm font-extrabold uppercase tracking-widest text-slate-400">
-                    Active Courts
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-1 font-medium">
-                    {courts.length} {courts.length === 1 ? 'court' : 'courts'}
-                    <span className="text-slate-300 mx-1.5">·</span>
-                    <span className="text-sky-600 font-bold">
-                      {liveCourtCount} live
-                    </span>
-                  </p>
-                </div>
-                {canManage && (
-                  <button
-                    onClick={handleAddCourt}
-                    disabled={isPending}
-                    className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl
-                      text-xs font-extrabold uppercase tracking-wide text-white
-                      bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700
-                      shadow-sm shadow-emerald-600/30 active:scale-[0.98]
-                      disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
-                      transition-all"
-                  >
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M12 5v14M5 12h14" />
-                    </svg>
-                    Create Court
-                  </button>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {courts.map((court) => {
-                  const isPlaying = court.status === 'playing';
-
-                  return (
-                    <div
-                      key={court.id}
-                      className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col justify-between shadow-sm relative transition-all duration-300 hover:shadow-md"
-                    >
-                      <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                        <div>
-                          <h4 className="font-extrabold text-slate-900 text-sm md:text-base">{court.name}</h4>
-                          <div className="flex items-center mt-0.5">
-                            <span className={`inline-block w-2 h-2 rounded-full mr-1.5 ${
-                              isPlaying ? 'bg-sky-500 animate-pulse' : 'bg-slate-300'
-                            }`}></span>
-                            <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
-                              {isPlaying ? 'Live Match' : 'Vacant'}
-                            </span>
-                          </div>
-                        </div>
-  
-                        {!isPlaying && canManage && (
-                          <button
-                            onClick={() => handleRemoveCourt(court.id)}
-                            className="text-slate-400 hover:text-red-500 text-sm transition-all p-1"
-                            title="Close Court"
-                          >
-                            ✕
-                          </button>
-                        )}
-                      </div>
-  
-                      <div className="p-5 flex-1 flex flex-col justify-center bg-white">
-                        {isPlaying ? (
-                          <div className="grid grid-cols-9 items-center gap-2 py-4">
-  
-                            {/* Team A Horizontal layout */}
-                            <div className="col-span-4 bg-slate-50 border border-slate-100 p-3.5 rounded-xl text-center">
-                              <div className="text-[10px] text-emerald-600 font-bold uppercase tracking-wider mb-2.5">TEAM A</div>
-                              <div className="text-xs font-semibold text-slate-800 flex flex-wrap items-center justify-center gap-1">
-                                {court.team1.map((id, idx) => {
-                                  const p = players.find(x => x.id === id);
-                                  return (
-                                    <span key={id} className="truncate">
-                                      {p ? p.firstName : 'Unknown'}
-                                      {idx < court.team1.length - 1 ? ' &' : ''}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            </div>
-  
-                            <div className="col-span-1 flex justify-center">
-                              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-1 rounded">
-                                VS
-                              </span>
-                            </div>
-  
-                            {/* Team B Horizontal layout */}
-                            <div className="col-span-4 bg-slate-50 border border-slate-100 p-3.5 rounded-xl text-center">
-                              <div className="text-[10px] text-sky-600 font-bold uppercase tracking-wider mb-2.5">TEAM B</div>
-                              <div className="text-xs font-semibold text-slate-800 flex flex-wrap items-center justify-center gap-1">
-                                {court.team2.map((id, idx) => {
-                                  const p = players.find(x => x.id === id);
-                                  return (
-                                    <span key={id} className="truncate">
-                                      {p ? p.firstName : 'Unknown'}
-                                      {idx < court.team2.length - 1 ? ' &' : ''}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            </div>
-  
-                          </div>
-                        ) : (
-                          <div className="py-10 text-center border border-dashed border-slate-200 bg-slate-50/50 rounded-xl flex flex-col items-center justify-center">
-                            <p className="text-slate-700 font-semibold text-xs">Court is Vacant</p>
-                            <p className="text-[11px] text-slate-400 mt-1">Requires 4 players in the queue to start.</p>
-                          </div>
-                        )}
-                      </div>
-  
-                      <div className="p-4 border-t border-slate-100 bg-slate-50/30">
-                        {isPlaying ? (
-                          <button
-                            onClick={() => handleTriggerScoreModal(court)}
-                            disabled={isPending || !canManage}
-                            className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm"
-                          >
-                            Finish Game & Record Score
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleFillCourt(court.id)}
-                            disabled={queue.length < 4 || isPending || !canManage}
-                            className={`w-full py-3 rounded-xl font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm ${
-                              queue.length >= 4 && canManage
-                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
-                                : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200/50'
-                            }`}
-                          >
-                            {!canManage
-                              ? 'View Only'
-                              : queue.length >= 4
-                                ? 'Stack Next 4 Paddles'
-                                : 'Need 4 Players in Rack'}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            <ArenaCourtsPanel
+              courts={courts}
+              players={players}
+              canManage={canManage}
+              isPending={isPending}
+              queueLength={queue.length}
+              onAddCourt={handleAddCourt}
+              onFinishCourt={handleTriggerScoreModal}
+              onFillCourt={handleFillCourt}
+              onRemoveCourt={handleRemoveCourt}
+            />
           )}
 
           {activeTab === 'thisweek' && (
