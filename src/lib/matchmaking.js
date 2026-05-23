@@ -18,6 +18,11 @@ export const DEFAULT_EMERGENCY_WAIT = 4;
 // mean "everyone is protected" — useless); upper bound stops a typo from
 // creating a runaway value. Shared by the server validation and the Settings
 // UI so the two stay in sync.
+//
+// NOTE: if you change this value, also update the matching CHECK constraint in
+// `prisma/migrations/20260523133800_add_matchmaking_threshold_constraints/migration.sql`
+// (which currently hardcodes `BETWEEN 1 AND 50`) — SQL can't import this
+// constant, so the two have to be bumped together.
 export const MAX_WAIT_THRESHOLD = 50;
 
 /**

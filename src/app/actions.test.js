@@ -485,6 +485,58 @@ describe('arena server actions — authorization', () => {
       expect(ratingFor('l2')).toBeLessThan(1000);
     });
 
+    it('endMatch() degrades gracefully when the arena vanishes during auto-mix', async () => {
+      const slot = (playerId, team) => ({
+        playerId,
+        team,
+        player: { id: playerId, firstName: playerId, lastName: null, rating: 1000 },
+      });
+
+      // Match-finish tx (first $transaction call) — full happy path.
+      const finishTx = {
+        $executeRaw: vi.fn(),
+        court: {
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
+        },
+        courtSlot: {
+          findMany: vi.fn().mockResolvedValue([slot('w1', 1), slot('w2', 1), slot('l1', 2), slot('l2', 2)]),
+          deleteMany: vi.fn(),
+        },
+        player: {
+          aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 0 } }),
+          updateMany: vi.fn(),
+          update: vi.fn(),
+        },
+        match: { create: vi.fn() },
+      };
+
+      // Auto-mix tx (second $transaction call) — the arena row is gone.
+      const mixTx = {
+        $executeRaw: vi.fn(),
+        arena: { findUnique: vi.fn().mockResolvedValue(null) },
+        player: { findMany: vi.fn(), update: vi.fn() },
+      };
+
+      let txCall = 0;
+      prisma.$transaction.mockImplementation(async (cb) => {
+        txCall += 1;
+        return cb(txCall === 1 ? finishTx : mixTx);
+      });
+      // Force the auto-mix branch (autoMix=true and queuedCount > 4).
+      prisma.court.findMany.mockResolvedValue([]);
+      prisma.player.count.mockResolvedValue(5);
+
+      const result = await actions.endMatch(ARENA, 'c1', 11, 5, true);
+
+      // Match commit succeeded; mix bailed cleanly with no notification.
+      expect(result.error).toBeUndefined();
+      expect(result.state).toBeDefined();
+      expect(result.notification).toBe('');
+      expect(mixTx.arena.findUnique).toHaveBeenCalled();
+      expect(mixTx.player.update).not.toHaveBeenCalled();
+    });
+
     it('rejectJoinRequest() deletes the request', async () => {
       const result = await actions.rejectJoinRequest(ARENA, 'u2');
       expect(result.ok).toBe(true);

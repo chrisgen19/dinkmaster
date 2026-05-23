@@ -3,6 +3,11 @@
 -- being persisted via paths that bypass the server-action validation
 -- (Prisma Studio, ad-hoc SQL, future bulk imports). Bounds and ordering match
 -- updateArenaMatchmaking in src/app/actions.js so the two cannot disagree.
+--
+-- The literal `50` below mirrors `MAX_WAIT_THRESHOLD` in
+-- `src/lib/matchmaking.js`. If that constant ever changes, ship a new
+-- migration that ALTERs these constraints to match — SQL can't import the JS
+-- constant directly.
 ALTER TABLE "Arena"
   ADD CONSTRAINT "Arena_starveThreshold_range_chk"
     CHECK ("starveThreshold" BETWEEN 1 AND 50),
