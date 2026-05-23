@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useTransition } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -14,16 +14,56 @@ import {
   removeCourt,
   resetArena,
   requestToJoin,
+  updateArenaSchedule,
 } from './actions';
 import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { eloToDupr } from '@/lib/rating';
+import { computeWeeklyLeaderboard } from '@/lib/leaderboard';
 import { AuthStatus } from './auth-status';
 import { SiteHeader } from './site-header';
 import { ArenaMembers } from './arena-members';
 import { ArenaNavDrawer } from './arena-nav-drawer';
+import { ArenaScheduleModal } from './arena-schedule-modal';
+import { ArenaCourtsPanel } from './arena-courts-panel';
 
 /** Display name: "First Last", or just "First" when no last name is set. */
 const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
+
+/** Weekday options for the schedule editor, Monday-first; value = JS getDay(). */
+const WEEKDAYS = [
+  { value: 1, short: 'Mon' },
+  { value: 2, short: 'Tue' },
+  { value: 3, short: 'Wed' },
+  { value: 4, short: 'Thu' },
+  { value: 5, short: 'Fri' },
+  { value: 6, short: 'Sat' },
+  { value: 0, short: 'Sun' },
+];
+/** Medal accent per podium rank (1–3); the rest fall through to slate. */
+const RANK_STYLES = {
+  1: 'bg-amber-100 text-amber-700 ring-amber-200',
+  2: 'bg-slate-200 text-slate-600 ring-slate-300',
+  3: 'bg-orange-100 text-orange-700 ring-orange-200',
+};
+
+/** "18:30" → "6:30 PM"; null/empty → null. */
+const formatClock = (hhmm) => {
+  if (!hhmm) return null;
+  const [h, m] = hhmm.split(':').map(Number);
+  const period = h < 12 ? 'AM' : 'PM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+};
+
+/** One-line schedule summary, e.g. "Mon, Wed, Fri · 6:00 PM–10:00 PM (Asia/Manila)". */
+const describeSchedule = ({ days = [], start, end, timezone } = {}) => {
+  const ordered = WEEKDAYS.filter((d) => days.includes(d.value)).map((d) => d.short);
+  const dayPart = ordered.length ? ordered.join(', ') : 'Every day';
+  const startC = formatClock(start);
+  const endC = formatClock(end);
+  const timePart = startC && endC ? ` · ${startC}–${endC}` : '';
+  return `${dayPart}${timePart}${timezone ? ` (${timezone})` : ''}`;
+};
 
 const playPaddleSound = () => {
   try {
@@ -72,6 +112,7 @@ export default function Arena({
   initialState,
   arenaId,
   arenaName,
+  schedule: initialSchedule = { days: [], start: null, end: null, timezone: 'Asia/Manila' },
   canManage,
   viewerRole,
   viewerUserId,
@@ -103,6 +144,10 @@ export default function Arena({
   const [autoMix, setAutoMix] = useState(true);
   const [notification, setNotification] = useState('');
 
+  // Arena schedule (powers the "This Week" leaderboard window) + its editor.
+  const [schedule, setSchedule] = useState(initialSchedule);
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+
   // Locale-format timestamps only after mount: the server renders in its own
   // locale/timezone, so formatting during SSR/hydration would mismatch. Until
   // mounted we show the deterministic ISO value (same on server and client).
@@ -132,6 +177,14 @@ export default function Arena({
         return [{ ...m, scoreFor, scoreAgainst, won: scoreFor > scoreAgainst, partners }];
       })
     : [];
+
+  // Player of the Week — recomputed from match history (refreshed after every
+  // finish) and the schedule, so the board updates live as scores land. Same
+  // pure ranking the /profile read uses, so client and server never diverge.
+  const leaderboard = useMemo(
+    () => computeWeeklyLeaderboard({ matches: matchHistory, schedule }),
+    [matchHistory, schedule],
+  );
 
   // Apply a server action result to local state (state, error, notification).
   const applyResult = (result) => {
@@ -223,9 +276,33 @@ export default function Arena({
     run(() => resetArena(arenaId));
   };
 
+  // Only the owner edits the schedule (the server action is owner-gated too).
+  const isOwner = viewerRole === 'OWNER';
+  const handleSaveSchedule = (next) => {
+    startTransition(async () => {
+      try {
+        const result = await updateArenaSchedule(arenaId, next);
+        if (result?.error) {
+          setErrorMsg(result.error);
+          return;
+        }
+        if (!result?.schedule) {
+          setErrorMsg('Failed to update schedule.');
+          return;
+        }
+        setErrorMsg('');
+        setSchedule(result.schedule);
+        setScheduleModalOpen(false);
+      } catch {
+        setErrorMsg('Failed to update schedule. Please try again.');
+      }
+    });
+  };
+
   // Tab definitions — shared by the desktop tab bar and the mobile bottom sheet.
   const navTabs = [
     { id: 'courts', label: 'Active Courts' },
+    { id: 'thisweek', label: 'This Week' },
     { id: 'stats', label: 'Partnership Matrix' },
     { id: 'history', label: 'Match Log' },
     { id: 'members', label: 'Members', badge: canManage && pendingRequests.length > 0 ? pendingRequests.length : null },
@@ -647,160 +724,91 @@ export default function Arena({
           <div ref={contentAnchorRef} className="scroll-mt-24" aria-hidden="true" />
 
           {activeTab === 'courts' && (
+            <ArenaCourtsPanel
+              courts={courts}
+              players={players}
+              canManage={canManage}
+              isPending={isPending}
+              queueLength={queue.length}
+              onAddCourt={handleAddCourt}
+              onFinishCourt={handleTriggerScoreModal}
+              onFillCourt={handleFillCourt}
+              onRemoveCourt={handleRemoveCourt}
+            />
+          )}
+
+          {activeTab === 'thisweek' && (
             <div
               role="tabpanel"
-              id="arena-panel-courts"
-              aria-labelledby="arena-tab-courts"
-              className="space-y-5 animate-fade-in"
+              id="arena-panel-thisweek"
+              aria-labelledby="arena-tab-thisweek"
+              className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in"
             >
-              {/* Header — court counts + the Create Court action */}
-              <div className="flex items-end justify-between gap-4">
-                <div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
                   <h3 className="text-sm font-extrabold uppercase tracking-widest text-slate-400">
-                    Active Courts
+                    🏆 Player of the Week
                   </h3>
-                  <p className="text-xs text-slate-500 mt-1 font-medium">
-                    {courts.length} {courts.length === 1 ? 'court' : 'courts'}
-                    <span className="text-slate-300 mx-1.5">·</span>
-                    <span className="text-sky-600 font-bold">
-                      {liveCourtCount} live
-                    </span>
-                  </p>
+                  <p className="text-xs text-slate-500 mt-1.5">{describeSchedule(schedule)}</p>
                 </div>
-                {canManage && (
+                {isOwner && (
                   <button
-                    onClick={handleAddCourt}
-                    disabled={isPending}
-                    className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl
-                      text-xs font-extrabold uppercase tracking-wide text-white
-                      bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700
-                      shadow-sm shadow-emerald-600/30 active:scale-[0.98]
-                      disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
-                      transition-all"
+                    onClick={() => setScheduleModalOpen(true)}
+                    className="shrink-0 px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:text-emerald-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition"
                   >
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M12 5v14M5 12h14" />
-                    </svg>
-                    Create Court
+                    Edit schedule
                   </button>
                 )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {courts.map((court) => {
-                  const isPlaying = court.status === 'playing';
-
-                  return (
-                    <div
-                      key={court.id}
-                      className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col justify-between shadow-sm relative transition-all duration-300 hover:shadow-md"
-                    >
-                      <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                        <div>
-                          <h4 className="font-extrabold text-slate-900 text-sm md:text-base">{court.name}</h4>
-                          <div className="flex items-center mt-0.5">
-                            <span className={`inline-block w-2 h-2 rounded-full mr-1.5 ${
-                              isPlaying ? 'bg-sky-500 animate-pulse' : 'bg-slate-300'
-                            }`}></span>
-                            <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
-                              {isPlaying ? 'Live Match' : 'Vacant'}
-                            </span>
-                          </div>
-                        </div>
-  
-                        {!isPlaying && canManage && (
-                          <button
-                            onClick={() => handleRemoveCourt(court.id)}
-                            className="text-slate-400 hover:text-red-500 text-sm transition-all p-1"
-                            title="Close Court"
-                          >
-                            ✕
-                          </button>
-                        )}
-                      </div>
-  
-                      <div className="p-5 flex-1 flex flex-col justify-center bg-white">
-                        {isPlaying ? (
-                          <div className="grid grid-cols-9 items-center gap-2 py-4">
-  
-                            {/* Team A Horizontal layout */}
-                            <div className="col-span-4 bg-slate-50 border border-slate-100 p-3.5 rounded-xl text-center">
-                              <div className="text-[10px] text-emerald-600 font-bold uppercase tracking-wider mb-2.5">TEAM A</div>
-                              <div className="text-xs font-semibold text-slate-800 flex flex-wrap items-center justify-center gap-1">
-                                {court.team1.map((id, idx) => {
-                                  const p = players.find(x => x.id === id);
-                                  return (
-                                    <span key={id} className="truncate">
-                                      {p ? p.firstName : 'Unknown'}
-                                      {idx < court.team1.length - 1 ? ' &' : ''}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            </div>
-  
-                            <div className="col-span-1 flex justify-center">
-                              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-1 rounded">
-                                VS
+              {!leaderboard.hasData ? (
+                <div className="py-12 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/20">
+                  <p className="text-2xl mb-2">🏓</p>
+                  <p className="text-sm font-semibold text-slate-500">No matches yet this week</p>
+                  <p className="text-xs mt-1">Play some games to claim the top spot!</p>
+                </div>
+              ) : (
+                <ol className="space-y-2">
+                  {leaderboard.leaders.map((p) => {
+                    const isMe = myPlayer?.id === p.playerId;
+                    return (
+                      <li
+                        key={p.playerId}
+                        className={`flex items-center gap-3 rounded-xl border p-3 transition ${
+                          isMe ? 'border-emerald-300 bg-emerald-50/50' : 'border-slate-100 bg-slate-50/50'
+                        }`}
+                      >
+                        <span
+                          className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black ring-1 shrink-0 ${
+                            RANK_STYLES[p.rank] ?? 'bg-slate-100 text-slate-500 ring-slate-200'
+                          }`}
+                        >
+                          {p.rank}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-bold text-slate-800 truncate flex items-center gap-2">
+                            <span className="truncate">{p.name}</span>
+                            {isMe && (
+                              <span className="text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">
+                                You
                               </span>
-                            </div>
-  
-                            {/* Team B Horizontal layout */}
-                            <div className="col-span-4 bg-slate-50 border border-slate-100 p-3.5 rounded-xl text-center">
-                              <div className="text-[10px] text-sky-600 font-bold uppercase tracking-wider mb-2.5">TEAM B</div>
-                              <div className="text-xs font-semibold text-slate-800 flex flex-wrap items-center justify-center gap-1">
-                                {court.team2.map((id, idx) => {
-                                  const p = players.find(x => x.id === id);
-                                  return (
-                                    <span key={id} className="truncate">
-                                      {p ? p.firstName : 'Unknown'}
-                                      {idx < court.team2.length - 1 ? ' &' : ''}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            </div>
-  
-                          </div>
-                        ) : (
-                          <div className="py-10 text-center border border-dashed border-slate-200 bg-slate-50/50 rounded-xl flex flex-col items-center justify-center">
-                            <p className="text-slate-700 font-semibold text-xs">Court is Vacant</p>
-                            <p className="text-[11px] text-slate-400 mt-1">Requires 4 players in the queue to start.</p>
-                          </div>
-                        )}
-                      </div>
-  
-                      <div className="p-4 border-t border-slate-100 bg-slate-50/30">
-                        {isPlaying ? (
-                          <button
-                            onClick={() => handleTriggerScoreModal(court)}
-                            disabled={isPending || !canManage}
-                            className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm"
-                          >
-                            Finish Game & Record Score
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleFillCourt(court.id)}
-                            disabled={queue.length < 4 || isPending || !canManage}
-                            className={`w-full py-3 rounded-xl font-extrabold text-xs uppercase tracking-widest transition-all shadow-sm ${
-                              queue.length >= 4 && canManage
-                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
-                                : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200/50'
-                            }`}
-                          >
-                            {!canManage
-                              ? 'View Only'
-                              : queue.length >= 4
-                                ? 'Stack Next 4 Paddles'
-                                : 'Need 4 Players in Rack'}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                            )}
+                          </p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            {p.games} game{p.games !== 1 ? 's' : ''} · {p.winPct}% win rate
+                          </p>
+                        </div>
+                        <span className="text-right shrink-0">
+                          <span className="block text-lg font-extrabold text-emerald-700 leading-none">{p.wins}</span>
+                          <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mt-0.5">
+                            {p.wins === 1 ? 'win' : 'wins'}
+                          </span>
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
             </div>
           )}
 
@@ -1091,6 +1099,16 @@ export default function Arena({
 
         </div>
       </main>
+
+      {/* Schedule editor (owner only) */}
+      {scheduleModalOpen && isOwner && (
+        <ArenaScheduleModal
+          schedule={schedule}
+          onSave={handleSaveSchedule}
+          onClose={() => setScheduleModalOpen(false)}
+          isPending={isPending}
+        />
+      )}
 
       {/* Confirmation Reset Modal */}
       {showResetConfirm && (

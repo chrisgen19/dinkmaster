@@ -68,6 +68,14 @@ export default async function ProfilePage() {
               value={totals.rating !== null ? eloToDupr(totals.rating).toFixed(3) : '—'}
             />
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <StatTile label="Wins this week" value={totals.weeklyWins} dashed />
+            <StatTile
+              label="Arenas led"
+              value={totals.weeklyArenasLed > 0 ? `🏆 ${totals.weeklyArenasLed}` : '—'}
+              dashed
+            />
+          </div>
         </section>
 
         {/* Per-arena breakdown */}
@@ -93,6 +101,7 @@ export default async function ProfilePage() {
                     <th className="p-3 font-extrabold text-center">W</th>
                     <th className="p-3 font-extrabold text-center">L</th>
                     <th className="p-3 font-extrabold text-center">Rating</th>
+                    <th className="p-3 font-extrabold text-center">This week</th>
                     <th className="p-3 font-extrabold text-center">In rack</th>
                   </tr>
                 </thead>
@@ -114,6 +123,20 @@ export default async function ProfilePage() {
                       <td className="p-3 text-center font-bold text-slate-500">{a.losses}</td>
                       <td className="p-3 text-center font-bold text-slate-700">
                         {a.gamesPlayed > 0 ? eloToDupr(a.rating).toFixed(3) : '—'}
+                      </td>
+                      <td className="p-3 text-center text-slate-600">
+                        {a.weeklyWins > 0 ? (
+                          <span className="font-bold">
+                            {a.weeklyWins}W
+                            {a.weeklyRank && (
+                              <span className="ml-1 text-[10px] font-bold text-slate-400">
+                                {a.weeklyRank === 1 ? '🏆' : `#${a.weeklyRank}`}
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
                       </td>
                       <td className="p-3 text-center text-slate-500">
                         {a.inQueue ? 'Yes' : '—'}
