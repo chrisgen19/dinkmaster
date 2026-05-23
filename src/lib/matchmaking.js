@@ -13,3 +13,9 @@
 // among equal game counts. Starvation is bounded by the wait bands, not games.
 export const DEFAULT_STARVE_THRESHOLD = 2;
 export const DEFAULT_EMERGENCY_WAIT = 4;
+
+// Reasonable bounds on the per-arena thresholds. Lower bound is 1 (zero would
+// mean "everyone is protected" — useless); upper bound stops a typo from
+// creating a runaway value. Shared by the server validation and the Settings
+// UI so the two stay in sync.
+export const MAX_WAIT_THRESHOLD = 50;

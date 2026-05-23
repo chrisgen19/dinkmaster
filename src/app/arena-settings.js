@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { updateArenaGeneral, updateArenaSchedule, updateArenaMatchmaking, resetArena, transferOwnership, deleteArena } from './actions';
 import { ScheduleFields } from './schedule-fields';
+import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
 
 const inputClass =
   'w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 text-sm font-bold text-slate-800 focus:bg-white focus:border-emerald-500 outline-none transition';
@@ -284,8 +285,10 @@ function ScheduleSection({ arenaId, schedule }) {
 
 function MatchmakingSection({ arenaId, matchmaking }) {
   const router = useRouter();
-  const [starve, setStarve] = useState(matchmaking.starveThreshold);
-  const [emergency, setEmergency] = useState(matchmaking.emergencyWait);
+  // Inputs are stored as strings so a user clearing the field mid-edit doesn't
+  // immediately coerce to 0 and trigger a validation error. Parsing happens on save.
+  const [starve, setStarve] = useState(String(matchmaking.starveThreshold));
+  const [emergency, setEmergency] = useState(String(matchmaking.emergencyWait));
   const [error, setError] = useState('');
   const [saved, flashSaved, clearSaved] = useSavedFlag();
   const [isPending, startTransition] = useTransition();
@@ -293,13 +296,21 @@ function MatchmakingSection({ arenaId, matchmaking }) {
   const save = () => {
     clearSaved();
     // Mirror the server validation so users see issues without a round-trip.
-    if (!Number.isInteger(starve) || starve < 1) return setError('Starve threshold must be a whole number ≥ 1.');
-    if (!Number.isInteger(emergency) || emergency < 1) return setError('Emergency wait must be a whole number ≥ 1.');
-    if (emergency < starve) return setError('Emergency wait must be at least the starve threshold.');
+    const starveNum = Number(starve);
+    const emergencyNum = Number(emergency);
+    const invalid = (raw, n) =>
+      raw === '' || !Number.isInteger(n) || n < 1 || n > MAX_WAIT_THRESHOLD;
+    if (invalid(starve, starveNum)) {
+      return setError(`Starve threshold must be a whole number between 1 and ${MAX_WAIT_THRESHOLD}.`);
+    }
+    if (invalid(emergency, emergencyNum)) {
+      return setError(`Emergency wait must be a whole number between 1 and ${MAX_WAIT_THRESHOLD}.`);
+    }
+    if (emergencyNum < starveNum) return setError('Emergency wait must be at least the starve threshold.');
     setError('');
     startTransition(async () => {
       try {
-        const result = await updateArenaMatchmaking(arenaId, { starveThreshold: starve, emergencyWait: emergency });
+        const result = await updateArenaMatchmaking(arenaId, { starveThreshold: starveNum, emergencyWait: emergencyNum });
         if (result?.error) return setError(result.error);
         flashSaved();
         router.refresh();
@@ -319,9 +330,9 @@ function MatchmakingSection({ arenaId, matchmaking }) {
           <input
             type="number"
             min={1}
-            max={50}
+            max={MAX_WAIT_THRESHOLD}
             value={starve}
-            onChange={(e) => setStarve(Number(e.target.value))}
+            onChange={(e) => setStarve(e.target.value)}
             className={inputClass}
           />
           <span className="block text-[10px] text-slate-400 mt-1">
@@ -336,9 +347,9 @@ function MatchmakingSection({ arenaId, matchmaking }) {
           <input
             type="number"
             min={1}
-            max={50}
+            max={MAX_WAIT_THRESHOLD}
             value={emergency}
-            onChange={(e) => setEmergency(Number(e.target.value))}
+            onChange={(e) => setEmergency(e.target.value)}
             className={inputClass}
           />
           <span className="block text-[10px] text-slate-400 mt-1">

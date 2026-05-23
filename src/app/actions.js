@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { getState } from '@/lib/data';
 import { requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
 import { ROLES } from '@/lib/roles';
-import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT } from '@/lib/matchmaking';
+import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
 import { computeMatchRatings, RATING_BASELINE } from '@/lib/rating';
 
 /** Canonical (sorted) pair so each partnership has exactly one row. */
@@ -280,16 +280,11 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
 }
 
 /**
- * Reasonable bounds on the matchmaking thresholds. The lower bound is 1
- * (zero would mean "everyone is protected" — useless); the upper bound
- * stops a typo from creating a runaway value.
- */
-const MAX_WAIT_THRESHOLD = 50;
-
-/**
  * Update an arena's matchmaking thresholds — the wait counts that promote a
  * player into the protected (⏳) and emergency bands. Manager-gated.
  * `emergencyWait` must be ≥ `starveThreshold` so the bands remain ordered.
+ * Bounds come from `MAX_WAIT_THRESHOLD` in `lib/matchmaking.js` so the server
+ * and the Settings UI agree.
  */
 export async function updateArenaMatchmaking(
   arenaId,
@@ -704,20 +699,21 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
   const queuedCount = await prisma.player.count({
     where: { arenaId, leftAt: null, queueOrder: { not: null } },
   });
-  // Per-arena matchmaking thresholds — fall back to the shared defaults if the
-  // arena row was somehow deleted between the finish and this read.
-  const arenaConfig = await prisma.arena.findUnique({
-    where: { id: arenaId },
-    select: { starveThreshold: true, emergencyWait: true },
-  });
-  const starveThreshold = arenaConfig?.starveThreshold ?? DEFAULT_STARVE_THRESHOLD;
-  const emergencyWait = arenaConfig?.emergencyWait ?? DEFAULT_EMERGENCY_WAIT;
 
   let notification = '';
   // Mix the whole rack on every finish (when enabled and more than one court's
   // worth of players are waiting, so the next four can actually differ) — this
   // stops the same group of four from locking together every round.
   if (autoMix && queuedCount > 4) {
+    // Per-arena matchmaking thresholds — only needed when we're actually mixing.
+    // The arena must exist (we just finished a match on it); a null here would
+    // be a serious bug and crashing on destructure surfaces it instead of
+    // silently falling back to defaults.
+    const { starveThreshold, emergencyWait } = await prisma.arena.findUnique({
+      where: { id: arenaId },
+      select: { starveThreshold: true, emergencyWait: true },
+    });
+
     await prisma.$transaction(async (tx) => {
       await lockQueue(tx, arenaId);
       // Read the queued set under the lock so a concurrent fillCourt can't make
