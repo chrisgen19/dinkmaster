@@ -48,7 +48,7 @@ function Wordmark({ className = 'text-xl' }) {
  *
  * @param {object} props
  * @param {'home' | 'arena'} [props.variant] - Which left-side treatment to render.
- * @param {string} [props.arenaName] - Arena title, required for the `arena` variant.
+ * @param {string} props.arenaName - Arena title (required when variant='arena').
  * @param {React.ReactNode} [props.children] - Right-aligned actions.
  */
 export function SiteHeader({ variant = 'home', arenaName, children }) {

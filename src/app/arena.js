@@ -117,6 +117,9 @@ export default function Arena({
     ? players.find((p) => p.userId === viewerUserId) ?? null
     : null;
   const myQueueIndex = myPlayer ? queue.indexOf(myPlayer.id) : -1;
+  // Courts with a match in progress — surfaced in the header stats and the
+  // tab badge, so compute it once.
+  const liveCourtCount = courts.filter((c) => c.status === 'playing').length;
   // The viewer's finished matches, with their team's score and the outcome.
   const myMatches = myPlayer
     ? matchHistory.flatMap((m) => {
@@ -308,7 +311,7 @@ export default function Arena({
           <div className="bg-slate-50 px-3.5 py-1.5 rounded-xl border border-slate-200/70">
             <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wide">Live</span>
             <span className="text-sm font-bold text-sky-600">
-              {courts.filter(c => c.status === 'playing').length}
+              {liveCourtCount}
             </span>
           </div>
         </div>
@@ -322,7 +325,7 @@ export default function Arena({
             {queue.length}<span className="text-slate-400 font-semibold"> queued</span>
           </span>
           <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-sky-600">
-            {courts.filter(c => c.status === 'playing').length}<span className="text-slate-400 font-semibold"> live</span>
+            {liveCourtCount}<span className="text-slate-400 font-semibold"> live</span>
           </span>
         </div>
 
@@ -660,7 +663,7 @@ export default function Arena({
                     {courts.length} {courts.length === 1 ? 'court' : 'courts'}
                     <span className="text-slate-300 mx-1.5">·</span>
                     <span className="text-sky-600 font-bold">
-                      {courts.filter((c) => c.status === 'playing').length} live
+                      {liveCourtCount} live
                     </span>
                   </p>
                 </div>
