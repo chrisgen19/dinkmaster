@@ -26,11 +26,12 @@ const inputClass =
   'w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 text-sm font-bold text-slate-800 focus:bg-white focus:border-emerald-500 outline-none transition';
 const labelClass = 'block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5';
 
-/** Section definitions for the left nav. `ownerOnly` ones are hidden for organizers. */
+/** Section definitions for the left nav. All are visible to managers; the
+ *  owner-only actions (transfer, delete) are gated inside Danger Zone. */
 const SECTIONS = [
   { id: 'general', label: 'General' },
   { id: 'schedule', label: 'Schedule' },
-  { id: 'danger', label: 'Danger Zone', ownerOnly: true },
+  { id: 'danger', label: 'Danger Zone' },
 ];
 
 /**
@@ -49,7 +50,9 @@ const SECTIONS = [
  */
 export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwner, viewerUserId, members }) {
   const [section, setSection] = useState('general');
-  const sections = SECTIONS.filter((s) => !s.ownerOnly || isOwner);
+  // Fall back to the first section if the active id ever disappears — e.g. a
+  // successful ownership transfer re-renders this with a narrower set.
+  const effectiveSection = SECTIONS.some((s) => s.id === section) ? section : SECTIONS[0].id;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -76,8 +79,8 @@ export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwn
 
       <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-6">
         <nav className="flex md:flex-col gap-1.5 md:sticky md:top-24 md:self-start" aria-label="Settings sections">
-          {sections.map((s) => {
-            const active = section === s.id;
+          {SECTIONS.map((s) => {
+            const active = effectiveSection === s.id;
             const danger = s.id === 'danger';
             return (
               <button
@@ -99,12 +102,12 @@ export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwn
         </nav>
 
         <div className="min-w-0">
-          {section === 'general' && (
+          {effectiveSection === 'general' && (
             <GeneralSection arenaId={arenaId} initialName={arenaName} initialDescription={description} />
           )}
-          {section === 'schedule' && <ScheduleSection arenaId={arenaId} schedule={schedule} />}
-          {section === 'danger' && isOwner && (
-            <DangerZone arenaId={arenaId} arenaName={arenaName} viewerUserId={viewerUserId} members={members} />
+          {effectiveSection === 'schedule' && <ScheduleSection arenaId={arenaId} schedule={schedule} />}
+          {effectiveSection === 'danger' && (
+            <DangerZone arenaId={arenaId} arenaName={arenaName} isOwner={isOwner} viewerUserId={viewerUserId} members={members} />
           )}
         </div>
       </div>
@@ -273,7 +276,7 @@ function ScheduleSection({ arenaId, schedule }) {
   );
 }
 
-function DangerZone({ arenaId, arenaName, viewerUserId, members }) {
+function DangerZone({ arenaId, arenaName, isOwner, viewerUserId, members }) {
   const router = useRouter();
   const [error, setError] = useState('');
   const [resetConfirm, setResetConfirm] = useState(false);
@@ -295,11 +298,13 @@ function DangerZone({ arenaId, arenaName, viewerUserId, members }) {
   return (
     <div className="bg-white border border-red-200 rounded-2xl p-6 shadow-sm">
       <h2 className="text-base font-extrabold text-red-600">Danger Zone</h2>
-      <p className="text-xs text-slate-400 mt-1 mb-5">Owner-only actions. Some are irreversible.</p>
+      <p className="text-xs text-slate-400 mt-1 mb-5">
+        {isOwner ? 'Destructive actions. Some are irreversible.' : 'Destructive actions. Transfer and delete are owner-only.'}
+      </p>
 
       <div className="space-y-6">
-        {/* Reset */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-6">
+        {/* Reset — available to organizers too (resetArena is manager-gated). */}
+        <div className={`flex flex-wrap items-center justify-between gap-3 ${isOwner ? 'border-b border-slate-100 pb-6' : ''}`}>
           <div className="min-w-0">
             <p className="text-sm font-bold text-slate-800">Reset arena</p>
             <p className="text-xs text-slate-500 mt-0.5">Clears match history, ratings, and live courts. Players are kept.</p>
@@ -320,47 +325,52 @@ function DangerZone({ arenaId, arenaName, viewerUserId, members }) {
           )}
         </div>
 
-        {/* Transfer ownership */}
-        <div className="border-b border-slate-100 pb-6">
-          <p className="text-sm font-bold text-slate-800">Transfer ownership</p>
-          <p className="text-xs text-slate-500 mt-0.5 mb-3">Hand the arena to another member; you stay on as an organizer.</p>
-          {transferTargets.length === 0 ? (
-            <p className="text-xs text-slate-400">No other members to transfer to yet.</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              <select value={transferTo} onChange={(e) => setTransferTo(e.target.value)} className={`${inputClass} max-w-xs`}>
-                <option value="">Select a member…</option>
-                {transferTargets.map((m) => <option key={m.userId} value={m.userId}>{m.name}</option>)}
-              </select>
-              <button
-                onClick={() => run(() => transferOwnership(arenaId, transferTo), () => router.refresh())}
-                disabled={isPending || !transferTo}
-                className="px-3 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition disabled:opacity-50"
-              >
-                Transfer
-              </button>
+        {/* Transfer + delete are owner-only (the server actions enforce this too). */}
+        {isOwner && (
+          <>
+            {/* Transfer ownership */}
+            <div className="border-b border-slate-100 pb-6">
+              <p className="text-sm font-bold text-slate-800">Transfer ownership</p>
+              <p className="text-xs text-slate-500 mt-0.5 mb-3">Hand the arena to another member; you stay on as an organizer.</p>
+              {transferTargets.length === 0 ? (
+                <p className="text-xs text-slate-400">No other members to transfer to yet.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  <select value={transferTo} onChange={(e) => setTransferTo(e.target.value)} className={`${inputClass} max-w-xs`}>
+                    <option value="">Select a member…</option>
+                    {transferTargets.map((m) => <option key={m.userId} value={m.userId}>{m.name}</option>)}
+                  </select>
+                  <button
+                    onClick={() => run(() => transferOwnership(arenaId, transferTo), () => router.refresh())}
+                    disabled={isPending || !transferTo}
+                    className="px-3 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition disabled:opacity-50"
+                  >
+                    Transfer
+                  </button>
+                </div>
+              )}
             </div>
-          )}
-        </div>
 
-        {/* Delete */}
-        <div>
-          <p className="text-sm font-bold text-slate-800">Delete arena</p>
-          <p className="text-xs text-slate-500 mt-0.5 mb-3">
-            Permanently deletes this arena and all its players, courts, matches, and history. This cannot be undone.
-            Type <span className="font-bold text-slate-700">{arenaName}</span> to confirm.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <input value={deleteText} onChange={(e) => setDeleteText(e.target.value)} placeholder="Arena name" className={`${inputClass} max-w-xs`} />
-            <button
-              onClick={() => run(() => deleteArena(arenaId), () => router.push('/'))}
-              disabled={isPending || deleteText !== arenaName}
-              className="px-3 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Delete arena
-            </button>
-          </div>
-        </div>
+            {/* Delete */}
+            <div>
+              <p className="text-sm font-bold text-slate-800">Delete arena</p>
+              <p className="text-xs text-slate-500 mt-0.5 mb-3">
+                Permanently deletes this arena and all its players, courts, matches, and history. This cannot be undone.
+                Type <span className="font-bold text-slate-700">{arenaName}</span> to confirm.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <input value={deleteText} onChange={(e) => setDeleteText(e.target.value)} placeholder="Arena name" className={`${inputClass} max-w-xs`} />
+                <button
+                  onClick={() => run(() => deleteArena(arenaId), () => router.push('/'))}
+                  disabled={isPending || deleteText !== arenaName}
+                  className="px-3 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Delete arena
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {error && <p className="text-xs font-semibold text-red-600 mt-4">{error}</p>}

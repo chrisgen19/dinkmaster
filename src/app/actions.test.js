@@ -52,6 +52,7 @@ const PLAY = [
   ['removeCourt', () => actions.removeCourt(ARENA, 'c1')],
   ['resetArena', () => actions.resetArena(ARENA)],
   ['updateArenaGeneral', () => actions.updateArenaGeneral(ARENA, { name: 'New' })],
+  ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
   ['approveJoinRequest', () => actions.approveJoinRequest(ARENA, 'u2')],
   ['rejectJoinRequest', () => actions.rejectJoinRequest(ARENA, 'u2')],
 ];
@@ -62,7 +63,6 @@ const OWNER_ONLY = [
   ['removeMember', () => actions.removeMember(ARENA, 'u2')],
   ['transferOwnership', () => actions.transferOwnership(ARENA, 'u2')],
   ['linkPlayerToMember', () => actions.linkPlayerToMember(ARENA, 'p1', 'u2')],
-  ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
   ['deleteArena', () => actions.deleteArena(ARENA)],
 ];
 // Any signed-in user (requireUser).
@@ -126,12 +126,6 @@ describe('arena server actions — authorization', () => {
     });
 
     describe('updateArenaSchedule()', () => {
-      beforeEach(() => {
-        // The action now scopes the UPDATE to the owner; default to "the
-        // caller is still the owner" so the happy paths land one row.
-        prisma.arena.updateMany.mockResolvedValue({ count: 1 });
-      });
-
       it('normalizes days (dedupes + sorts) and persists a valid schedule', async () => {
         const result = await actions.updateArenaSchedule(ARENA, {
           days: [5, 1, 3, 1],
@@ -140,8 +134,8 @@ describe('arena server actions — authorization', () => {
           timezone: 'Asia/Manila',
         });
         expect(result.error).toBeUndefined();
-        expect(prisma.arena.updateMany).toHaveBeenCalledWith({
-          where: { id: ARENA, ownerId: 'u1' },
+        expect(prisma.arena.update).toHaveBeenCalledWith({
+          where: { id: ARENA },
           data: { scheduleDays: [1, 3, 5], scheduleStart: '18:00', scheduleEnd: '22:00', timezone: 'Asia/Manila' },
         });
         expect(result.schedule.days).toEqual([1, 3, 5]);
@@ -150,16 +144,10 @@ describe('arena server actions — authorization', () => {
       it('defaults an empty timezone to Asia/Manila and allows empty times', async () => {
         const result = await actions.updateArenaSchedule(ARENA, { days: [], start: '', end: '' });
         expect(result.error).toBeUndefined();
-        expect(prisma.arena.updateMany).toHaveBeenCalledWith({
-          where: { id: ARENA, ownerId: 'u1' },
+        expect(prisma.arena.update).toHaveBeenCalledWith({
+          where: { id: ARENA },
           data: { scheduleDays: [], scheduleStart: null, scheduleEnd: null, timezone: 'Asia/Manila' },
         });
-      });
-
-      it('reports an ownership race when zero rows update', async () => {
-        prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
-        const result = await actions.updateArenaSchedule(ARENA, { days: [1] });
-        expect(result.error).toMatch(/Ownership changed/i);
       });
 
       it.each([
@@ -175,7 +163,6 @@ describe('arena server actions — authorization', () => {
         const result = await actions.updateArenaSchedule(ARENA, input);
         expect(result.error).toBeTruthy();
         expect(prisma.arena.update).not.toHaveBeenCalled();
-        expect(prisma.arena.updateMany).not.toHaveBeenCalled();
       });
     });
 

@@ -240,12 +240,13 @@ function isValidTimeZone(tz) {
 }
 
 /**
- * Set an arena's recurring play schedule (owner only) — powers the
- * schedule-aware weekly leaderboard. `days` are weekday numbers (0 = Sunday …
- * 6 = Saturday); `start`/`end` are "HH:MM" strings or empty for unset.
+ * Set an arena's recurring play schedule — powers the schedule-aware weekly
+ * leaderboard. Manager-gated (owner or organizer), like the rest of arena
+ * settings. `days` are weekday numbers (0 = Sunday … 6 = Saturday);
+ * `start`/`end` are "HH:MM" strings or empty for unset.
  */
 export async function updateArenaSchedule(arenaId, { days, start, end, timezone } = {}) {
-  const guard = await requireArenaOwner(arenaId);
+  const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error };
 
   const dayList = Array.isArray(days) ? days : [];
@@ -274,17 +275,10 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
   const tz = (timezone ?? '').trim() || 'Asia/Manila';
   if (!isValidTimeZone(tz)) return { error: 'Unrecognized timezone.' };
 
-  // Make ownership part of the write: `requireArenaOwner` ran above, but a
-  // concurrent transferOwnership could move ownership before this UPDATE
-  // lands. Scoping to the caller's id means the row only updates while they
-  // are still the canonical owner — otherwise we report the race cleanly.
-  const updated = await prisma.arena.updateMany({
-    where: { id: arenaId, ownerId: guard.user.id },
+  await prisma.arena.update({
+    where: { id: arenaId },
     data: { scheduleDays: normalizedDays, scheduleStart: startTime, scheduleEnd: endTime, timezone: tz },
   });
-  if (updated.count !== 1) {
-    return { error: 'Ownership changed while processing. Please try again.' };
-  }
   return { schedule: { days: normalizedDays, start: startTime, end: endTime, timezone: tz } };
 }
 
