@@ -204,6 +204,33 @@ export async function renameArena(arenaId, nameInput) {
   return { arena: { id: arenaId, name } };
 }
 
+/**
+ * Update an arena's General settings — name (required) and an optional
+ * description blurb. Manager-gated (owner or organizer), unlike the legacy
+ * owner-only `renameArena`. Empty description is stored as null.
+ */
+export async function updateArenaGeneral(arenaId, { name: nameInput, description: descInput } = {}) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  const name = (nameInput ?? '').trim();
+  if (name.length === 0) return { error: 'Please enter an arena name.' };
+  if (name.length > 80) return { error: 'Arena name is too long (max 80 characters).' };
+
+  const description = (descInput ?? '').trim() || null;
+  if (description && description.length > 280) {
+    return { error: 'Description is too long (max 280 characters).' };
+  }
+
+  // updateMany (not update) so a concurrent delete is a clean count===0
+  // instead of a thrown P2025; scoped to id only since any manager may write.
+  // A manager demoted between the guard and this write still succeeds — a
+  // narrow TOCTOU window we accept, same as the other manager-gated actions.
+  const updated = await prisma.arena.updateMany({ where: { id: arenaId }, data: { name, description } });
+  if (updated.count === 0) return { error: 'This arena no longer exists.' };
+  return { arena: { id: arenaId, name, description } };
+}
+
 /** "HH:MM" 24-hour clock, e.g. "06:00" or "22:30". */
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -218,12 +245,13 @@ function isValidTimeZone(tz) {
 }
 
 /**
- * Set an arena's recurring play schedule (owner only) — powers the
- * schedule-aware weekly leaderboard. `days` are weekday numbers (0 = Sunday …
- * 6 = Saturday); `start`/`end` are "HH:MM" strings or empty for unset.
+ * Set an arena's recurring play schedule — powers the schedule-aware weekly
+ * leaderboard. Manager-gated (owner or organizer), like the rest of arena
+ * settings. `days` are weekday numbers (0 = Sunday … 6 = Saturday);
+ * `start`/`end` are "HH:MM" strings or empty for unset.
  */
 export async function updateArenaSchedule(arenaId, { days, start, end, timezone } = {}) {
-  const guard = await requireArenaOwner(arenaId);
+  const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error };
 
   const dayList = Array.isArray(days) ? days : [];
@@ -252,17 +280,15 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
   const tz = (timezone ?? '').trim() || 'Asia/Manila';
   if (!isValidTimeZone(tz)) return { error: 'Unrecognized timezone.' };
 
-  // Make ownership part of the write: `requireArenaOwner` ran above, but a
-  // concurrent transferOwnership could move ownership before this UPDATE
-  // lands. Scoping to the caller's id means the row only updates while they
-  // are still the canonical owner — otherwise we report the race cleanly.
+  // updateMany (not update) so a concurrent delete is a clean count===0
+  // instead of a thrown P2025; scoped to id only since any manager may write.
+  // A manager demoted between the guard and this write still succeeds — a
+  // narrow TOCTOU window we accept, same as the other manager-gated actions.
   const updated = await prisma.arena.updateMany({
-    where: { id: arenaId, ownerId: guard.user.id },
+    where: { id: arenaId },
     data: { scheduleDays: normalizedDays, scheduleStart: startTime, scheduleEnd: endTime, timezone: tz },
   });
-  if (updated.count !== 1) {
-    return { error: 'Ownership changed while processing. Please try again.' };
-  }
+  if (updated.count === 0) return { error: 'This arena no longer exists.' };
   return { schedule: { days: normalizedDays, start: startTime, end: endTime, timezone: tz } };
 }
 
@@ -990,6 +1016,26 @@ export async function transferOwnership(arenaId, newOwnerUserId) {
       return { error: 'Ownership changed while processing. Please try again.' };
     }
     throw err;
+  }
+  return { ok: true };
+}
+
+/**
+ * Permanently delete an arena and everything scoped to it (players, courts,
+ * matches, partnerships, memberships, join requests — all `onDelete: Cascade`).
+ * Owner only, and irreversible. Scoped to the caller's id so a concurrent
+ * ownership transfer can't let a former owner delete the arena out from under
+ * the new one.
+ */
+export async function deleteArena(arenaId) {
+  const guard = await requireArenaOwner(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  const deleted = await prisma.arena.deleteMany({
+    where: { id: arenaId, ownerId: guard.user.id },
+  });
+  if (deleted.count !== 1) {
+    return { error: 'Ownership changed while processing. Please try again.' };
   }
   return { ok: true };
 }

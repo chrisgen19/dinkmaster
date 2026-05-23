@@ -13,10 +13,11 @@ datasource db {
 /// A pickleball arena — an isolated session of players, courts, and matches
 /// owned by one User. All arena data is scoped by `arenaId`.
 model Arena {
-  id        String   @id @default(cuid())
-  name      String
-  ownerId   String
-  createdAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  name        String
+  description String?  // optional, manager-set blurb (surfacing on the arena view is tracked in #33)
+  ownerId     String
+  createdAt   DateTime @default(now())
 
   // Recurring play schedule — powers the schedule-aware weekly leaderboard
   // ("This Week" / Player of the Week). `scheduleDays` holds weekday numbers

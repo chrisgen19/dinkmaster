@@ -19,7 +19,7 @@ vi.mock('@/lib/data', () => ({
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     $transaction: vi.fn(),
-    arena: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
+    arena: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn(), findUnique: vi.fn() },
     arenaMembership: {
       upsert: vi.fn(),
       deleteMany: vi.fn(),
@@ -51,6 +51,8 @@ const PLAY = [
   ['addCourt', () => actions.addCourt(ARENA)],
   ['removeCourt', () => actions.removeCourt(ARENA, 'c1')],
   ['resetArena', () => actions.resetArena(ARENA)],
+  ['updateArenaGeneral', () => actions.updateArenaGeneral(ARENA, { name: 'New' })],
+  ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
   ['approveJoinRequest', () => actions.approveJoinRequest(ARENA, 'u2')],
   ['rejectJoinRequest', () => actions.rejectJoinRequest(ARENA, 'u2')],
 ];
@@ -61,7 +63,7 @@ const OWNER_ONLY = [
   ['removeMember', () => actions.removeMember(ARENA, 'u2')],
   ['transferOwnership', () => actions.transferOwnership(ARENA, 'u2')],
   ['linkPlayerToMember', () => actions.linkPlayerToMember(ARENA, 'p1', 'u2')],
-  ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
+  ['deleteArena', () => actions.deleteArena(ARENA)],
 ];
 // Any signed-in user (requireUser).
 const USER_GATED = [
@@ -90,6 +92,7 @@ describe('arena server actions — authorization', () => {
         expect(prisma.arena.create).not.toHaveBeenCalled();
         expect(prisma.arena.update).not.toHaveBeenCalled();
         expect(prisma.arena.updateMany).not.toHaveBeenCalled();
+        expect(prisma.arena.deleteMany).not.toHaveBeenCalled();
         expect(prisma.arenaMembership.upsert).not.toHaveBeenCalled();
         expect(prisma.arenaMembership.updateMany).not.toHaveBeenCalled();
         expect(prisma.arenaMembership.deleteMany).not.toHaveBeenCalled();
@@ -124,8 +127,7 @@ describe('arena server actions — authorization', () => {
 
     describe('updateArenaSchedule()', () => {
       beforeEach(() => {
-        // The action now scopes the UPDATE to the owner; default to "the
-        // caller is still the owner" so the happy paths land one row.
+        // The write is a count-checked updateMany; default to "the row exists".
         prisma.arena.updateMany.mockResolvedValue({ count: 1 });
       });
 
@@ -138,7 +140,7 @@ describe('arena server actions — authorization', () => {
         });
         expect(result.error).toBeUndefined();
         expect(prisma.arena.updateMany).toHaveBeenCalledWith({
-          where: { id: ARENA, ownerId: 'u1' },
+          where: { id: ARENA },
           data: { scheduleDays: [1, 3, 5], scheduleStart: '18:00', scheduleEnd: '22:00', timezone: 'Asia/Manila' },
         });
         expect(result.schedule.days).toEqual([1, 3, 5]);
@@ -148,15 +150,15 @@ describe('arena server actions — authorization', () => {
         const result = await actions.updateArenaSchedule(ARENA, { days: [], start: '', end: '' });
         expect(result.error).toBeUndefined();
         expect(prisma.arena.updateMany).toHaveBeenCalledWith({
-          where: { id: ARENA, ownerId: 'u1' },
+          where: { id: ARENA },
           data: { scheduleDays: [], scheduleStart: null, scheduleEnd: null, timezone: 'Asia/Manila' },
         });
       });
 
-      it('reports an ownership race when zero rows update', async () => {
+      it('reports a clean error when the arena no longer exists (concurrent delete)', async () => {
         prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
         const result = await actions.updateArenaSchedule(ARENA, { days: [1] });
-        expect(result.error).toMatch(/Ownership changed/i);
+        expect(result.error).toMatch(/no longer exists/i);
       });
 
       it.each([
@@ -171,8 +173,51 @@ describe('arena server actions — authorization', () => {
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaSchedule(ARENA, input);
         expect(result.error).toBeTruthy();
-        expect(prisma.arena.update).not.toHaveBeenCalled();
         expect(prisma.arena.updateMany).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('updateArenaGeneral()', () => {
+      beforeEach(() => {
+        prisma.arena.updateMany.mockResolvedValue({ count: 1 });
+      });
+
+      it('persists a trimmed name and null-coerces a blank description', async () => {
+        const result = await actions.updateArenaGeneral(ARENA, { name: '  Court Kings  ', description: '   ' });
+        expect(result.error).toBeUndefined();
+        expect(prisma.arena.updateMany).toHaveBeenCalledWith({
+          where: { id: ARENA },
+          data: { name: 'Court Kings', description: null },
+        });
+      });
+
+      it('reports a clean error when the arena no longer exists (concurrent delete)', async () => {
+        prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
+        const result = await actions.updateArenaGeneral(ARENA, { name: 'Court Kings' });
+        expect(result.error).toMatch(/no longer exists/i);
+      });
+
+      it.each([
+        ['a blank name', { name: '   ' }],
+        ['an over-long name', { name: 'x'.repeat(81) }],
+        ['an over-long description', { name: 'ok', description: 'y'.repeat(281) }],
+      ])('rejects %s and writes nothing', async (_label, input) => {
+        const result = await actions.updateArenaGeneral(ARENA, input);
+        expect(result.error).toBeTruthy();
+        expect(prisma.arena.updateMany).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('deleteArena()', () => {
+      it('deletes scoped to the caller, and reports a race when no row matches', async () => {
+        prisma.arena.deleteMany.mockResolvedValueOnce({ count: 1 });
+        const ok = await actions.deleteArena(ARENA);
+        expect(ok.ok).toBe(true);
+        expect(prisma.arena.deleteMany).toHaveBeenCalledWith({ where: { id: ARENA, ownerId: 'u1' } });
+
+        prisma.arena.deleteMany.mockResolvedValueOnce({ count: 0 });
+        const race = await actions.deleteArena(ARENA);
+        expect(race.error).toMatch(/Ownership changed/i);
       });
     });
 

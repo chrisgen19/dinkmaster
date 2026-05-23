@@ -6,6 +6,12 @@
 
   /* Header entrance — one orchestrated reveal on load, staggered per element. */
   --animate-header-rise: header-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+
+  /* Soft content reveal used by tab panels, modals, and the settings page. */
+  --animate-fade-in: fade-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+
+  /* Modal pop — a gentle scale-up from slightly small. */
+  --animate-scale-up: scale-up 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @keyframes header-rise {
@@ -19,9 +25,33 @@
   }
 }
 
-/* Respect users who prefer reduced motion: skip the entrance animation. */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-up {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Respect users who prefer reduced motion: skip entrance animations. */
 @media (prefers-reduced-motion: reduce) {
-  .animate-header-rise {
+  .animate-header-rise,
+  .animate-fade-in,
+  .animate-scale-up {
     animation: none !important;
   }
 }

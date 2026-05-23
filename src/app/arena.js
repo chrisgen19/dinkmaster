@@ -12,7 +12,6 @@ import {
   endMatch,
   addCourt,
   removeCourt,
-  resetArena,
   requestToJoin,
   updateArenaSchedule,
 } from './actions';
@@ -139,7 +138,6 @@ export default function Arena({
   const [newLastName, setNewLastName] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [activeTab, setActiveTab] = useState('courts');
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const [autoMix, setAutoMix] = useState(true);
   const [notification, setNotification] = useState('');
@@ -274,13 +272,6 @@ export default function Arena({
     run(() => removeCourt(arenaId, id));
   };
 
-  const confirmReset = () => {
-    setShowResetConfirm(false);
-    run(() => resetArena(arenaId));
-  };
-
-  // Only the owner edits the schedule (the server action is owner-gated too).
-  const isOwner = viewerRole === 'OWNER';
   const handleSaveSchedule = (next) => {
     startTransition(async () => {
       try {
@@ -410,12 +401,16 @@ export default function Arena({
         </div>
 
         {canManage && (
-          <button
-            onClick={() => setShowResetConfirm(true)}
-            className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-2 md:px-3.5 md:py-2.5 rounded-xl border border-red-200/60 transition-all font-semibold"
+          <Link
+            href={`/arena/${arenaId}/settings`}
+            className="inline-flex items-center gap-1.5 text-xs bg-slate-50 hover:bg-slate-100 text-slate-700 px-3 py-2 md:px-3.5 md:py-2.5 rounded-xl border border-slate-200/70 transition-all font-semibold"
           >
-            Reset Arena
-          </button>
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+            Settings
+          </Link>
         )}
 
         <AuthStatus />
@@ -754,7 +749,7 @@ export default function Arena({
                   </h3>
                   <p className="text-xs text-slate-500 mt-1.5">{describeSchedule(schedule)}</p>
                 </div>
-                {isOwner && (
+                {canManage && (
                   <button
                     onClick={() => setScheduleModalOpen(true)}
                     className="shrink-0 px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:text-emerald-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition"
@@ -1103,8 +1098,8 @@ export default function Arena({
         </div>
       </main>
 
-      {/* Schedule editor (owner only) */}
-      {scheduleModalOpen && isOwner && (
+      {/* Schedule editor (owner or organizer) */}
+      {scheduleModalOpen && canManage && (
         <ArenaScheduleModal
           schedule={schedule}
           onSave={handleSaveSchedule}
@@ -1115,39 +1110,6 @@ export default function Arena({
           isPending={isPending}
           error={scheduleError}
         />
-      )}
-
-      {/* Confirmation Reset Modal */}
-      {showResetConfirm && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 shadow-2xl animate-scale-up">
-            <div className="flex items-center space-x-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center">
-                ⚠️
-              </div>
-              <h3 className="text-base font-extrabold text-slate-900">Reset Arena Session?</h3>
-            </div>
-
-            <p className="text-sm text-slate-500 leading-relaxed mb-6">
-              This action will reset all active court matchups, wipe partnership diagnostics tracking records, clear match history logs, and reset the initial waiting line.
-            </p>
-
-            <div className="flex space-x-3 justify-end">
-              <button
-                onClick={() => setShowResetConfirm(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
-              >
-                Keep Current Session
-              </button>
-              <button
-                onClick={confirmReset}
-                className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-md shadow-red-500/10 transition"
-              >
-                Yes, Reset Arena
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* Score Entry Custom Modal */}
