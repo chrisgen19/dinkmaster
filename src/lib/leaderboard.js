@@ -130,13 +130,12 @@ export function computeWeeklyLeaderboard({ matches = [], schedule = {}, now, lim
       winPct: e.games ? e.wins / e.games : 0,
       lastWinAt: e.lastWinAt,
     }))
-    .filter((p) => p.wins > 0) // only players with at least one win can place
+    .filter((p) => p.wins > 0) // a wins-based board: only players with a win place
     .sort(
       (a, b) =>
         b.wins - a.wins || // most wins
-        b.winPct - a.winPct || // tie → higher win %
-        a.games - b.games || // then fewer games (more efficient)
-        b.lastWinAt - a.lastWinAt, // then most recent win
+        b.winPct - a.winPct || // tie → higher win % (already encodes games played)
+        b.lastWinAt - a.lastWinAt, // final, deterministic tie-break: most recent win
     );
 
   const leaders = ranked.slice(0, limit).map((p, i) => ({

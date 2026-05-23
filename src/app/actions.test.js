@@ -148,6 +148,7 @@ describe('arena server actions — authorization', () => {
 
       it.each([
         ['an out-of-range day', { days: [7] }],
+        ['a partial-numeric day string', { days: ['1x'] }],
         ['a malformed start time', { days: [1], start: '6pm' }],
         ['an end before the start', { days: [1], start: '22:00', end: '18:00' }],
         ['an unrecognized timezone', { days: [1], timezone: 'Mars/Olympus' }],

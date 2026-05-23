@@ -164,8 +164,7 @@ The **This Week** tab ranks the top 5 players by wins for the current week. Ever
 | Key | Tie-break reasoning |
 |-----|---------------------|
 | **Wins** (desc) | the headline metric |
-| **Win %** (desc) | among equal win counts, reward the more efficient player |
-| **Games** (asc) | fewer games for the same record ranks higher |
+| **Win %** (desc) | among equal win counts, reward the more efficient player — and since win % is `wins ÷ games`, equal wins + equal win % already implies equal games |
 | **Most recent win** (desc) | a final, deterministic tie-break so order never wobbles |
 
 Only players with **at least one win** appear, and the list is capped at five. Win % is shown rounded to a whole percent.

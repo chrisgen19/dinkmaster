@@ -19,7 +19,10 @@ export async function getWeeklyLeaderboard(arenaId, { now, limit = LEADERBOARD_S
     select: { scheduleDays: true, timezone: true },
   });
   const timeZone = arena?.timezone || DEFAULT_TIMEZONE;
-  const { start, end } = weekWindow(now ? new Date(now) : new Date(), timeZone);
+  // Capture one instant so the DB window and the in-memory ranking can't land
+  // on different weeks when a request straddles the Monday boundary.
+  const nowDate = now ? new Date(now) : new Date();
+  const { start, end } = weekWindow(nowDate, timeZone);
 
   const matches = await prisma.match.findMany({
     where: { arenaId, createdAt: { gte: start, lt: end } },
@@ -42,7 +45,7 @@ export async function getWeeklyLeaderboard(arenaId, { now, limit = LEADERBOARD_S
   return computeWeeklyLeaderboard({
     matches: shaped,
     schedule: { days: arena?.scheduleDays ?? [], timezone: timeZone },
-    now,
+    now: nowDate,
     limit,
   });
 }

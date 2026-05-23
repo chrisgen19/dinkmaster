@@ -279,13 +279,22 @@ export default function Arena({
   const isOwner = viewerRole === 'OWNER';
   const handleSaveSchedule = (next) => {
     startTransition(async () => {
-      const result = await updateArenaSchedule(arenaId, next);
-      if (result?.error) {
-        setErrorMsg(result.error);
-        return;
+      try {
+        const result = await updateArenaSchedule(arenaId, next);
+        if (result?.error) {
+          setErrorMsg(result.error);
+          return;
+        }
+        if (!result?.schedule) {
+          setErrorMsg('Failed to update schedule.');
+          return;
+        }
+        setErrorMsg('');
+        setSchedule(result.schedule);
+        setScheduleModalOpen(false);
+      } catch {
+        setErrorMsg('Failed to update schedule. Please try again.');
       }
-      setSchedule(result.schedule);
-      setScheduleModalOpen(false);
     });
   };
 

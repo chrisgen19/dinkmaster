@@ -60,9 +60,16 @@ export function ArenaScheduleModal({ schedule, onSave, onClose, isPending = fals
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 shadow-2xl animate-scale-up">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="arena-schedule-title"
+        className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 shadow-2xl animate-scale-up"
+      >
         <div className="mb-5">
-          <h3 className="text-base font-extrabold text-slate-900">Edit Play Schedule</h3>
+          <h3 id="arena-schedule-title" className="text-base font-extrabold text-slate-900">
+            Edit Play Schedule
+          </h3>
           <p className="text-xs text-slate-400 mt-1">
             Sets which days count toward this week&apos;s Player of the Week.
           </p>
@@ -124,18 +131,18 @@ export function ArenaScheduleModal({ schedule, onSave, onClose, isPending = fals
             <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
               Timezone
             </span>
-            <select
+            <input
+              list="arena-timezones"
               value={timezone}
               onChange={(e) => setTimezone(e.target.value)}
+              placeholder="e.g. Asia/Manila"
               className="w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 text-sm font-bold text-slate-800 focus:bg-white focus:border-emerald-500 outline-none transition"
-            >
-              {TIMEZONES.includes(timezone) ? null : <option value={timezone}>{timezone}</option>}
+            />
+            <datalist id="arena-timezones">
               {TIMEZONES.map((tz) => (
-                <option key={tz} value={tz}>
-                  {tz}
-                </option>
+                <option key={tz} value={tz} />
               ))}
-            </select>
+            </datalist>
           </label>
         </div>
 

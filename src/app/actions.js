@@ -227,10 +227,13 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
   if (guard.error) return { error: guard.error };
 
   const dayList = Array.isArray(days) ? days : [];
-  const normalizedDays = [...new Set(dayList.map((d) => parseInt(d, 10)))].sort((a, b) => a - b);
-  if (normalizedDays.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) {
+  // Strict parse: `parseInt` truncates "1x" → 1, which would pass the range
+  // check, so coerce via Number (NaN on any non-numeric suffix) instead.
+  const parsedDays = dayList.map((d) => (typeof d === 'string' ? Number(d.trim()) : d));
+  if (parsedDays.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) {
     return { error: 'Schedule days must be between Sunday (0) and Saturday (6).' };
   }
+  const normalizedDays = [...new Set(parsedDays)].sort((a, b) => a - b);
 
   const startTime = (start ?? '').trim() || null;
   const endTime = (end ?? '').trim() || null;

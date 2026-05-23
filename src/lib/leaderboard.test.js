@@ -55,6 +55,21 @@ describe('computeWeeklyLeaderboard', () => {
     expect(r.leaders[1]).toMatchObject({ rank: 2, wins: 3, games: 4, winPct: 75 });
   });
 
+  it('breaks an exact wins+win% tie by the most recent win', () => {
+    // e and f each finish 2 wins / 2 games (100%); f's last win is later, so
+    // f ranks first. (Equal wins + equal win% implies equal games, so the
+    // most-recent-win key is the meaningful final tie-break.)
+    const matches = [
+      match(['e', 'p1'], ['l1', 'l2'], 1, 18),
+      match(['e', 'p2'], ['l3', 'l4'], 1, 19), // e's last win: day 19
+      match(['f', 'q1'], ['m1', 'm2'], 1, 20),
+      match(['f', 'q2'], ['m3', 'm4'], 1, 21), // f's last win: day 21 (later)
+    ];
+    const r = computeWeeklyLeaderboard({ matches, schedule: UTC, now: NOW });
+    expect(r.leaders[0]).toMatchObject({ playerId: 'f', wins: 2, games: 2, winPct: 100 });
+    expect(r.leaders[1]).toMatchObject({ playerId: 'e', wins: 2, games: 2, winPct: 100 });
+  });
+
   it('excludes players with zero wins', () => {
     const r = computeWeeklyLeaderboard({
       matches: [match(['a', 'x'], ['b', 'y'], 1, 18)],
