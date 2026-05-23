@@ -49,9 +49,10 @@ function Wordmark({ className = 'text-xl' }) {
  * @param {object} props
  * @param {'home' | 'arena'} [props.variant] - Which left-side treatment to render.
  * @param {string} props.arenaName - Arena title (required when variant='arena').
+ * @param {string} [props.arenaSubtitle] - Optional one-line blurb under the arena title.
  * @param {React.ReactNode} [props.children] - Right-aligned actions.
  */
-export function SiteHeader({ variant = 'home', arenaName, children }) {
+export function SiteHeader({ variant = 'home', arenaName, arenaSubtitle, children }) {
   return (
     <header className="sticky top-0 z-50">
       {/* Brand accent hairline along the very top edge. */}
@@ -88,6 +89,11 @@ export function SiteHeader({ variant = 'home', arenaName, children }) {
                 <h1 className="font-display text-lg md:text-2xl font-extrabold tracking-tight text-slate-900 leading-tight truncate">
                   {arenaName}
                 </h1>
+                {arenaSubtitle && (
+                  <p className="text-[11px] md:text-xs text-slate-500 font-medium leading-tight truncate">
+                    {arenaSubtitle}
+                  </p>
+                )}
               </div>
             </div>
           ) : (

@@ -58,7 +58,6 @@ const PLAY = [
 ];
 // Owner-only gated (requireArenaOwner).
 const OWNER_ONLY = [
-  ['renameArena', () => actions.renameArena(ARENA, 'New')],
   ['updateMemberRole', () => actions.updateMemberRole(ARENA, 'u2', ROLES.ORGANIZER)],
   ['removeMember', () => actions.removeMember(ARENA, 'u2')],
   ['transferOwnership', () => actions.transferOwnership(ARENA, 'u2')],

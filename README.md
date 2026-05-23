@@ -116,7 +116,7 @@ Viewing any arena is public. Managing one depends on the caller's `ArenaMembersh
 
 - Arenas are public to browse but **join-gated**: a signed-in user **requests** to join (`requestToJoin`), and an owner or organizer **accepts** (`approveJoinRequest`) or **rejects** (`rejectJoinRequest`) it. On acceptance the user becomes a `MEMBER` and a queued player. Anyone can **create** their own arena (owner, no request needed).
 - Leaving (`leaveArena`) or being removed (`removeMember`) **deactivates** the user's `Player` (sets `leftAt`, off the rack) and drops their membership — stats and match history are kept, and approving a later request reactivates the same record.
-- Play actions, settings edits (`updateArenaGeneral`, `updateArenaSchedule`), reset, and join-request decisions are gated by `requireArenaManager(arenaId)` (owner or organizer); owner-only actions (`renameArena`, `updateMemberRole`, `removeMember`, `transferOwnership`, `linkPlayerToMember`, `deleteArena`) by `requireArenaOwner(arenaId)`.
+- Play actions, settings edits (`updateArenaGeneral`, `updateArenaSchedule`), reset, and join-request decisions are gated by `requireArenaManager(arenaId)` (owner or organizer); owner-only actions (`updateMemberRole`, `removeMember`, `transferOwnership`, `linkPlayerToMember`, `deleteArena`) by `requireArenaOwner(arenaId)`.
 - `Arena.ownerId` stays the canonical owner; the owner also has an `OWNER` membership row, kept in sync on transfer.
 
 ## Routing
@@ -233,4 +233,4 @@ prisma/            schema, migrations
 
 ## Security note
 
-Every mutating Server Action in `src/app/actions.js` is role-gated: play actions, settings edits (`updateArenaGeneral` / `updateArenaSchedule`), reset, and join-request decisions (`approveJoinRequest` / `rejectJoinRequest`) require `requireArenaManager` (owner or organizer), owner-only actions (`renameArena`, `updateMemberRole`, `removeMember`, `transferOwnership`, `linkPlayerToMember`, `deleteArena`) require `requireArenaOwner`, and both verify the session against `ArenaMembership` / `Arena.ownerId`. `createArena`, `requestToJoin`, and `leaveArena` only require a signed-in account.
+Every mutating Server Action in `src/app/actions.js` is role-gated: play actions, settings edits (`updateArenaGeneral` / `updateArenaSchedule`), reset, and join-request decisions (`approveJoinRequest` / `rejectJoinRequest`) require `requireArenaManager` (owner or organizer), owner-only actions (`updateMemberRole`, `removeMember`, `transferOwnership`, `linkPlayerToMember`, `deleteArena`) require `requireArenaOwner`, and both verify the session against `ArenaMembership` / `Arena.ownerId`. `createArena`, `requestToJoin`, and `leaveArena` only require a signed-in account.

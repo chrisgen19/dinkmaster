@@ -37,6 +37,7 @@ export default async function ArenaPage({ params }) {
       initialState={initialState}
       arenaId={arena.id}
       arenaName={arena.name}
+      description={arena.description ?? ''}
       schedule={{
         days: arena.scheduleDays,
         start: arena.scheduleStart,

@@ -191,23 +191,10 @@ export async function createArena(nameInput) {
   return { arena: { id: arena.id, name: arena.name } };
 }
 
-/** Rename an arena (owner only). */
-export async function renameArena(arenaId, nameInput) {
-  const guard = await requireArenaOwner(arenaId);
-  if (guard.error) return { error: guard.error };
-
-  const name = (nameInput ?? '').trim();
-  if (name.length === 0) return { error: 'Please enter an arena name.' };
-  if (name.length > 80) return { error: 'Arena name is too long (max 80 characters).' };
-
-  await prisma.arena.update({ where: { id: arenaId }, data: { name } });
-  return { arena: { id: arenaId, name } };
-}
-
 /**
  * Update an arena's General settings — name (required) and an optional
- * description blurb. Manager-gated (owner or organizer), unlike the legacy
- * owner-only `renameArena`. Empty description is stored as null.
+ * description blurb. Manager-gated (owner or organizer). Empty description is
+ * stored as null.
  */
 export async function updateArenaGeneral(arenaId, { name: nameInput, description: descInput } = {}) {
   const guard = await requireArenaManager(arenaId);
