@@ -8,8 +8,12 @@
 
 /** Default IANA zone used when an arena has no timezone set. */
 export const DEFAULT_TIMEZONE = 'Asia/Manila';
-/** How many players the leaderboard surfaces. */
-export const LEADERBOARD_SIZE = 5;
+/**
+ * Default top-N for the weekly leaderboard. Used only as the fallback when the
+ * caller (and the per-arena `leaderboardSize` setting in
+ * `leaderboard-server.js`) don't supply an explicit `limit`.
+ */
+export const DEFAULT_LEADERBOARD_SIZE = 5;
 
 /** Local wall-clock parts of an instant in a given IANA timezone. */
 function zonedParts(instant, timeZone) {
@@ -104,7 +108,7 @@ export function computeWeeklyLeaderboard({
   schedule = {},
   countOffSchedule = true,
   now,
-  limit = LEADERBOARD_SIZE,
+  limit = DEFAULT_LEADERBOARD_SIZE,
 } = {}) {
   const timeZone = schedule.timezone || DEFAULT_TIMEZONE;
   const days = Array.isArray(schedule.days) ? schedule.days : [];
