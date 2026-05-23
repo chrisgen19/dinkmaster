@@ -44,6 +44,10 @@ export default async function ArenaPage({ params }) {
         end: arena.scheduleEnd,
         timezone: arena.timezone,
       }}
+      matchmaking={{
+        starveThreshold: arena.starveThreshold,
+        emergencyWait: arena.emergencyWait,
+      }}
       canManage={canManage}
       viewerRole={viewerRole}
       viewerUserId={user?.id ?? null}

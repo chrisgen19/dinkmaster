@@ -3,7 +3,7 @@
 import { useState, useTransition, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { updateArenaGeneral, updateArenaSchedule, resetArena, transferOwnership, deleteArena } from './actions';
+import { updateArenaGeneral, updateArenaSchedule, updateArenaMatchmaking, resetArena, transferOwnership, deleteArena } from './actions';
 import { ScheduleFields } from './schedule-fields';
 
 const inputClass =
@@ -37,6 +37,7 @@ function useSavedFlag(ms = 2500) {
 const SECTIONS = [
   { id: 'general', label: 'General' },
   { id: 'schedule', label: 'Schedule' },
+  { id: 'matchmaking', label: 'Matchmaking' },
   { id: 'danger', label: 'Danger Zone' },
 ];
 
@@ -50,11 +51,12 @@ const SECTIONS = [
  * @param {string} props.arenaName
  * @param {string} props.description
  * @param {{days:number[], start:string|null, end:string|null, timezone:string}} props.schedule
+ * @param {{starveThreshold:number, emergencyWait:number}} props.matchmaking
  * @param {boolean} props.isOwner
  * @param {string|null} props.viewerUserId
  * @param {Array<{userId:string, name:string, role:string}>} props.members
  */
-export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwner, viewerUserId, members }) {
+export function ArenaSettings({ arenaId, arenaName, description, schedule, matchmaking, isOwner, viewerUserId, members }) {
   const [section, setSection] = useState('general');
   // Defensive: every section is shown to all managers, so this never shrinks
   // today — but guard against an unknown `section` id rendering a blank panel.
@@ -139,6 +141,7 @@ export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwn
             <GeneralSection arenaId={arenaId} initialName={arenaName} initialDescription={description} />
           )}
           {effectiveSection === 'schedule' && <ScheduleSection arenaId={arenaId} schedule={schedule} />}
+          {effectiveSection === 'matchmaking' && <MatchmakingSection arenaId={arenaId} matchmaking={matchmaking} />}
           {effectiveSection === 'danger' && (
             <DangerZone arenaId={arenaId} arenaName={arenaName} isOwner={isOwner} viewerUserId={viewerUserId} members={members} />
           )}
@@ -273,6 +276,84 @@ function ScheduleSection({ arenaId, schedule }) {
           className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition disabled:opacity-50"
         >
           {isPending ? 'Saving…' : 'Save schedule'}
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+function MatchmakingSection({ arenaId, matchmaking }) {
+  const router = useRouter();
+  const [starve, setStarve] = useState(matchmaking.starveThreshold);
+  const [emergency, setEmergency] = useState(matchmaking.emergencyWait);
+  const [error, setError] = useState('');
+  const [saved, flashSaved, clearSaved] = useSavedFlag();
+  const [isPending, startTransition] = useTransition();
+
+  const save = () => {
+    clearSaved();
+    // Mirror the server validation so users see issues without a round-trip.
+    if (!Number.isInteger(starve) || starve < 1) return setError('Starve threshold must be a whole number ≥ 1.');
+    if (!Number.isInteger(emergency) || emergency < 1) return setError('Emergency wait must be a whole number ≥ 1.');
+    if (emergency < starve) return setError('Emergency wait must be at least the starve threshold.');
+    setError('');
+    startTransition(async () => {
+      try {
+        const result = await updateArenaMatchmaking(arenaId, { starveThreshold: starve, emergencyWait: emergency });
+        if (result?.error) return setError(result.error);
+        flashSaved();
+        router.refresh();
+      } catch {
+        setError('Failed to save matchmaking. Please try again.');
+      }
+    });
+  };
+
+  return (
+    <Card title="Matchmaking" hint="How long a player waits before they're promoted in the auto-mix rotation. Lower values surface waiting players sooner.">
+      <div className="space-y-4 max-w-xl">
+        <label className="block">
+          <span className={labelClass}>
+            Starve threshold (rounds)
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={starve}
+            onChange={(e) => setStarve(Number(e.target.value))}
+            className={inputClass}
+          />
+          <span className="block text-[10px] text-slate-400 mt-1">
+            After this many waiting rounds, the ⏳ badge appears and the player is always queued ahead of fresh players.
+          </span>
+        </label>
+
+        <label className="block">
+          <span className={labelClass}>
+            Emergency wait (rounds)
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={emergency}
+            onChange={(e) => setEmergency(Number(e.target.value))}
+            className={inputClass}
+          />
+          <span className="block text-[10px] text-slate-400 mt-1">
+            At this point the player is in the emergency band — strictly longest-waiting first. Must be at least the starve threshold.
+          </span>
+        </label>
+      </div>
+      <Status error={error} saved={saved} />
+      <div className="mt-5">
+        <button
+          onClick={save}
+          disabled={isPending}
+          className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition disabled:opacity-50"
+        >
+          {isPending ? 'Saving…' : 'Save matchmaking'}
         </button>
       </div>
     </Card>

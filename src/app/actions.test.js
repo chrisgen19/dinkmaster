@@ -53,6 +53,7 @@ const PLAY = [
   ['resetArena', () => actions.resetArena(ARENA)],
   ['updateArenaGeneral', () => actions.updateArenaGeneral(ARENA, { name: 'New' })],
   ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
+  ['updateArenaMatchmaking', () => actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4 })],
   ['approveJoinRequest', () => actions.approveJoinRequest(ARENA, 'u2')],
   ['rejectJoinRequest', () => actions.rejectJoinRequest(ARENA, 'u2')],
 ];
@@ -202,6 +203,40 @@ describe('arena server actions — authorization', () => {
         ['an over-long description', { name: 'ok', description: 'y'.repeat(281) }],
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaGeneral(ARENA, input);
+        expect(result.error).toBeTruthy();
+        expect(prisma.arena.updateMany).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('updateArenaMatchmaking()', () => {
+      beforeEach(() => {
+        prisma.arena.updateMany.mockResolvedValue({ count: 1 });
+      });
+
+      it('persists valid thresholds and coerces numeric strings', async () => {
+        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: '3', emergencyWait: '6' });
+        expect(result.error).toBeUndefined();
+        expect(prisma.arena.updateMany).toHaveBeenCalledWith({
+          where: { id: ARENA },
+          data: { starveThreshold: 3, emergencyWait: 6 },
+        });
+        expect(result.matchmaking).toEqual({ starveThreshold: 3, emergencyWait: 6 });
+      });
+
+      it('reports a clean error when the arena no longer exists', async () => {
+        prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
+        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4 });
+        expect(result.error).toMatch(/no longer exists/i);
+      });
+
+      it.each([
+        ['a zero starve threshold', { starveThreshold: 0, emergencyWait: 4 }],
+        ['a fractional starve threshold', { starveThreshold: 2.5, emergencyWait: 4 }],
+        ['a non-numeric starve threshold', { starveThreshold: 'lots', emergencyWait: 4 }],
+        ['an emergency wait below the starve threshold', { starveThreshold: 4, emergencyWait: 2 }],
+        ['an out-of-range emergency wait', { starveThreshold: 2, emergencyWait: 999 }],
+      ])('rejects %s and writes nothing', async (_label, input) => {
+        const result = await actions.updateArenaMatchmaking(ARENA, input);
         expect(result.error).toBeTruthy();
         expect(prisma.arena.updateMany).not.toHaveBeenCalled();
       });

@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { getState } from '@/lib/data';
 import { requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
 import { ROLES } from '@/lib/roles';
-import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
+import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { computeMatchRatings, RATING_BASELINE } from '@/lib/rating';
 
 /** Canonical (sorted) pair so each partnership has exactly one row. */
@@ -277,6 +277,46 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
   return { schedule: { days: normalizedDays, start: startTime, end: endTime, timezone: tz } };
+}
+
+/**
+ * Reasonable bounds on the matchmaking thresholds. The lower bound is 1
+ * (zero would mean "everyone is protected" — useless); the upper bound
+ * stops a typo from creating a runaway value.
+ */
+const MAX_WAIT_THRESHOLD = 50;
+
+/**
+ * Update an arena's matchmaking thresholds — the wait counts that promote a
+ * player into the protected (⏳) and emergency bands. Manager-gated.
+ * `emergencyWait` must be ≥ `starveThreshold` so the bands remain ordered.
+ */
+export async function updateArenaMatchmaking(
+  arenaId,
+  { starveThreshold: starveInput, emergencyWait: emergencyInput } = {},
+) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  const starve = Number(starveInput);
+  const emergency = Number(emergencyInput);
+
+  if (!Number.isInteger(starve) || starve < 1 || starve > MAX_WAIT_THRESHOLD) {
+    return { error: `Starve threshold must be a whole number between 1 and ${MAX_WAIT_THRESHOLD}.` };
+  }
+  if (!Number.isInteger(emergency) || emergency < 1 || emergency > MAX_WAIT_THRESHOLD) {
+    return { error: `Emergency wait must be a whole number between 1 and ${MAX_WAIT_THRESHOLD}.` };
+  }
+  if (emergency < starve) {
+    return { error: 'Emergency wait must be at least the starve threshold.' };
+  }
+
+  const updated = await prisma.arena.updateMany({
+    where: { id: arenaId },
+    data: { starveThreshold: starve, emergencyWait: emergency },
+  });
+  if (updated.count === 0) return { error: 'This arena no longer exists.' };
+  return { matchmaking: { starveThreshold: starve, emergencyWait: emergency } };
 }
 
 // --- Arena play (owner-gated, scoped by arenaId) --------------------------
@@ -664,6 +704,14 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
   const queuedCount = await prisma.player.count({
     where: { arenaId, leftAt: null, queueOrder: { not: null } },
   });
+  // Per-arena matchmaking thresholds — fall back to the shared defaults if the
+  // arena row was somehow deleted between the finish and this read.
+  const arenaConfig = await prisma.arena.findUnique({
+    where: { id: arenaId },
+    select: { starveThreshold: true, emergencyWait: true },
+  });
+  const starveThreshold = arenaConfig?.starveThreshold ?? DEFAULT_STARVE_THRESHOLD;
+  const emergencyWait = arenaConfig?.emergencyWait ?? DEFAULT_EMERGENCY_WAIT;
 
   let notification = '';
   // Mix the whole rack on every finish (when enabled and more than one court's
@@ -685,7 +733,7 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
       // played less goes ahead but a late joiner can't hog), then a random
       // tie-break for variety among equals.
       const bandOf = (w) =>
-        w >= EMERGENCY_WAIT ? 2 : w >= STARVE_THRESHOLD ? 1 : 0;
+        w >= emergencyWait ? 2 : w >= starveThreshold ? 1 : 0;
       const scored = queued
         .map((p) => ({
           id: p.id,

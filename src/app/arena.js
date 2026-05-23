@@ -15,7 +15,7 @@ import {
   requestToJoin,
   updateArenaSchedule,
 } from './actions';
-import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
+import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { eloToDupr } from '@/lib/rating';
 import { computeWeeklyLeaderboard } from '@/lib/leaderboard';
 import { AuthStatus } from './auth-status';
@@ -113,6 +113,7 @@ export default function Arena({
   arenaName,
   description = '',
   schedule: initialSchedule = { days: [], start: null, end: null, timezone: 'Asia/Manila' },
+  matchmaking: matchmakingProp = { starveThreshold: DEFAULT_STARVE_THRESHOLD, emergencyWait: DEFAULT_EMERGENCY_WAIT },
   canManage,
   viewerRole,
   viewerUserId,
@@ -601,10 +602,10 @@ export default function Arena({
                                 you
                               </span>
                             )}
-                            {player.waitRounds >= STARVE_THRESHOLD && (
+                            {player.waitRounds >= matchmakingProp.starveThreshold && (
                               <span
                                 className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
-                                  player.waitRounds >= EMERGENCY_WAIT
+                                  player.waitRounds >= matchmakingProp.emergencyWait
                                     ? 'bg-red-100 text-red-700'
                                     : 'bg-amber-100 text-amber-700'
                                 }`}
