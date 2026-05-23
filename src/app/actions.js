@@ -204,6 +204,52 @@ export async function renameArena(arenaId, nameInput) {
   return { arena: { id: arenaId, name } };
 }
 
+/** "HH:MM" 24-hour clock, e.g. "06:00" or "22:30". */
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** Whether a string is a timezone Intl can resolve (rejects typos/injection). */
+function isValidTimeZone(tz) {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Set an arena's recurring play schedule (owner only) — powers the
+ * schedule-aware weekly leaderboard. `days` are weekday numbers (0 = Sunday …
+ * 6 = Saturday); `start`/`end` are "HH:MM" strings or empty for unset.
+ */
+export async function updateArenaSchedule(arenaId, { days, start, end, timezone } = {}) {
+  const guard = await requireArenaOwner(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  const dayList = Array.isArray(days) ? days : [];
+  const normalizedDays = [...new Set(dayList.map((d) => parseInt(d, 10)))].sort((a, b) => a - b);
+  if (normalizedDays.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) {
+    return { error: 'Schedule days must be between Sunday (0) and Saturday (6).' };
+  }
+
+  const startTime = (start ?? '').trim() || null;
+  const endTime = (end ?? '').trim() || null;
+  if (startTime && !TIME_RE.test(startTime)) return { error: 'Start time must be in HH:MM format.' };
+  if (endTime && !TIME_RE.test(endTime)) return { error: 'End time must be in HH:MM format.' };
+  if (startTime && endTime && endTime <= startTime) {
+    return { error: 'End time must be after start time.' };
+  }
+
+  const tz = (timezone ?? '').trim() || 'Asia/Manila';
+  if (!isValidTimeZone(tz)) return { error: 'Unrecognized timezone.' };
+
+  await prisma.arena.update({
+    where: { id: arenaId },
+    data: { scheduleDays: normalizedDays, scheduleStart: startTime, scheduleEnd: endTime, timezone: tz },
+  });
+  return { schedule: { days: normalizedDays, start: startTime, end: endTime, timezone: tz } };
+}
+
 // --- Arena play (owner-gated, scoped by arenaId) --------------------------
 
 /** Add one player (first name required, last name optional) to the bottom of the rack. */

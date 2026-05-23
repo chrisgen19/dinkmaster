@@ -61,6 +61,7 @@ const OWNER_ONLY = [
   ['removeMember', () => actions.removeMember(ARENA, 'u2')],
   ['transferOwnership', () => actions.transferOwnership(ARENA, 'u2')],
   ['linkPlayerToMember', () => actions.linkPlayerToMember(ARENA, 'p1', 'u2')],
+  ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
 ];
 // Any signed-in user (requireUser).
 const USER_GATED = [
@@ -118,6 +119,43 @@ describe('arena server actions — authorization', () => {
     it('addPlayer() with a first name proceeds past the gate to the transaction', async () => {
       await actions.addPlayer(ARENA, 'Alice', '');
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+
+    describe('updateArenaSchedule()', () => {
+      it('normalizes days (dedupes + sorts) and persists a valid schedule', async () => {
+        const result = await actions.updateArenaSchedule(ARENA, {
+          days: [5, 1, 3, 1],
+          start: '18:00',
+          end: '22:00',
+          timezone: 'Asia/Manila',
+        });
+        expect(result.error).toBeUndefined();
+        expect(prisma.arena.update).toHaveBeenCalledWith({
+          where: { id: ARENA },
+          data: { scheduleDays: [1, 3, 5], scheduleStart: '18:00', scheduleEnd: '22:00', timezone: 'Asia/Manila' },
+        });
+        expect(result.schedule.days).toEqual([1, 3, 5]);
+      });
+
+      it('defaults an empty timezone to Asia/Manila and allows empty times', async () => {
+        const result = await actions.updateArenaSchedule(ARENA, { days: [], start: '', end: '' });
+        expect(result.error).toBeUndefined();
+        expect(prisma.arena.update).toHaveBeenCalledWith({
+          where: { id: ARENA },
+          data: { scheduleDays: [], scheduleStart: null, scheduleEnd: null, timezone: 'Asia/Manila' },
+        });
+      });
+
+      it.each([
+        ['an out-of-range day', { days: [7] }],
+        ['a malformed start time', { days: [1], start: '6pm' }],
+        ['an end before the start', { days: [1], start: '22:00', end: '18:00' }],
+        ['an unrecognized timezone', { days: [1], timezone: 'Mars/Olympus' }],
+      ])('rejects %s and writes nothing', async (_label, input) => {
+        const result = await actions.updateArenaSchedule(ARENA, input);
+        expect(result.error).toBeTruthy();
+        expect(prisma.arena.update).not.toHaveBeenCalled();
+      });
     });
 
     it('removePlayer() scopes both deletes to the arena (no cross-arena delete)', async () => {

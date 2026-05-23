@@ -11,6 +11,7 @@ Smart pickleball **paddle-stacking & partnership-mixing arena**. Register player
 - **Waiting badge** — a `⏳ N` badge appears on players who've waited ≥ 2 rounds (amber), turning red at ≥ 4, so you can see who's overdue.
 - **Match log & stats** — full history of finished matches (with snapshotted names that survive player deletion) plus per-player games/wins/losses.
 - **Skill rating** — every player carries an Elo-based **skill rating**, shown DUPR-style on a 2.0–8.0 scale, that moves after each finished match. Surfaced in the per-arena **My Stats** tab and the global **/profile** page.
+- **Player of the Week** — a **This Week** tab ranks the top 5 players by wins for the current scheduled week (everyone who played is eligible; ties broken by win %). It's derived live from match history, so it updates on every score. Owners set the arena's recurring **schedule** (play days + time window + timezone) which defines the week; the viewer's own weekly wins/rank also appear on **/profile**.
 
 ## How the rotation algorithm works
 
@@ -86,7 +87,7 @@ Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM
 
 Defined in [`prisma/schema.prisma`](prisma/schema.prisma):
 
-- **Arena** — an isolated session owned by a `User`. Players, courts, matches, and partnerships are all scoped by `arenaId`.
+- **Arena** — an isolated session owned by a `User`. Players, courts, matches, and partnerships are all scoped by `arenaId`. Also carries a recurring **schedule** (`scheduleDays` 0–6, `scheduleStart`/`scheduleEnd` `"HH:MM"`, `timezone`) that defines the Mon–Sun window for the weekly **Player of the Week** leaderboard.
 - **Player** — a rack entry: `firstName`/`lastName`, `gamesPlayed`, `wins`, `losses`, `queueOrder` (null when not in the rack), `waitRounds`, `gamesOffset` (games credited at join so late joiners rotate as peers, not catch-up), `rating` (Elo skill rating, see [Skill rating](#skill-rating)). `userId` links the player to a registered account; it is null for temporary walk-in players. `leftAt` marks a departed member: the row (stats + history) is kept but excluded from the active rack, and a rejoin reactivates it.
 - **Court** + **CourtSlot** — a court's live status and the four players assigned to it (a player can be on at most one court — DB-enforced).
 - **Match** + **MatchPlayer** — finished-match history with snapshotted player names.
@@ -137,6 +138,7 @@ DINKMASTER is being built toward a **multi-tenant, multi-arena** system in phase
 | **4 — Player ↔ User linking** | `Player.userId` links rack entries to accounts; creating or joining an arena auto-adds you as a queued player; owners can link walk-ins to members; per-arena **My Stats** tab and a global **/profile** page. Temporary players kept for walk-ins. | ✅ Done |
 | **5 — Join approval & history retention** | Arenas are public to browse but join-gated: anyone **requests** to join and an owner/organizer accepts or rejects via the Members tab. Leaving/removal **deactivates** the `Player` (`leftAt`) instead of deleting it, so stats & match history survive and a rejoin reclaims them; `/profile` still lists left arenas. | ✅ Done |
 | **6 — Skill rating** | Elo-based per-player rating updated at the end of each match; DUPR-style 2.0–8.0 display; surfaced in **My Stats** and **/profile**. | ✅ Done |
+| **7 — Player of the Week** | Per-arena recurring **schedule** (days/time/timezone, owner-set); a **This Week** tab ranking the top 5 by wins for the scheduled week, derived live from match history; weekly wins/rank on **/profile**. | ✅ Done |
 
 Phase tracking and detailed scope live in the GitHub issues.
 
@@ -175,6 +177,8 @@ src/
     roles.js       Role constants (OWNER/ORGANIZER/MEMBER) + helpers
     matchmaking.js Shared thresholds/weights
     rating.js      Elo skill-rating math + DUPR-style display mapping
+    leaderboard.js Pure weekly-leaderboard ranking + schedule week-window math (client-safe)
+    leaderboard-server.js  DB-backed getWeeklyLeaderboard() reader
     auth.js        Better Auth server instance
     auth-client.js Better Auth browser client
     session.js     getCurrentUser() / requireUser() / requireArenaOwner() / requireArenaManager()

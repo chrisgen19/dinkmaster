@@ -18,6 +18,18 @@ model Arena {
   ownerId   String
   createdAt DateTime @default(now())
 
+  // Recurring play schedule — powers the schedule-aware weekly leaderboard
+  // ("This Week" / Player of the Week). `scheduleDays` holds weekday numbers
+  // (0 = Sunday … 6 = Saturday, matching JS `Date.getDay()`); empty = no
+  // schedule set, so the leaderboard counts every day of the week.
+  // `scheduleStart`/`scheduleEnd` are local "HH:MM" 24h strings (display only,
+  // not used to clip matches). `timezone` is an IANA zone used to compute the
+  // Mon–Sun week boundary; defaults to the project's primary locale.
+  scheduleDays  Int[]   @default([])
+  scheduleStart String?
+  scheduleEnd   String?
+  timezone      String  @default("Asia/Manila")
+
   owner        User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   players      Player[]
   courts       Court[]

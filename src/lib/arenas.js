@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { getWeeklyLeaderboard } from '@/lib/leaderboard-server';
 
 /**
  * List every arena for the public directory, with owner and content counts.
@@ -123,8 +124,8 @@ export async function hasPendingJoinRequest(arenaId, userId) {
  * the global `/profile` page.
  * @param {string} userId
  * @returns {Promise<{
- *   totals:{arenas:number,gamesPlayed:number,wins:number,losses:number,winPct:number,rating:number|null},
- *   arenas:Array<{arenaId:string,arenaName:string,gamesPlayed:number,wins:number,losses:number,rating:number,inQueue:boolean,active:boolean}>,
+ *   totals:{arenas:number,gamesPlayed:number,wins:number,losses:number,winPct:number,rating:number|null,weeklyWins:number,weeklyArenasLed:number},
+ *   arenas:Array<{arenaId:string,arenaName:string,gamesPlayed:number,wins:number,losses:number,rating:number,inQueue:boolean,active:boolean,weeklyWins:number,weeklyRank:number|null}>,
  *   recentMatches:Array<{matchId:string,arenaName:string,courtName:string,won:boolean,scoreFor:number,scoreAgainst:number,timestamp:string}>
  * }>}
  */
@@ -149,16 +150,41 @@ export async function getUserPlayerStats(userId) {
   // computing a true per-arena position would need every arena's full queue.
   // The profile only needs whether the player is currently racked, so expose
   // a boolean rather than a misleading number.
-  const arenas = players.map((p) => ({
-    arenaId: p.arenaId,
-    arenaName: p.arena.name,
-    gamesPlayed: p.gamesPlayed,
-    wins: p.wins,
-    losses: p.losses,
-    rating: p.rating, // internal Elo; the UI maps it to a DUPR display value
-    inQueue: p.queueOrder !== null,
-    active: p.leftAt === null, // false = arena the user has left (history kept)
-  }));
+  // This week's standing per active arena: run the same weekly leaderboard the
+  // arena tab shows and pick out this user's row (wins + rank). Departed arenas
+  // are skipped — a left player isn't competing this week.
+  const weeklyByArena = new Map();
+  await Promise.all(
+    players
+      .filter((p) => p.leftAt === null)
+      .map(async (p) => {
+        const board = await getWeeklyLeaderboard(p.arenaId, { limit: Infinity });
+        const me = board.leaders.find((l) => l.playerId === p.id);
+        weeklyByArena.set(p.arenaId, { wins: me?.wins ?? 0, rank: me?.rank ?? null });
+      }),
+  );
+
+  const arenas = players.map((p) => {
+    const weekly = p.leftAt === null ? weeklyByArena.get(p.arenaId) : null;
+    return {
+      arenaId: p.arenaId,
+      arenaName: p.arena.name,
+      gamesPlayed: p.gamesPlayed,
+      wins: p.wins,
+      losses: p.losses,
+      rating: p.rating, // internal Elo; the UI maps it to a DUPR display value
+      inQueue: p.queueOrder !== null,
+      active: p.leftAt === null, // false = arena the user has left (history kept)
+      weeklyWins: weekly?.wins ?? 0,
+      weeklyRank: weekly?.rank ?? null,
+    };
+  });
+
+  // Weekly headline: total wins this week and how many arenas the user leads.
+  const weekly = {
+    wins: [...weeklyByArena.values()].reduce((acc, w) => acc + w.wins, 0),
+    arenasLed: [...weeklyByArena.values()].filter((w) => w.rank === 1).length,
+  };
 
   // Global rating: a match-weighted average of the user's active arena Elos
   // (weight = games played there). An unconverged baseline row in a new or
@@ -206,6 +232,8 @@ export async function getUserPlayerStats(userId) {
       losses: sum.losses,
       winPct: decided ? Math.round((sum.wins / decided) * 100) : 0,
       rating, // internal Elo (match-weighted); null when no games played yet
+      weeklyWins: weekly.wins,
+      weeklyArenasLed: weekly.arenasLed,
     },
     arenas,
     recentMatches,
