@@ -55,7 +55,6 @@ const PLAY = [
   ['updateArenaGeneral', () => actions.updateArenaGeneral(ARENA, { name: 'New' })],
   ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
   ['updateArenaMatchmaking', () => actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4 })],
-  ['updateArenaMatchDefaults', () => actions.updateArenaMatchDefaults(ARENA, { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true })],
   ['approveJoinRequest', () => actions.approveJoinRequest(ARENA, 'u2')],
   ['rejectJoinRequest', () => actions.rejectJoinRequest(ARENA, 'u2')],
 ];
@@ -240,46 +239,6 @@ describe('arena server actions — authorization', () => {
         ['an out-of-range emergency wait', { starveThreshold: 2, emergencyWait: MAX_WAIT_THRESHOLD + 1 }],
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaMatchmaking(ARENA, input);
-        expect(result.error).toBeTruthy();
-        expect(prisma.arena.updateMany).not.toHaveBeenCalled();
-      });
-    });
-
-    describe('updateArenaMatchDefaults()', () => {
-      beforeEach(() => {
-        prisma.arena.updateMany.mockResolvedValue({ count: 1 });
-      });
-
-      it('persists valid defaults and coerces "true"/"false" string booleans', async () => {
-        const result = await actions.updateArenaMatchDefaults(ARENA, {
-          targetScore: '15',
-          autoMixDefault: 'false',
-          leaderboardSize: '10',
-          countOffScheduleGames: 'true',
-        });
-        expect(result.error).toBeUndefined();
-        expect(prisma.arena.updateMany).toHaveBeenCalledWith({
-          where: { id: ARENA },
-          data: { targetScore: 15, autoMixDefault: false, leaderboardSize: 10, countOffScheduleGames: true },
-        });
-      });
-
-      it('reports a clean error when the arena no longer exists', async () => {
-        prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
-        const result = await actions.updateArenaMatchDefaults(ARENA, {
-          targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true,
-        });
-        expect(result.error).toMatch(/no longer exists/i);
-      });
-
-      it.each([
-        ['a zero target score', { targetScore: 0, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true }],
-        ['a fractional target score', { targetScore: 11.5, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true }],
-        ['an out-of-range leaderboard size', { targetScore: 11, autoMixDefault: true, leaderboardSize: 999, countOffScheduleGames: true }],
-        ['a non-boolean autoMixDefault', { targetScore: 11, autoMixDefault: 'maybe', leaderboardSize: 5, countOffScheduleGames: true }],
-        ['a non-boolean countOffScheduleGames', { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: 1 }],
-      ])('rejects %s and writes nothing', async (_label, input) => {
-        const result = await actions.updateArenaMatchDefaults(ARENA, input);
         expect(result.error).toBeTruthy();
         expect(prisma.arena.updateMany).not.toHaveBeenCalled();
       });

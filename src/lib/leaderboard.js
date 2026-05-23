@@ -8,12 +8,8 @@
 
 /** Default IANA zone used when an arena has no timezone set. */
 export const DEFAULT_TIMEZONE = 'Asia/Manila';
-/**
- * Default top-N for the weekly leaderboard. Used only as the fallback when the
- * caller (and the per-arena `leaderboardSize` setting in
- * `leaderboard-server.js`) don't supply an explicit `limit`.
- */
-export const DEFAULT_LEADERBOARD_SIZE = 5;
+/** How many players the leaderboard surfaces. */
+export const LEADERBOARD_SIZE = 5;
 
 /** Local wall-clock parts of an instant in a given IANA timezone. */
 function zonedParts(instant, timeZone) {
@@ -76,12 +72,6 @@ export function weekWindow(now, timeZone) {
 
 const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : (p?.firstName ?? 'Unknown'));
 
-/** Weekday number (0=Sun … 6=Sat, matching JS getDay()) of an instant in `tz`. */
-function zonedWeekday(instant, tz) {
-  const p = zonedParts(instant, tz);
-  return new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay();
-}
-
 /**
  * Rank players by wins this scheduled week. Pure: same input → same output.
  *
@@ -92,7 +82,6 @@ function zonedWeekday(instant, tz) {
  *     score1: number, score2: number, timestamp: string,
  *   }>,
  *   schedule?: {days?: number[], timezone?: string},
- *   countOffSchedule?: boolean,
  *   now?: Date|string,
  *   limit?: number,
  * }} input
@@ -103,33 +92,20 @@ function zonedWeekday(instant, tz) {
  *   hasData: boolean,
  * }}
  */
-export function computeWeeklyLeaderboard({
-  matches = [],
-  schedule = {},
-  countOffSchedule = true,
-  now,
-  limit = DEFAULT_LEADERBOARD_SIZE,
-} = {}) {
+export function computeWeeklyLeaderboard({ matches = [], schedule = {}, now, limit = LEADERBOARD_SIZE } = {}) {
   const timeZone = schedule.timezone || DEFAULT_TIMEZONE;
   const days = Array.isArray(schedule.days) ? schedule.days : [];
   const nowDate = now ? new Date(now) : new Date();
   const { start, end } = weekWindow(nowDate, timeZone);
 
-  // Off-schedule games count by default. If the arena opts out AND has at
-  // least one play day set, restrict the tally to matches that fall on a
-  // scheduled weekday in the arena's timezone (an empty `days` is treated as
-  // "every day" — same as the schedule's display logic).
-  const daySet = days.length > 0 ? new Set(days) : null;
-  const filterByDay = !countOffSchedule && daySet !== null;
-
   // Tally wins/games per player across every match inside this week's window.
-  // The schedule's timezone sets the Mon–Sun boundary; whether off-schedule
-  // games also count is controlled by `countOffSchedule` (per-arena setting).
+  // The schedule sets the timezone (week boundary) and is shown for context,
+  // but does NOT exclude off-schedule games — any game played this week counts,
+  // so the board is never empty while play is happening.
   const tally = new Map(); // playerId -> { name, wins, games, lastWinAt }
   for (const m of matches) {
     const when = new Date(m.timestamp);
     if (when < start || when >= end) continue;
-    if (filterByDay && !daySet.has(zonedWeekday(when, timeZone))) continue;
 
     const winningTeam = m.score1 > m.score2 ? m.team1 : m.score2 > m.score1 ? m.team2 : null;
     const winnerIds = new Set((winningTeam ?? []).map((p) => p.id));
