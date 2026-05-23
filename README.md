@@ -153,6 +153,31 @@ Every player carries a **skill rating** that moves after each finished match.
 
 > **Known limitation (V1):** teammates share one Elo delta and `fillCourt` builds teams to minimise repeated partnerships, not to balance skill — so a player carried by a stronger partner can gain unearned rating. Fixing this needs a per-player performance signal beyond the final score; it is left to a future phase.
 
+## Player of the Week
+
+The **This Week** tab ranks the top 5 players by wins for the current week. Everyone who played is eligible — registered members *and* temporary walk-ins.
+
+**Where the data comes from.** Nothing new is stored per win. The leaderboard is **derived** from existing finished-match history: for each `Match` in the window, the winning team is simply the one with the higher score (`score1` vs `score2`), and every `MatchPlayer` on that team gets a win. Ties (equal scores) count as a game played but no win. Because it reads the same `matchHistory` the client already holds, the board **recomputes on every score with no extra request** — finish a match and the standings move immediately.
+
+**Ranking.** Players are sorted by, in order:
+
+| Key | Tie-break reasoning |
+|-----|---------------------|
+| **Wins** (desc) | the headline metric |
+| **Win %** (desc) | among equal win counts, reward the more efficient player |
+| **Games** (asc) | fewer games for the same record ranks higher |
+| **Most recent win** (desc) | a final, deterministic tie-break so order never wobbles |
+
+Only players with **at least one win** appear, and the list is capped at five. Win % is shown rounded to a whole percent.
+
+**The week window & the schedule.** Owners set a recurring **schedule** on the arena — play days, a time window, and a **timezone** (`scheduleDays`, `scheduleStart`, `scheduleEnd`, `timezone` on `Arena`; editable from the tab, owner-only). The window is the current **calendar week, Monday 00:00 → the next Monday 00:00, in the arena's timezone**. The timezone is the part that actually matters to the maths — it fixes where the week boundary falls (e.g. in `Asia/Manila`, local Monday midnight is the previous Sunday 16:00 UTC). The day/time fields are shown for context (e.g. "Tue, Thu · 6:00 PM–10:00 PM").
+
+> **Design trade-off — every game counts, not just scheduled days.** An earlier version filtered matches to the scheduled weekdays (so only Tue/Thu games counted for a Tue/Thu arena). That silently emptied the board whenever people played off-schedule — a pickup session on a Saturday produced *zero* Player of the Week, which is surprising when you clearly played all week. We chose the opposite: **any game inside the week's window counts**, regardless of weekday. The schedule still sets the timezone and provides context, but it never *excludes* a game. The cost is that ad-hoc games dilute a "regular session" leaderboard; the upside is the board is never mysteriously empty while play is happening, which matched what people expected from "this week".
+
+**Shared, drift-free maths.** The ranking and the timezone week-window are a **pure function** in [`src/lib/leaderboard.js`](src/lib/leaderboard.js) (no database, browser-safe), so the live client tab and the server `/profile` read use exactly the same logic and can't diverge — the same pattern as [`src/lib/matchmaking.js`](src/lib/matchmaking.js) and [`src/lib/rating.js`](src/lib/rating.js). The database-backed reader (`getWeeklyLeaderboard`) lives in [`src/lib/leaderboard-server.js`](src/lib/leaderboard-server.js), split out so Prisma never leaks into the client bundle.
+
+**On `/profile`.** The same per-arena leaderboard powers two profile additions: a *Wins this week* total and an *Arenas led* count (how many arenas you currently top), plus a per-arena *This week* column showing your weekly wins and rank (🏆 for #1). Departed arenas are skipped — you're not competing there this week.
+
 ## Project structure
 
 ```text
