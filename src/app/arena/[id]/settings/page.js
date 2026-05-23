@@ -46,6 +46,10 @@ export default async function ArenaSettingsPage({ params }) {
             end: arena.scheduleEnd,
             timezone: arena.timezone,
           }}
+          matchmaking={{
+            starveThreshold: arena.starveThreshold,
+            emergencyWait: arena.emergencyWait,
+          }}
           isOwner={isOwner}
           viewerUserId={user?.id ?? null}
           members={members}

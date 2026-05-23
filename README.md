@@ -19,11 +19,11 @@ When auto-mix runs (after a finish, if more than one court's worth of players ar
 
 | Band | Condition | Ordering within the band |
 |------|-----------|--------------------------|
-| **Emergency** | waited ≥ `EMERGENCY_WAIT` (4) | strictly longest-waiting first — bounds the worst-case wait |
-| **Protected** (⏳ badge) | waited ≥ `STARVE_THRESHOLD` (2) | always ahead of fresher players, but **random** among themselves so a big pool doesn't lock into a fixed rotation |
-| **Fresh** | waited 0–1 | mixed by a small games-played nudge + randomness |
+| **Emergency** | waited ≥ `emergencyWait` (default 4) | strictly longest-waiting first — bounds the worst-case wait |
+| **Protected** (⏳ badge) | waited ≥ `starveThreshold` (default 2) | always ahead of fresher players, ordered by **fewest games played first** so the person who's played least goes next |
+| **Fresh** | below both | also fewest-games-first, with randomness only breaking ties among equal game counts |
 
-Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM_WEIGHT × random()` — the games term gently evens out totals (and eases newcomers in without letting them hog the court), while randomness keeps groups varied. The thresholds/weights live in [`src/lib/matchmaking.js`](src/lib/matchmaking.js) and are shared by the server logic and the UI badge so they never drift.
+Both thresholds are **per-arena settings** (`Arena.starveThreshold` / `Arena.emergencyWait`) — managers tune them in **Arena Settings → Matchmaking**. The defaults live in [`src/lib/matchmaking.js`](src/lib/matchmaking.js) (`DEFAULT_STARVE_THRESHOLD` / `DEFAULT_EMERGENCY_WAIT`) and are shared by the server (queue ordering) and the UI (the ⏳ badge), so the two can't drift.
 
 > **Inherent trade-off:** when players ÷ (courts × 4) divides evenly (e.g. 12 players on 1 court), the *only* arrangement with minimal waiting is a fixed rotation — so variety is naturally low there. Adding a court or a few more players restores high variety.
 
@@ -87,7 +87,7 @@ Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM
 
 Defined in [`prisma/schema.prisma`](prisma/schema.prisma):
 
-- **Arena** — an isolated session owned by a `User`. Players, courts, matches, and partnerships are all scoped by `arenaId`. Carries an optional `description` blurb and a recurring **schedule** (`scheduleDays` 0–6, `scheduleStart`/`scheduleEnd` `"HH:MM"`, `timezone`); the `timezone` fixes the Mon–Sun window for the weekly **Player of the Week** leaderboard, and the days/times show for context.
+- **Arena** — an isolated session owned by a `User`. Players, courts, matches, and partnerships are all scoped by `arenaId`. Carries an optional `description` blurb, a recurring **schedule** (`scheduleDays` 0–6, `scheduleStart`/`scheduleEnd` `"HH:MM"`, `timezone`) used for the Mon–Sun **Player of the Week** window, and **matchmaking thresholds** (`starveThreshold` / `emergencyWait`) controlling the auto-mix bands and the ⏳ badge.
 - **Player** — a rack entry: `firstName`/`lastName`, `gamesPlayed`, `wins`, `losses`, `queueOrder` (null when not in the rack), `waitRounds`, `gamesOffset` (games credited at join so late joiners rotate as peers, not catch-up), `rating` (Elo skill rating, see [Skill rating](#skill-rating)). `userId` links the player to a registered account; it is null for temporary walk-in players. `leftAt` marks a departed member: the row (stats + history) is kept but excluded from the active rack, and a rejoin reactivates it.
 - **Court** + **CourtSlot** — a court's live status and the four players assigned to it (a player can be on at most one court — DB-enforced).
 - **Match** + **MatchPlayer** — finished-match history with snapshotted player names.
@@ -116,7 +116,7 @@ Viewing any arena is public. Managing one depends on the caller's `ArenaMembersh
 
 - Arenas are public to browse but **join-gated**: a signed-in user **requests** to join (`requestToJoin`), and an owner or organizer **accepts** (`approveJoinRequest`) or **rejects** (`rejectJoinRequest`) it. On acceptance the user becomes a `MEMBER` and a queued player. Anyone can **create** their own arena (owner, no request needed).
 - Leaving (`leaveArena`) or being removed (`removeMember`) **deactivates** the user's `Player` (sets `leftAt`, off the rack) and drops their membership — stats and match history are kept, and approving a later request reactivates the same record.
-- Play actions, settings edits (`updateArenaGeneral`, `updateArenaSchedule`), reset, and join-request decisions are gated by `requireArenaManager(arenaId)` (owner or organizer); owner-only actions (`updateMemberRole`, `removeMember`, `transferOwnership`, `linkPlayerToMember`, `deleteArena`) by `requireArenaOwner(arenaId)`.
+- Play actions, settings edits (`updateArenaGeneral`, `updateArenaSchedule`, `updateArenaMatchmaking`), reset, and join-request decisions are gated by `requireArenaManager(arenaId)` (owner or organizer); owner-only actions (`updateMemberRole`, `removeMember`, `transferOwnership`, `linkPlayerToMember`, `deleteArena`) by `requireArenaOwner(arenaId)`.
 - `Arena.ownerId` stays the canonical owner; the owner also has an `OWNER` membership row, kept in sync on transfer.
 
 ## Routing
@@ -141,11 +141,12 @@ DINKMASTER is being built toward a **multi-tenant, multi-arena** system in phase
 | **6 — Skill rating** | Elo-based per-player rating updated at the end of each match; DUPR-style 2.0–8.0 display; surfaced in **My Stats** and **/profile**. | ✅ Done |
 | **7 — Player of the Week** | Per-arena recurring **schedule** (days/time/timezone, manager-set); a **This Week** tab ranking the top 5 by wins for the scheduled week, derived live from match history; weekly wins/rank on **/profile**. | ✅ Done |
 | **8 — Arena Settings (foundation)** | A dedicated, **manager-gated** `/arena/[id]/settings` page with left-nav sections, consolidating today's scattered controls: **General** (rename + new arena `description`), **Schedule** (the existing days/time/timezone editor), and a **Danger Zone** (reset for managers; owner-only transfer ownership + a new **delete arena**). Adds a Settings entry point from the arena. | ✅ Done |
-| **9 — Configurable play behavior** | Per-arena overrides for what are now hardcoded constants, with current values as defaults so existing arenas don't change: **matchmaking** (starve / emergency wait thresholds), **match defaults** (target score, team size, auto-mix default), and **leaderboard** (top-N size, count off-schedule games). Threaded into the rotation, the ⏳ badge, the score modal, and the weekly leaderboard. New `Arena` columns + migration. | 🔜 Planned |
+| **9a — Configurable matchmaking** | Per-arena **starve / emergency wait thresholds** (new `Arena` columns + migration; defaults match the prior constants). Threaded into the auto-mix sort and the ⏳ badge; settable from **Arena Settings → Matchmaking** by managers. | 🚧 In progress |
+| **9b — Match & leaderboard defaults** | Per-arena overrides for **target score**, **auto-mix default**, **leaderboard top-N**, and whether **off-schedule games count**. Threaded into the score modal, `endMatch`, and the weekly leaderboard. Team size stays fixed at doubles (2v2). | 🔜 Planned |
 
 Phase tracking and detailed scope live in the GitHub issues.
 
-> **Phases 8–9 ship incrementally** — Phase 8 lands the settings page + consolidation in its own PR; Phase 9 adds the behavior-config columns and threading in a follow-up PR.
+> **Phases 8–9 ship incrementally** — Phase 8 landed the settings page + consolidation; Phase 9 ships in two PRs (9a: matchmaking thresholds, 9b: match & leaderboard defaults).
 
 ## Skill rating
 
@@ -233,4 +234,4 @@ prisma/            schema, migrations
 
 ## Security note
 
-Every mutating Server Action in `src/app/actions.js` is role-gated: play actions, settings edits (`updateArenaGeneral` / `updateArenaSchedule`), reset, and join-request decisions (`approveJoinRequest` / `rejectJoinRequest`) require `requireArenaManager` (owner or organizer), owner-only actions (`updateMemberRole`, `removeMember`, `transferOwnership`, `linkPlayerToMember`, `deleteArena`) require `requireArenaOwner`, and both verify the session against `ArenaMembership` / `Arena.ownerId`. `createArena`, `requestToJoin`, and `leaveArena` only require a signed-in account.
+Every mutating Server Action in `src/app/actions.js` is role-gated: play actions, settings edits (`updateArenaGeneral` / `updateArenaSchedule` / `updateArenaMatchmaking`), reset, and join-request decisions (`approveJoinRequest` / `rejectJoinRequest`) require `requireArenaManager` (owner or organizer), owner-only actions (`updateMemberRole`, `removeMember`, `transferOwnership`, `linkPlayerToMember`, `deleteArena`) require `requireArenaOwner`, and both verify the session against `ArenaMembership` / `Arena.ownerId`. `createArena`, `requestToJoin`, and `leaveArena` only require a signed-in account.

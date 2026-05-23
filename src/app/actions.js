@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { getState } from '@/lib/data';
 import { requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
 import { ROLES } from '@/lib/roles';
-import { STARVE_THRESHOLD, EMERGENCY_WAIT } from '@/lib/matchmaking';
+import { MAX_WAIT_THRESHOLD, bandOf } from '@/lib/matchmaking';
 import { computeMatchRatings, RATING_BASELINE } from '@/lib/rating';
 
 /** Canonical (sorted) pair so each partnership has exactly one row. */
@@ -277,6 +277,41 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
   return { schedule: { days: normalizedDays, start: startTime, end: endTime, timezone: tz } };
+}
+
+/**
+ * Update an arena's matchmaking thresholds — the wait counts that promote a
+ * player into the protected (⏳) and emergency bands. Manager-gated.
+ * `emergencyWait` must be ≥ `starveThreshold` so the bands remain ordered.
+ * Bounds come from `MAX_WAIT_THRESHOLD` in `lib/matchmaking.js` so the server
+ * and the Settings UI agree.
+ */
+export async function updateArenaMatchmaking(
+  arenaId,
+  { starveThreshold: starveInput, emergencyWait: emergencyInput } = {},
+) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  const starve = Number(starveInput);
+  const emergency = Number(emergencyInput);
+
+  if (!Number.isInteger(starve) || starve < 1 || starve > MAX_WAIT_THRESHOLD) {
+    return { error: `Starve threshold must be a whole number between 1 and ${MAX_WAIT_THRESHOLD}.` };
+  }
+  if (!Number.isInteger(emergency) || emergency < 1 || emergency > MAX_WAIT_THRESHOLD) {
+    return { error: `Emergency wait must be a whole number between 1 and ${MAX_WAIT_THRESHOLD}.` };
+  }
+  if (emergency < starve) {
+    return { error: 'Emergency wait must be at least the starve threshold.' };
+  }
+
+  const updated = await prisma.arena.updateMany({
+    where: { id: arenaId },
+    data: { starveThreshold: starve, emergencyWait: emergency },
+  });
+  if (updated.count === 0) return { error: 'This arena no longer exists.' };
+  return { matchmaking: { starveThreshold: starve, emergencyWait: emergency } };
 }
 
 // --- Arena play (owner-gated, scoped by arenaId) --------------------------
@@ -670,41 +705,63 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
   // worth of players are waiting, so the next four can actually differ) — this
   // stops the same group of four from locking together every round.
   if (autoMix && queuedCount > 4) {
-    await prisma.$transaction(async (tx) => {
-      await lockQueue(tx, arenaId);
-      // Read the queued set under the lock so a concurrent fillCourt can't make
-      // us reassign a position to a player who is now on a court.
-      const queued = await tx.player.findMany({
-        where: { arenaId, leftAt: null, queueOrder: { not: null } },
-        select: { id: true, gamesPlayed: true, gamesOffset: true, waitRounds: true },
-      });
-      if (queued.length === 0) return;
-      // Sort lexicographically: band first (emergency > protected > fresh),
-      // then in the emergency band strictly by wait, then by FEWEST games
-      // played-since-joining (gamesPlayed + gamesOffset, so a player who has
-      // played less goes ahead but a late joiner can't hog), then a random
-      // tie-break for variety among equals.
-      const bandOf = (w) =>
-        w >= EMERGENCY_WAIT ? 2 : w >= STARVE_THRESHOLD ? 1 : 0;
-      const scored = queued
-        .map((p) => ({
-          id: p.id,
-          band: bandOf(p.waitRounds),
-          waitRounds: p.waitRounds,
-          games: p.gamesPlayed + p.gamesOffset,
-          rand: Math.random(),
-        }))
-        .sort((a, b) => {
-          if (a.band !== b.band) return b.band - a.band; // emergency > protected > fresh
-          if (a.band === 2 && a.waitRounds !== b.waitRounds) return b.waitRounds - a.waitRounds; // strict longest-first
-          if (a.games !== b.games) return a.games - b.games; // fewest games-since-joining first
-          return a.rand - b.rand; // random tie-break among equals
+    // Auto-mix runs in its own transaction after the match-finish commit; if it
+    // bails (arena vanished, lock contention, etc.), skip the mix and still
+    // return a clean { state } to the client — the match is already saved.
+    let mixed = false;
+    try {
+      await prisma.$transaction(async (tx) => {
+        await lockQueue(tx, arenaId);
+        // Read the thresholds inside the transaction so a concurrent settings
+        // save can't slip in between read and reorder, and so the row is
+        // null-checked explicitly rather than crashing on destructure.
+        const arena = await tx.arena.findUnique({
+          where: { id: arenaId },
+          select: { starveThreshold: true, emergencyWait: true },
         });
-      for (let i = 0; i < scored.length; i++) {
-        await tx.player.update({ where: { id: scored[i].id }, data: { queueOrder: i + 1 } });
-      }
-    });
-    notification = '⚡ Silo-Buster: Mixed the rack (longest-waiting up next) to keep matchups fresh and fair!';
+        if (!arena) throw new Error('ARENA_GONE');
+        const { starveThreshold, emergencyWait } = arena;
+
+        // Read the queued set under the lock so a concurrent fillCourt can't make
+        // us reassign a position to a player who is now on a court.
+        const queued = await tx.player.findMany({
+          where: { arenaId, leftAt: null, queueOrder: { not: null } },
+          select: { id: true, gamesPlayed: true, gamesOffset: true, waitRounds: true },
+        });
+        if (queued.length === 0) return;
+        // Sort lexicographically: band first (emergency > protected > fresh),
+        // then in the emergency band strictly by wait, then by FEWEST games
+        // played-since-joining (gamesPlayed + gamesOffset, so a player who has
+        // played less goes ahead but a late joiner can't hog), then a random
+        // tie-break for variety among equals.
+        const scored = queued
+          .map((p) => ({
+            id: p.id,
+            band: bandOf(p.waitRounds, { starveThreshold, emergencyWait }),
+            waitRounds: p.waitRounds,
+            games: p.gamesPlayed + p.gamesOffset,
+            rand: Math.random(),
+          }))
+          .sort((a, b) => {
+            if (a.band !== b.band) return b.band - a.band; // emergency > protected > fresh
+            if (a.band === 2 && a.waitRounds !== b.waitRounds) return b.waitRounds - a.waitRounds; // strict longest-first
+            if (a.games !== b.games) return a.games - b.games; // fewest games-since-joining first
+            return a.rand - b.rand; // random tie-break among equals
+          });
+        for (let i = 0; i < scored.length; i++) {
+          await tx.player.update({ where: { id: scored[i].id }, data: { queueOrder: i + 1 } });
+        }
+        mixed = true;
+      });
+    } catch (err) {
+      // ARENA_GONE (concurrent delete) is the only known non-bug failure here.
+      // Anything else: rethrow so it bubbles to error reporting — the match
+      // commit is unaffected either way.
+      if (err?.message !== 'ARENA_GONE') throw err;
+    }
+    if (mixed) {
+      notification = '⚡ Silo-Buster: Mixed the rack (longest-waiting up next) to keep matchups fresh and fair!';
+    }
   } else if (otherPlaying > 0) {
     notification = '💡 Recommended: Wait for other courts to finish before stacking again, to allow a complete mix of player pools!';
   }

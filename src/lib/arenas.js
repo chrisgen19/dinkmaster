@@ -46,6 +46,8 @@ export async function getArena(id) {
       scheduleStart: true,
       scheduleEnd: true,
       timezone: true,
+      starveThreshold: true,
+      emergencyWait: true,
     },
   });
 }

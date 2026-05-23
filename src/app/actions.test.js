@@ -36,6 +36,7 @@ vi.mock('@/lib/prisma', () => ({
 import { requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
 import { prisma } from '@/lib/prisma';
 import { ROLES } from '@/lib/roles';
+import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
 import * as actions from '@/app/actions';
 
 const ARENA = 'arena_test';
@@ -53,6 +54,7 @@ const PLAY = [
   ['resetArena', () => actions.resetArena(ARENA)],
   ['updateArenaGeneral', () => actions.updateArenaGeneral(ARENA, { name: 'New' })],
   ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
+  ['updateArenaMatchmaking', () => actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4 })],
   ['approveJoinRequest', () => actions.approveJoinRequest(ARENA, 'u2')],
   ['rejectJoinRequest', () => actions.rejectJoinRequest(ARENA, 'u2')],
 ];
@@ -202,6 +204,41 @@ describe('arena server actions — authorization', () => {
         ['an over-long description', { name: 'ok', description: 'y'.repeat(281) }],
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaGeneral(ARENA, input);
+        expect(result.error).toBeTruthy();
+        expect(prisma.arena.updateMany).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('updateArenaMatchmaking()', () => {
+      beforeEach(() => {
+        prisma.arena.updateMany.mockResolvedValue({ count: 1 });
+      });
+
+      it('persists valid thresholds and coerces numeric strings', async () => {
+        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: '3', emergencyWait: '6' });
+        expect(result.error).toBeUndefined();
+        expect(prisma.arena.updateMany).toHaveBeenCalledWith({
+          where: { id: ARENA },
+          data: { starveThreshold: 3, emergencyWait: 6 },
+        });
+        expect(result.matchmaking).toEqual({ starveThreshold: 3, emergencyWait: 6 });
+      });
+
+      it('reports a clean error when the arena no longer exists', async () => {
+        prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
+        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4 });
+        expect(result.error).toMatch(/no longer exists/i);
+      });
+
+      it.each([
+        ['a zero starve threshold', { starveThreshold: 0, emergencyWait: 4 }],
+        ['a fractional starve threshold', { starveThreshold: 2.5, emergencyWait: 4 }],
+        ['a non-numeric starve threshold', { starveThreshold: 'lots', emergencyWait: 4 }],
+        ['an emergency wait below the starve threshold', { starveThreshold: 4, emergencyWait: 2 }],
+        ['an out-of-range starve threshold', { starveThreshold: MAX_WAIT_THRESHOLD + 1, emergencyWait: 4 }],
+        ['an out-of-range emergency wait', { starveThreshold: 2, emergencyWait: MAX_WAIT_THRESHOLD + 1 }],
+      ])('rejects %s and writes nothing', async (_label, input) => {
+        const result = await actions.updateArenaMatchmaking(ARENA, input);
         expect(result.error).toBeTruthy();
         expect(prisma.arena.updateMany).not.toHaveBeenCalled();
       });
@@ -446,6 +483,58 @@ describe('arena server actions — authorization', () => {
       expect(ratingFor('w2')).toBeGreaterThan(1000);
       expect(ratingFor('l1')).toBeLessThan(1000);
       expect(ratingFor('l2')).toBeLessThan(1000);
+    });
+
+    it('endMatch() degrades gracefully when the arena vanishes during auto-mix', async () => {
+      const slot = (playerId, team) => ({
+        playerId,
+        team,
+        player: { id: playerId, firstName: playerId, lastName: null, rating: 1000 },
+      });
+
+      // Match-finish tx (first $transaction call) — full happy path.
+      const finishTx = {
+        $executeRaw: vi.fn(),
+        court: {
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
+        },
+        courtSlot: {
+          findMany: vi.fn().mockResolvedValue([slot('w1', 1), slot('w2', 1), slot('l1', 2), slot('l2', 2)]),
+          deleteMany: vi.fn(),
+        },
+        player: {
+          aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 0 } }),
+          updateMany: vi.fn(),
+          update: vi.fn(),
+        },
+        match: { create: vi.fn() },
+      };
+
+      // Auto-mix tx (second $transaction call) — the arena row is gone.
+      const mixTx = {
+        $executeRaw: vi.fn(),
+        arena: { findUnique: vi.fn().mockResolvedValue(null) },
+        player: { findMany: vi.fn(), update: vi.fn() },
+      };
+
+      let txCall = 0;
+      prisma.$transaction.mockImplementation(async (cb) => {
+        txCall += 1;
+        return cb(txCall === 1 ? finishTx : mixTx);
+      });
+      // Force the auto-mix branch (autoMix=true and queuedCount > 4).
+      prisma.court.findMany.mockResolvedValue([]);
+      prisma.player.count.mockResolvedValue(5);
+
+      const result = await actions.endMatch(ARENA, 'c1', 11, 5, true);
+
+      // Match commit succeeded; mix bailed cleanly with no notification.
+      expect(result.error).toBeUndefined();
+      expect(result.state).toBeDefined();
+      expect(result.notification).toBe('');
+      expect(mixTx.arena.findUnique).toHaveBeenCalled();
+      expect(mixTx.player.update).not.toHaveBeenCalled();
     });
 
     it('rejectJoinRequest() deletes the request', async () => {

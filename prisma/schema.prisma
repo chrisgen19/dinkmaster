@@ -31,6 +31,14 @@ model Arena {
   scheduleEnd   String?
   timezone      String  @default("Asia/Manila")
 
+  // Per-arena matchmaking thresholds (Phase 9). Defaults match the shared
+  // constants in `src/lib/matchmaking.js`, so existing arenas are unchanged.
+  // A waiting player is "protected" (⏳ badge, always ahead of fresh players)
+  // at `starveThreshold` rounds and "emergency" (strictly longest-first) at
+  // `emergencyWait`; `emergencyWait` must be ≥ `starveThreshold`.
+  starveThreshold Int @default(2)
+  emergencyWait   Int @default(4)
+
   owner        User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   players      Player[]
   courts       Court[]
