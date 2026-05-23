@@ -356,6 +356,12 @@ function MatchmakingSection({ arenaId, matchmaking }) {
             At this point the player is in the emergency band — strictly longest-waiting first. Must be at least the starve threshold.
           </span>
         </label>
+
+        {starve !== '' && emergency !== '' && Number(starve) === Number(emergency) && (
+          <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/70 rounded-lg px-3 py-2">
+            Heads up: with both thresholds equal, the protected band is skipped — once a player&apos;s wait hits {starve}, they go straight to emergency (strict longest-first).
+          </p>
+        )}
       </div>
       <Status error={error} saved={saved} />
       <div className="mt-5">

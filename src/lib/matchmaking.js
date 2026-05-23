@@ -19,3 +19,20 @@ export const DEFAULT_EMERGENCY_WAIT = 4;
 // creating a runaway value. Shared by the server validation and the Settings
 // UI so the two stay in sync.
 export const MAX_WAIT_THRESHOLD = 50;
+
+/**
+ * Compute the auto-mix priority band for a given wait count.
+ *   2 — emergency (strictly longest-first)
+ *   1 — protected (the ⏳ badge; fewest-games-first)
+ *   0 — fresh
+ * Pure so it can be unit-tested without spinning up Prisma; imported by
+ * `endMatch` in `app/actions.js`.
+ *
+ * @param {number} waitRounds
+ * @param {{starveThreshold: number, emergencyWait: number}} thresholds
+ */
+export function bandOf(waitRounds, { starveThreshold, emergencyWait }) {
+  if (waitRounds >= emergencyWait) return 2;
+  if (waitRounds >= starveThreshold) return 1;
+  return 0;
+}

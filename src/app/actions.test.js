@@ -235,6 +235,7 @@ describe('arena server actions — authorization', () => {
         ['a fractional starve threshold', { starveThreshold: 2.5, emergencyWait: 4 }],
         ['a non-numeric starve threshold', { starveThreshold: 'lots', emergencyWait: 4 }],
         ['an emergency wait below the starve threshold', { starveThreshold: 4, emergencyWait: 2 }],
+        ['an out-of-range starve threshold', { starveThreshold: MAX_WAIT_THRESHOLD + 1, emergencyWait: 4 }],
         ['an out-of-range emergency wait', { starveThreshold: 2, emergencyWait: MAX_WAIT_THRESHOLD + 1 }],
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaMatchmaking(ARENA, input);
