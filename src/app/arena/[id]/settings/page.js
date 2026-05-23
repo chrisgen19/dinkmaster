@@ -2,6 +2,8 @@ import { notFound, redirect } from 'next/navigation';
 import { getArena, getArenaMembers } from '@/lib/arenas';
 import { getCurrentUser } from '@/lib/session';
 import { canManageArena } from '@/lib/roles';
+import { SiteHeader } from '../../../site-header';
+import { AuthStatus } from '../../../auth-status';
 import { ArenaSettings } from '../../../arena-settings';
 
 // Settings reads/writes live arena config; never serve a cached copy.
@@ -28,19 +30,27 @@ export default async function ArenaSettingsPage({ params }) {
   const isOwner = viewerRole === 'OWNER';
 
   return (
-    <ArenaSettings
-      arenaId={arena.id}
-      arenaName={arena.name}
-      description={arena.description ?? ''}
-      schedule={{
-        days: arena.scheduleDays,
-        start: arena.scheduleStart,
-        end: arena.scheduleEnd,
-        timezone: arena.timezone,
-      }}
-      isOwner={isOwner}
-      viewerUserId={user?.id ?? null}
-      members={members}
-    />
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
+      <SiteHeader variant="arena" arenaName={arena.name}>
+        <AuthStatus />
+      </SiteHeader>
+
+      <main className="flex-1 w-full max-w-4xl mx-auto p-4 md:p-8">
+        <ArenaSettings
+          arenaId={arena.id}
+          arenaName={arena.name}
+          description={arena.description ?? ''}
+          schedule={{
+            days: arena.scheduleDays,
+            start: arena.scheduleStart,
+            end: arena.scheduleEnd,
+            timezone: arena.timezone,
+          }}
+          isOwner={isOwner}
+          viewerUserId={user?.id ?? null}
+          members={members}
+        />
+      </main>
+    </div>
   );
 }

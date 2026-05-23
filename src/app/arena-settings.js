@@ -52,27 +52,50 @@ export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwn
   const sections = SECTIONS.filter((s) => !s.ownerOnly || isOwner);
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <Link href={`/arena/${arenaId}`} className="text-xs font-bold text-slate-500 hover:text-slate-800 transition">
-        ← Back to {arenaName}
-      </Link>
-      <h1 className="text-2xl font-extrabold text-slate-900 mt-2 mb-6">Arena Settings</h1>
+    <div className="space-y-6 animate-fade-in">
+      {/* Page heading — mirrors the icon + title + back-link pattern used elsewhere. */}
+      <div className="flex items-center gap-3">
+        <span aria-hidden="true" className="grid place-items-center w-10 h-10 rounded-xl bg-emerald-600 shadow-sm shadow-emerald-600/30 shrink-0">
+          <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </span>
+        <div className="min-w-0">
+          <Link
+            href={`/arena/${arenaId}`}
+            className="text-[11px] text-slate-400 hover:text-emerald-600 font-semibold transition"
+          >
+            ← Back to {arenaName}
+          </Link>
+          <h1 className="font-display text-xl md:text-2xl font-extrabold tracking-tight text-slate-900 leading-none">
+            Arena Settings
+          </h1>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-6">
-        <nav className="flex md:flex-col gap-1.5" aria-label="Settings sections">
-          {sections.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setSection(s.id)}
-              className={`text-left px-3 py-2 rounded-lg text-sm font-bold transition ${
-                section === s.id
-                  ? 'bg-emerald-50 text-emerald-700'
-                  : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
-              } ${s.id === 'danger' ? 'text-red-500 hover:text-red-600' : ''}`}
-            >
-              {s.label}
-            </button>
-          ))}
+        <nav className="flex md:flex-col gap-1.5 md:sticky md:top-24 md:self-start" aria-label="Settings sections">
+          {sections.map((s) => {
+            const active = section === s.id;
+            const danger = s.id === 'danger';
+            return (
+              <button
+                key={s.id}
+                onClick={() => setSection(s.id)}
+                aria-current={active ? 'true' : undefined}
+                className={`text-left px-3 py-2 rounded-xl text-sm font-bold transition-colors border ${
+                  active
+                    ? danger
+                      ? 'bg-red-50 text-red-600 border-red-200/70'
+                      : 'bg-emerald-50 text-emerald-700 border-emerald-200/70'
+                    : `border-transparent hover:bg-slate-100 ${danger ? 'text-red-500 hover:text-red-600' : 'text-slate-500 hover:text-slate-800'}`
+                }`}
+              >
+                {s.label}
+              </button>
+            );
+          })}
         </nav>
 
         <div className="min-w-0">
