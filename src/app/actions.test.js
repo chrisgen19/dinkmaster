@@ -36,6 +36,7 @@ vi.mock('@/lib/prisma', () => ({
 import { requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
 import { prisma } from '@/lib/prisma';
 import { ROLES } from '@/lib/roles';
+import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
 import * as actions from '@/app/actions';
 
 const ARENA = 'arena_test';
@@ -234,7 +235,7 @@ describe('arena server actions — authorization', () => {
         ['a fractional starve threshold', { starveThreshold: 2.5, emergencyWait: 4 }],
         ['a non-numeric starve threshold', { starveThreshold: 'lots', emergencyWait: 4 }],
         ['an emergency wait below the starve threshold', { starveThreshold: 4, emergencyWait: 2 }],
-        ['an out-of-range emergency wait', { starveThreshold: 2, emergencyWait: 999 }],
+        ['an out-of-range emergency wait', { starveThreshold: 2, emergencyWait: MAX_WAIT_THRESHOLD + 1 }],
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaMatchmaking(ARENA, input);
         expect(result.error).toBeTruthy();
