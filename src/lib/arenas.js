@@ -48,6 +48,10 @@ export async function getArena(id) {
       timezone: true,
       starveThreshold: true,
       emergencyWait: true,
+      targetScore: true,
+      autoMixDefault: true,
+      leaderboardSize: true,
+      countOffScheduleGames: true,
     },
   });
 }
