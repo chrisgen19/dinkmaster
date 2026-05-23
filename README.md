@@ -139,8 +139,12 @@ DINKMASTER is being built toward a **multi-tenant, multi-arena** system in phase
 | **5 — Join approval & history retention** | Arenas are public to browse but join-gated: anyone **requests** to join and an owner/organizer accepts or rejects via the Members tab. Leaving/removal **deactivates** the `Player` (`leftAt`) instead of deleting it, so stats & match history survive and a rejoin reclaims them; `/profile` still lists left arenas. | ✅ Done |
 | **6 — Skill rating** | Elo-based per-player rating updated at the end of each match; DUPR-style 2.0–8.0 display; surfaced in **My Stats** and **/profile**. | ✅ Done |
 | **7 — Player of the Week** | Per-arena recurring **schedule** (days/time/timezone, owner-set); a **This Week** tab ranking the top 5 by wins for the scheduled week, derived live from match history; weekly wins/rank on **/profile**. | ✅ Done |
+| **8 — Arena Settings (foundation)** | A dedicated, **manager-gated** `/arena/[id]/settings` page with left-nav sections, consolidating today's scattered controls: **General** (rename + new arena `description`), **Schedule** (the existing days/time/timezone editor), and an **owner-only Danger Zone** (reset, transfer ownership, and a new **delete arena**). Adds a Settings entry point from the arena. | 🚧 In progress |
+| **9 — Configurable play behavior** | Per-arena overrides for what are now hardcoded constants, with current values as defaults so existing arenas don't change: **matchmaking** (starve / emergency wait thresholds), **match defaults** (target score, team size, auto-mix default), and **leaderboard** (top-N size, count off-schedule games). Threaded into the rotation, the ⏳ badge, the score modal, and the weekly leaderboard. New `Arena` columns + migration. | 🔜 Planned |
 
 Phase tracking and detailed scope live in the GitHub issues.
+
+> **Phases 8–9 ship incrementally** — Phase 8 lands the settings page + consolidation in its own PR; Phase 9 adds the behavior-config columns and threading in a follow-up PR.
 
 ## Skill rating
 
