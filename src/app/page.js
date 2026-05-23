@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { listArenas, getUserMemberships, getUserPendingRequestArenaIds } from '@/lib/arenas';
 import { getCurrentUser } from '@/lib/session';
 import { AuthStatus } from './auth-status';
+import { SiteHeader } from './site-header';
 import { CreateArenaForm } from './create-arena-form';
 
 // Always read the fresh arena list on each request.
@@ -22,20 +23,9 @@ export default async function Page() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
-      <header className="border-b border-slate-200 bg-white/95 backdrop-blur sticky top-0 z-50 px-4 py-4 md:px-8 flex flex-wrap justify-between items-center gap-4 shadow-sm">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center shadow-sm">
-            <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm-3 5c.83 0 1.5.67 1.5 1.5S9.83 10 9 10s-1.5-.67-1.5-1.5S8.17 7 9 7zm-2 6.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm6 5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1-5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm3.5-3.5c-.83 0-1.5-.67-1.5-1.5S16.17 7 17 7s1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm0 5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm-5-10c-.83 0-1.5-.67-1.5-1.5S12.17 3 13 3s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z" />
-            </svg>
-          </div>
-          <div>
-            <h1 className="text-xl font-extrabold tracking-tight text-slate-900">DINKMASTER</h1>
-            <p className="text-xs text-slate-500 font-medium">Smart Paddle Stacking & Partnership Mixing</p>
-          </div>
-        </div>
+      <SiteHeader variant="home">
         <AuthStatus />
-      </header>
+      </SiteHeader>
 
       <main className="flex-1 w-full max-w-5xl mx-auto p-4 md:p-8 space-y-6">
         <section className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm">
