@@ -1,0 +1,346 @@
+'use client';
+
+import { useState, useTransition } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { updateArenaGeneral, updateArenaSchedule, resetArena, transferOwnership, deleteArena } from './actions';
+
+/** Weekday options, Monday-first; `value` matches JS `Date.getDay()`. */
+const WEEKDAYS = [
+  { value: 1, short: 'Mon' },
+  { value: 2, short: 'Tue' },
+  { value: 3, short: 'Wed' },
+  { value: 4, short: 'Thu' },
+  { value: 5, short: 'Fri' },
+  { value: 6, short: 'Sat' },
+  { value: 0, short: 'Sun' },
+];
+
+/** Friendly zone shortlist for the picker; any IANA zone is still accepted. */
+const TIMEZONES = [
+  'Asia/Manila', 'Asia/Singapore', 'Asia/Hong_Kong', 'Asia/Tokyo',
+  'Australia/Sydney', 'America/Los_Angeles', 'America/New_York', 'Europe/London', 'UTC',
+];
+
+const inputClass =
+  'w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 text-sm font-bold text-slate-800 focus:bg-white focus:border-emerald-500 outline-none transition';
+const labelClass = 'block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5';
+
+/** Section definitions for the left nav. `ownerOnly` ones are hidden for organizers. */
+const SECTIONS = [
+  { id: 'general', label: 'General' },
+  { id: 'schedule', label: 'Schedule' },
+  { id: 'danger', label: 'Danger Zone', ownerOnly: true },
+];
+
+/**
+ * Owner/organizer settings page body for one arena. Left-nav sections; each
+ * section owns its form state and calls a guarded server action. Danger Zone is
+ * owner-only (also enforced server-side).
+ *
+ * @param {object} props
+ * @param {string} props.arenaId
+ * @param {string} props.arenaName
+ * @param {string} props.description
+ * @param {{days:number[], start:string|null, end:string|null, timezone:string}} props.schedule
+ * @param {boolean} props.isOwner
+ * @param {string|null} props.viewerUserId
+ * @param {Array<{userId:string, name:string, role:string}>} props.members
+ */
+export function ArenaSettings({ arenaId, arenaName, description, schedule, isOwner, viewerUserId, members }) {
+  const [section, setSection] = useState('general');
+  const sections = SECTIONS.filter((s) => !s.ownerOnly || isOwner);
+
+  return (
+    <div className="max-w-4xl mx-auto px-4 py-8">
+      <Link href={`/arena/${arenaId}`} className="text-xs font-bold text-slate-500 hover:text-slate-800 transition">
+        ← Back to {arenaName}
+      </Link>
+      <h1 className="text-2xl font-extrabold text-slate-900 mt-2 mb-6">Arena Settings</h1>
+
+      <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-6">
+        <nav className="flex md:flex-col gap-1.5" aria-label="Settings sections">
+          {sections.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => setSection(s.id)}
+              className={`text-left px-3 py-2 rounded-lg text-sm font-bold transition ${
+                section === s.id
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+              } ${s.id === 'danger' ? 'text-red-500 hover:text-red-600' : ''}`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="min-w-0">
+          {section === 'general' && (
+            <GeneralSection arenaId={arenaId} initialName={arenaName} initialDescription={description} />
+          )}
+          {section === 'schedule' && <ScheduleSection arenaId={arenaId} schedule={schedule} />}
+          {section === 'danger' && isOwner && (
+            <DangerZone arenaId={arenaId} arenaName={arenaName} viewerUserId={viewerUserId} members={members} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Card wrapper shared by every section. */
+function Card({ title, hint, children }) {
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+      <h2 className="text-base font-extrabold text-slate-900">{title}</h2>
+      {hint && <p className="text-xs text-slate-400 mt-1 mb-5">{hint}</p>}
+      <div className={hint ? '' : 'mt-5'}>{children}</div>
+    </div>
+  );
+}
+
+/** Inline status line: red for errors, emerald for a saved confirmation. */
+function Status({ error, saved }) {
+  if (error) return <p className="text-xs font-semibold text-red-600 mt-3">{error}</p>;
+  if (saved) return <p className="text-xs font-semibold text-emerald-600 mt-3">Saved.</p>;
+  return null;
+}
+
+function GeneralSection({ arenaId, initialName, initialDescription }) {
+  const router = useRouter();
+  const [name, setName] = useState(initialName);
+  const [description, setDescription] = useState(initialDescription);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  const save = () => {
+    setError('');
+    setSaved(false);
+    startTransition(async () => {
+      const result = await updateArenaGeneral(arenaId, { name, description });
+      if (result?.error) return setError(result.error);
+      setSaved(true);
+      router.refresh();
+    });
+  };
+
+  return (
+    <Card title="General" hint="The arena's name and an optional description.">
+      <div className="space-y-4">
+        <label className="block">
+          <span className={labelClass}>Arena name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} className={inputClass} />
+        </label>
+        <label className="block">
+          <span className={labelClass}>Description</span>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            maxLength={280}
+            rows={3}
+            placeholder="e.g. Tuesday & Thursday night doubles at the community center."
+            className={`${inputClass} resize-none`}
+          />
+          <span className="block text-[10px] text-slate-400 mt-1">{description.length}/280</span>
+        </label>
+      </div>
+      <Status error={error} saved={saved} />
+      <div className="mt-5">
+        <button
+          onClick={save}
+          disabled={isPending}
+          className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition disabled:opacity-50"
+        >
+          {isPending ? 'Saving…' : 'Save changes'}
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+function ScheduleSection({ arenaId, schedule }) {
+  const router = useRouter();
+  const [days, setDays] = useState(schedule.days ?? []);
+  const [start, setStart] = useState(schedule.start ?? '');
+  const [end, setEnd] = useState(schedule.end ?? '');
+  const [timezone, setTimezone] = useState(schedule.timezone || 'Asia/Manila');
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  const toggleDay = (value) =>
+    setDays((prev) => (prev.includes(value) ? prev.filter((d) => d !== value) : [...prev, value]));
+
+  const save = () => {
+    setSaved(false);
+    if (start && end && end <= start) return setError('End time must be after start time.');
+    setError('');
+    startTransition(async () => {
+      const result = await updateArenaSchedule(arenaId, { days, start, end, timezone });
+      if (result?.error) return setError(result.error);
+      if (!result?.schedule) return setError('Failed to update schedule.');
+      setSaved(true);
+      router.refresh();
+    });
+  };
+
+  return (
+    <Card title="Schedule" hint="Sets the timezone for the Mon–Sun Player of the Week window; days/times show for context.">
+      <div className="space-y-5">
+        <div>
+          <span className={labelClass}>Play days</span>
+          <div className="flex flex-wrap gap-2">
+            {WEEKDAYS.map((d) => {
+              const on = days.includes(d.value);
+              return (
+                <button
+                  key={d.value}
+                  type="button"
+                  onClick={() => toggleDay(d.value)}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition ${
+                    on ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  {d.short}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1.5">Leave all unset to count every day.</p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className={labelClass}>Start</span>
+            <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className={inputClass} />
+          </label>
+          <label className="block">
+            <span className={labelClass}>End</span>
+            <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className={inputClass} />
+          </label>
+        </div>
+
+        <label className="block">
+          <span className={labelClass}>Timezone</span>
+          <input
+            list="arena-settings-timezones"
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+            placeholder="e.g. Asia/Manila"
+            className={inputClass}
+          />
+          <datalist id="arena-settings-timezones">
+            {TIMEZONES.map((tz) => <option key={tz} value={tz} />)}
+          </datalist>
+        </label>
+      </div>
+      <Status error={error} saved={saved} />
+      <div className="mt-5">
+        <button
+          onClick={save}
+          disabled={isPending}
+          className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition disabled:opacity-50"
+        >
+          {isPending ? 'Saving…' : 'Save schedule'}
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+function DangerZone({ arenaId, arenaName, viewerUserId, members }) {
+  const router = useRouter();
+  const [error, setError] = useState('');
+  const [resetConfirm, setResetConfirm] = useState(false);
+  const [transferTo, setTransferTo] = useState('');
+  const [deleteText, setDeleteText] = useState('');
+  const [isPending, startTransition] = useTransition();
+
+  // Members who could become owner (anyone but the current owner / viewer).
+  const transferTargets = members.filter((m) => m.userId !== viewerUserId);
+
+  const run = (fn, after) =>
+    startTransition(async () => {
+      setError('');
+      const result = await fn();
+      if (result?.error) return setError(result.error);
+      after?.();
+    });
+
+  return (
+    <div className="bg-white border border-red-200 rounded-2xl p-6 shadow-sm">
+      <h2 className="text-base font-extrabold text-red-600">Danger Zone</h2>
+      <p className="text-xs text-slate-400 mt-1 mb-5">Owner-only actions. Some are irreversible.</p>
+
+      <div className="space-y-6">
+        {/* Reset */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-6">
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-slate-800">Reset arena</p>
+            <p className="text-xs text-slate-500 mt-0.5">Clears match history, ratings, and live courts. Players are kept.</p>
+          </div>
+          {resetConfirm ? (
+            <div className="flex gap-2">
+              <button onClick={() => setResetConfirm(false)} className="px-3 py-2 text-xs font-bold text-slate-500 bg-slate-100 rounded-lg hover:bg-slate-200 transition">Cancel</button>
+              <button
+                onClick={() => run(() => resetArena(arenaId), () => { setResetConfirm(false); router.refresh(); })}
+                disabled={isPending}
+                className="px-3 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition disabled:opacity-50"
+              >
+                Confirm reset
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => setResetConfirm(true)} className="px-3 py-2 text-xs font-bold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition">Reset</button>
+          )}
+        </div>
+
+        {/* Transfer ownership */}
+        <div className="border-b border-slate-100 pb-6">
+          <p className="text-sm font-bold text-slate-800">Transfer ownership</p>
+          <p className="text-xs text-slate-500 mt-0.5 mb-3">Hand the arena to another member; you stay on as an organizer.</p>
+          {transferTargets.length === 0 ? (
+            <p className="text-xs text-slate-400">No other members to transfer to yet.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <select value={transferTo} onChange={(e) => setTransferTo(e.target.value)} className={`${inputClass} max-w-xs`}>
+                <option value="">Select a member…</option>
+                {transferTargets.map((m) => <option key={m.userId} value={m.userId}>{m.name}</option>)}
+              </select>
+              <button
+                onClick={() => run(() => transferOwnership(arenaId, transferTo), () => router.refresh())}
+                disabled={isPending || !transferTo}
+                className="px-3 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition disabled:opacity-50"
+              >
+                Transfer
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Delete */}
+        <div>
+          <p className="text-sm font-bold text-slate-800">Delete arena</p>
+          <p className="text-xs text-slate-500 mt-0.5 mb-3">
+            Permanently deletes this arena and all its players, courts, matches, and history. This cannot be undone.
+            Type <span className="font-bold text-slate-700">{arenaName}</span> to confirm.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <input value={deleteText} onChange={(e) => setDeleteText(e.target.value)} placeholder="Arena name" className={`${inputClass} max-w-xs`} />
+            <button
+              onClick={() => run(() => deleteArena(arenaId), () => router.push('/'))}
+              disabled={isPending || deleteText !== arenaName}
+              className="px-3 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Delete arena
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {error && <p className="text-xs font-semibold text-red-600 mt-4">{error}</p>}
+    </div>
+  );
+}

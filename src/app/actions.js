@@ -204,6 +204,28 @@ export async function renameArena(arenaId, nameInput) {
   return { arena: { id: arenaId, name } };
 }
 
+/**
+ * Update an arena's General settings — name (required) and an optional
+ * description blurb. Manager-gated (owner or organizer), unlike the legacy
+ * owner-only `renameArena`. Empty description is stored as null.
+ */
+export async function updateArenaGeneral(arenaId, { name: nameInput, description: descInput } = {}) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  const name = (nameInput ?? '').trim();
+  if (name.length === 0) return { error: 'Please enter an arena name.' };
+  if (name.length > 80) return { error: 'Arena name is too long (max 80 characters).' };
+
+  const description = (descInput ?? '').trim() || null;
+  if (description && description.length > 280) {
+    return { error: 'Description is too long (max 280 characters).' };
+  }
+
+  await prisma.arena.update({ where: { id: arenaId }, data: { name, description } });
+  return { arena: { id: arenaId, name, description } };
+}
+
 /** "HH:MM" 24-hour clock, e.g. "06:00" or "22:30". */
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -990,6 +1012,26 @@ export async function transferOwnership(arenaId, newOwnerUserId) {
       return { error: 'Ownership changed while processing. Please try again.' };
     }
     throw err;
+  }
+  return { ok: true };
+}
+
+/**
+ * Permanently delete an arena and everything scoped to it (players, courts,
+ * matches, partnerships, memberships, join requests — all `onDelete: Cascade`).
+ * Owner only, and irreversible. Scoped to the caller's id so a concurrent
+ * ownership transfer can't let a former owner delete the arena out from under
+ * the new one.
+ */
+export async function deleteArena(arenaId) {
+  const guard = await requireArenaOwner(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  const deleted = await prisma.arena.deleteMany({
+    where: { id: arenaId, ownerId: guard.user.id },
+  });
+  if (deleted.count !== 1) {
+    return { error: 'Ownership changed while processing. Please try again.' };
   }
   return { ok: true };
 }

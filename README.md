@@ -87,7 +87,7 @@ Within a band the order is `GAMES_WEIGHT × (mostGames − gamesPlayed) + RANDOM
 
 Defined in [`prisma/schema.prisma`](prisma/schema.prisma):
 
-- **Arena** — an isolated session owned by a `User`. Players, courts, matches, and partnerships are all scoped by `arenaId`. Also carries a recurring **schedule** (`scheduleDays` 0–6, `scheduleStart`/`scheduleEnd` `"HH:MM"`, `timezone`); the `timezone` fixes the Mon–Sun window for the weekly **Player of the Week** leaderboard, and the days/times show for context.
+- **Arena** — an isolated session owned by a `User`. Players, courts, matches, and partnerships are all scoped by `arenaId`. Carries an optional `description` blurb and a recurring **schedule** (`scheduleDays` 0–6, `scheduleStart`/`scheduleEnd` `"HH:MM"`, `timezone`); the `timezone` fixes the Mon–Sun window for the weekly **Player of the Week** leaderboard, and the days/times show for context.
 - **Player** — a rack entry: `firstName`/`lastName`, `gamesPlayed`, `wins`, `losses`, `queueOrder` (null when not in the rack), `waitRounds`, `gamesOffset` (games credited at join so late joiners rotate as peers, not catch-up), `rating` (Elo skill rating, see [Skill rating](#skill-rating)). `userId` links the player to a registered account; it is null for temporary walk-in players. `leftAt` marks a departed member: the row (stats + history) is kept but excluded from the active rack, and a rejoin reactivates it.
 - **Court** + **CourtSlot** — a court's live status and the four players assigned to it (a player can be on at most one court — DB-enforced).
 - **Match** + **MatchPlayer** — finished-match history with snapshotted player names.
@@ -123,6 +123,7 @@ Viewing any arena is public. Managing one depends on the caller's `ArenaMembersh
 
 - `/` — public **arena directory**: lists every arena; signed-in users get a "create arena" form.
 - `/arena/[id]` — a single arena (rack, courts, match log, members, my stats). Public to view; owners and organizers see management controls plus a pending-requests queue, members see it read-only, and non-members get a "request to join" prompt (showing "pending approval" once requested).
+- `/arena/[id]/settings` — **manager-only** arena settings (General, Schedule, and an owner-only Danger Zone: reset, transfer ownership, delete). Non-managers are redirected to the arena view.
 - `/profile` — your account: aggregate stats and match history across every arena you play in.
 - `/login`, `/register` — auth pages.
 
@@ -139,7 +140,7 @@ DINKMASTER is being built toward a **multi-tenant, multi-arena** system in phase
 | **5 — Join approval & history retention** | Arenas are public to browse but join-gated: anyone **requests** to join and an owner/organizer accepts or rejects via the Members tab. Leaving/removal **deactivates** the `Player` (`leftAt`) instead of deleting it, so stats & match history survive and a rejoin reclaims them; `/profile` still lists left arenas. | ✅ Done |
 | **6 — Skill rating** | Elo-based per-player rating updated at the end of each match; DUPR-style 2.0–8.0 display; surfaced in **My Stats** and **/profile**. | ✅ Done |
 | **7 — Player of the Week** | Per-arena recurring **schedule** (days/time/timezone, owner-set); a **This Week** tab ranking the top 5 by wins for the scheduled week, derived live from match history; weekly wins/rank on **/profile**. | ✅ Done |
-| **8 — Arena Settings (foundation)** | A dedicated, **manager-gated** `/arena/[id]/settings` page with left-nav sections, consolidating today's scattered controls: **General** (rename + new arena `description`), **Schedule** (the existing days/time/timezone editor), and an **owner-only Danger Zone** (reset, transfer ownership, and a new **delete arena**). Adds a Settings entry point from the arena. | 🚧 In progress |
+| **8 — Arena Settings (foundation)** | A dedicated, **manager-gated** `/arena/[id]/settings` page with left-nav sections, consolidating today's scattered controls: **General** (rename + new arena `description`), **Schedule** (the existing days/time/timezone editor), and an **owner-only Danger Zone** (reset, transfer ownership, and a new **delete arena**). Adds a Settings entry point from the arena. | ✅ Done |
 | **9 — Configurable play behavior** | Per-arena overrides for what are now hardcoded constants, with current values as defaults so existing arenas don't change: **matchmaking** (starve / emergency wait thresholds), **match defaults** (target score, team size, auto-mix default), and **leaderboard** (top-N size, count off-schedule games). Threaded into the rotation, the ⏳ badge, the score modal, and the weekly leaderboard. New `Arena` columns + migration. | 🔜 Planned |
 
 Phase tracking and detailed scope live in the GitHub issues.
