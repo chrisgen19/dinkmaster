@@ -3,9 +3,15 @@
 import { useState, useTransition, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { updateArenaGeneral, updateArenaSchedule, updateArenaMatchmaking, resetArena, transferOwnership, deleteArena } from './actions';
+import { updateArenaGeneral, updateArenaSchedule, updateArenaMatchmaking, updateArenaMatchDefaults, resetArena, transferOwnership, deleteArena } from './actions';
 import { ScheduleFields } from './schedule-fields';
 import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
+import {
+  MIN_TARGET_SCORE,
+  MAX_TARGET_SCORE,
+  MIN_LEADERBOARD_SIZE,
+  MAX_LEADERBOARD_SIZE,
+} from '@/lib/match-defaults';
 
 const inputClass =
   'w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 text-sm font-bold text-slate-800 focus:bg-white focus:border-emerald-500 outline-none transition';
@@ -39,6 +45,7 @@ const SECTIONS = [
   { id: 'general', label: 'General' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'matchmaking', label: 'Matchmaking' },
+  { id: 'matchDefaults', label: 'Match Defaults' },
   { id: 'danger', label: 'Danger Zone' },
 ];
 
@@ -53,11 +60,12 @@ const SECTIONS = [
  * @param {string} props.description
  * @param {{days:number[], start:string|null, end:string|null, timezone:string}} props.schedule
  * @param {{starveThreshold:number, emergencyWait:number}} props.matchmaking
+ * @param {{targetScore:number, autoMixDefault:boolean, leaderboardSize:number, countOffScheduleGames:boolean}} props.matchDefaults
  * @param {boolean} props.isOwner
  * @param {string|null} props.viewerUserId
  * @param {Array<{userId:string, name:string, role:string}>} props.members
  */
-export function ArenaSettings({ arenaId, arenaName, description, schedule, matchmaking, isOwner, viewerUserId, members }) {
+export function ArenaSettings({ arenaId, arenaName, description, schedule, matchmaking, matchDefaults, isOwner, viewerUserId, members }) {
   const [section, setSection] = useState('general');
   // Defensive: every section is shown to all managers, so this never shrinks
   // today — but guard against an unknown `section` id rendering a blank panel.
@@ -143,6 +151,7 @@ export function ArenaSettings({ arenaId, arenaName, description, schedule, match
           )}
           {effectiveSection === 'schedule' && <ScheduleSection arenaId={arenaId} schedule={schedule} />}
           {effectiveSection === 'matchmaking' && <MatchmakingSection arenaId={arenaId} matchmaking={matchmaking} />}
+          {effectiveSection === 'matchDefaults' && <MatchDefaultsSection arenaId={arenaId} defaults={matchDefaults} />}
           {effectiveSection === 'danger' && (
             <DangerZone arenaId={arenaId} arenaName={arenaName} isOwner={isOwner} viewerUserId={viewerUserId} members={members} />
           )}
@@ -371,6 +380,128 @@ function MatchmakingSection({ arenaId, matchmaking }) {
           className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition disabled:opacity-50"
         >
           {isPending ? 'Saving…' : 'Save matchmaking'}
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+function MatchDefaultsSection({ arenaId, defaults }) {
+  const router = useRouter();
+  // Inputs kept as strings so clearing the field doesn't snap to 0 — parse on
+  // save. Same pattern as MatchmakingSection (PR #36 round 2).
+  const [targetScore, setTargetScore] = useState(String(defaults.targetScore));
+  const [autoMixDefault, setAutoMixDefault] = useState(defaults.autoMixDefault);
+  const [leaderboardSize, setLeaderboardSize] = useState(String(defaults.leaderboardSize));
+  const [countOffScheduleGames, setCountOffScheduleGames] = useState(defaults.countOffScheduleGames);
+  const [error, setError] = useState('');
+  const [saved, flashSaved, clearSaved] = useSavedFlag();
+  const [isPending, startTransition] = useTransition();
+
+  const save = () => {
+    clearSaved();
+    const target = Number(targetScore);
+    const size = Number(leaderboardSize);
+    // Mirror the server validation. An empty string parses to 0 which trips
+    // the range check with a confusing "must be between …" message; check the
+    // raw value first so we can surface a clearer empty-field error.
+    const invalid = (raw, n, min, max) =>
+      raw === '' || !Number.isInteger(n) || n < min || n > max;
+    if (invalid(targetScore, target, MIN_TARGET_SCORE, MAX_TARGET_SCORE)) {
+      return setError(`Target score must be a whole number between ${MIN_TARGET_SCORE} and ${MAX_TARGET_SCORE}.`);
+    }
+    if (invalid(leaderboardSize, size, MIN_LEADERBOARD_SIZE, MAX_LEADERBOARD_SIZE)) {
+      return setError(`Leaderboard size must be a whole number between ${MIN_LEADERBOARD_SIZE} and ${MAX_LEADERBOARD_SIZE}.`);
+    }
+    setError('');
+    startTransition(async () => {
+      try {
+        const result = await updateArenaMatchDefaults(arenaId, {
+          targetScore: target,
+          autoMixDefault,
+          leaderboardSize: size,
+          countOffScheduleGames,
+        });
+        if (result?.error) return setError(result.error);
+        flashSaved();
+        router.refresh();
+      } catch {
+        setError('Failed to save match defaults. Please try again.');
+      }
+    });
+  };
+
+  return (
+    <Card title="Match Defaults" hint="Seed values for new games and the weekly leaderboard. Per-game inputs (e.g. the score) can still be edited at the moment of recording.">
+      <div className="space-y-4 max-w-xl">
+        <label className="block">
+          <span className={labelClass}>Target score</span>
+          <input
+            type="number"
+            min={MIN_TARGET_SCORE}
+            max={MAX_TARGET_SCORE}
+            value={targetScore}
+            onChange={(e) => setTargetScore(e.target.value)}
+            className={inputClass}
+          />
+          <span className="block text-[10px] text-slate-400 mt-1">
+            Pre-fills both score fields when finishing a match (typically 11).
+          </span>
+        </label>
+
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={autoMixDefault}
+            onChange={(e) => setAutoMixDefault(e.target.checked)}
+            className="mt-0.5 w-4 h-4 accent-emerald-600"
+          />
+          <span>
+            <span className="block text-sm font-bold text-slate-800">Auto-mix the rack by default</span>
+            <span className="block text-[11px] text-slate-500 mt-0.5">
+              Initial state of the Auto-Mix toggle when an arena loads. Managers can still flip it per finish.
+            </span>
+          </span>
+        </label>
+
+        <label className="block">
+          <span className={labelClass}>Leaderboard size (top N)</span>
+          <input
+            type="number"
+            min={MIN_LEADERBOARD_SIZE}
+            max={MAX_LEADERBOARD_SIZE}
+            value={leaderboardSize}
+            onChange={(e) => setLeaderboardSize(e.target.value)}
+            className={inputClass}
+          />
+          <span className="block text-[10px] text-slate-400 mt-1">
+            How many players the <strong>This Week</strong> board surfaces. The viewer&apos;s full rank is unaffected.
+          </span>
+        </label>
+
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={countOffScheduleGames}
+            onChange={(e) => setCountOffScheduleGames(e.target.checked)}
+            className="mt-0.5 w-4 h-4 accent-emerald-600"
+          />
+          <span>
+            <span className="block text-sm font-bold text-slate-800">Count off-schedule games</span>
+            <span className="block text-[11px] text-slate-500 mt-0.5">
+              When on (default), every game in the week counts toward the leaderboard. Turn off to only count games played on the schedule&apos;s days — <strong>only takes effect once the schedule has play days set</strong>; with no days configured the leaderboard treats every day as scheduled.
+            </span>
+          </span>
+        </label>
+      </div>
+      <Status error={error} saved={saved} />
+      <div className="mt-5">
+        <button
+          onClick={save}
+          disabled={isPending}
+          className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition disabled:opacity-50"
+        >
+          {isPending ? 'Saving…' : 'Save match defaults'}
         </button>
       </div>
     </Card>

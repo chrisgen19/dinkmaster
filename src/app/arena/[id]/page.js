@@ -48,6 +48,12 @@ export default async function ArenaPage({ params }) {
         starveThreshold: arena.starveThreshold,
         emergencyWait: arena.emergencyWait,
       }}
+      matchDefaults={{
+        targetScore: arena.targetScore,
+        autoMixDefault: arena.autoMixDefault,
+        leaderboardSize: arena.leaderboardSize,
+        countOffScheduleGames: arena.countOffScheduleGames,
+      }}
       canManage={canManage}
       viewerRole={viewerRole}
       viewerUserId={user?.id ?? null}

@@ -5,6 +5,12 @@ import { getState } from '@/lib/data';
 import { requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
 import { ROLES } from '@/lib/roles';
 import { MAX_WAIT_THRESHOLD, bandOf } from '@/lib/matchmaking';
+import {
+  MIN_TARGET_SCORE,
+  MAX_TARGET_SCORE,
+  MIN_LEADERBOARD_SIZE,
+  MAX_LEADERBOARD_SIZE,
+} from '@/lib/match-defaults';
 import { computeMatchRatings, RATING_BASELINE } from '@/lib/rating';
 
 /** Canonical (sorted) pair so each partnership has exactly one row. */
@@ -312,6 +318,50 @@ export async function updateArenaMatchmaking(
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
   return { matchmaking: { starveThreshold: starve, emergencyWait: emergency } };
+}
+
+/**
+ * Update an arena's match + leaderboard defaults. Manager-gated. All four
+ * fields are required; the UI sends the current values for any unchanged
+ * inputs so partial updates aren't a concern.
+ */
+export async function updateArenaMatchDefaults(
+  arenaId,
+  {
+    targetScore: targetInput,
+    autoMixDefault: autoMixInput,
+    leaderboardSize: sizeInput,
+    countOffScheduleGames: countOffInput,
+  } = {},
+) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  const targetScore = Number(targetInput);
+  if (!Number.isInteger(targetScore) || targetScore < MIN_TARGET_SCORE || targetScore > MAX_TARGET_SCORE) {
+    return { error: `Target score must be a whole number between ${MIN_TARGET_SCORE} and ${MAX_TARGET_SCORE}.` };
+  }
+
+  const leaderboardSize = Number(sizeInput);
+  if (!Number.isInteger(leaderboardSize) || leaderboardSize < MIN_LEADERBOARD_SIZE || leaderboardSize > MAX_LEADERBOARD_SIZE) {
+    return { error: `Leaderboard size must be a whole number between ${MIN_LEADERBOARD_SIZE} and ${MAX_LEADERBOARD_SIZE}.` };
+  }
+
+  // Booleans must be strictly true/false — coerce so HTML form values
+  // ("true"/"false" strings) are accepted, but reject anything else.
+  const asBool = (v) => (v === true || v === 'true' ? true : v === false || v === 'false' ? false : null);
+  const autoMixDefault = asBool(autoMixInput);
+  const countOffScheduleGames = asBool(countOffInput);
+  if (autoMixDefault === null || countOffScheduleGames === null) {
+    return { error: 'Auto-mix and off-schedule settings must be true or false.' };
+  }
+
+  const updated = await prisma.arena.updateMany({
+    where: { id: arenaId },
+    data: { targetScore, autoMixDefault, leaderboardSize, countOffScheduleGames },
+  });
+  if (updated.count === 0) return { error: 'This arena no longer exists.' };
+  return { matchDefaults: { targetScore, autoMixDefault, leaderboardSize, countOffScheduleGames } };
 }
 
 // --- Arena play (owner-gated, scoped by arenaId) --------------------------
