@@ -131,16 +131,20 @@ export function ArenaMembers({
     act(() => linkPlayerToMember(arenaId, playerId, userId));
   };
 
-  // Self-link is offered to any signed-in member as long as there's a
+  // Self-link is offered to non-manager members as long as there's a
   // claimable orphan (one without an open request from someone else) or
-  // they already have a pending request to cancel. We deliberately do NOT
-  // gate on `!hasLinkedPlayer`: `approveJoinRequest` auto-creates a fresh
-  // Player on join, so every member arrives with `hasLinkedPlayer = true`.
-  // Gating on that would make the canonical "claim my historical walk-in"
-  // flow unreachable — the backend's merge path in
-  // `applyLinkPlayerToMember` handles it correctly.
+  // they already have a pending request to cancel. Managers (owner /
+  // organizer) are excluded: they can merge any walk-in directly via the
+  // Walk-ins pill's Link action, so the self-*request* flow would just be
+  // a request they'd approve themselves. We deliberately do NOT gate on
+  // `!hasLinkedPlayer`: `approveJoinRequest` auto-creates a fresh Player on
+  // join, so every member arrives with `hasLinkedPlayer = true`. Gating on
+  // that would make the canonical "claim my historical walk-in" flow
+  // unreachable — the backend's merge path in `applyLinkPlayerToMember`
+  // handles it correctly.
   const showSelfLink =
     isMember &&
+    !canManage &&
     !!viewerLinkContext &&
     (viewerLinkContext.pendingRequest || claimableOrphans.length > 0);
 
