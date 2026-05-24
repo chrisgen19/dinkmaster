@@ -4,7 +4,8 @@ import { getCurrentUser } from '@/lib/session';
 import { canManageArena } from '@/lib/roles';
 import { SiteHeader } from '@/app/site-header';
 import { AuthStatus } from '@/app/auth-status';
-import { ArenaSettings, SETTINGS_SECTION_SLUGS, sectionIdFromSlug } from '@/app/arena-settings';
+import { ArenaSettings } from '@/app/arena-settings';
+import { SETTINGS_SECTION_SLUGS, sectionIdFromSlug } from '@/app/arena-settings-sections';
 
 // Settings reads/writes live arena config; never serve a cached copy.
 export const dynamic = 'force-dynamic';

@@ -12,6 +12,7 @@ import {
   MIN_LEADERBOARD_SIZE,
   MAX_LEADERBOARD_SIZE,
 } from '@/lib/match-defaults';
+import { slugFromSectionId } from './arena-settings-sections';
 
 // --- Settings section icons (Lucide path data, inline) -----------------------
 // Hand-inlined so we don't pull in lucide-react for six icons. Sizing comes
@@ -98,49 +99,21 @@ function useSavedFlag(ms = 2500) {
   return [saved, flash, clear];
 }
 
-/** Section definitions for the left nav. All are visible to managers; the
- *  owner-only actions (transfer, delete) are gated inside Danger Zone. */
 /**
- * The settings sections, in display order. `slug` is the URL segment under
- * `/arena/[id]/settings/<slug>`; `hint` shows below the row on the mobile
- * iOS-style list so a manager can scan the page without drilling in.
- *
- * `matchDefaults` reads `match-defaults` in the URL (kebab-case is the
- * conventional URL form); we keep the camelCase id internally so the existing
- * section switch keeps working. The slug ↔ id mapping is the only place that
- * cares about the difference.
+ * Section presentation metadata, in display order. Visible to all managers
+ * (Danger Zone gates its owner-only actions inside). The slug ↔ id mapping
+ * lives in `./arena-settings-sections` — a non-client module the server route
+ * can import — so this list only carries the UI bits.
  */
 const SECTIONS = [
-  { id: 'general', slug: 'general', label: 'General', hint: 'Name and description', Icon: IconSettings },
-  { id: 'schedule', slug: 'schedule', label: 'Schedule', hint: 'Play days, times, timezone', Icon: IconCalendar },
-  { id: 'sessions', slug: 'sessions', label: 'Sessions', hint: 'Auto-reset rack on play day', Icon: IconRefresh },
-  { id: 'matchmaking', slug: 'matchmaking', label: 'Matchmaking', hint: 'Wait thresholds for promotion', Icon: IconShuffle },
-  { id: 'matchDefaults', slug: 'match-defaults', label: 'Match Defaults', hint: 'Target score, mix, leaderboard', Icon: IconTarget },
-  { id: 'danger', slug: 'danger', label: 'Danger Zone', hint: 'Reset, transfer, delete', Icon: IconAlert, danger: true },
+  { id: 'general', label: 'General', hint: 'Name and description', Icon: IconSettings },
+  { id: 'schedule', label: 'Schedule', hint: 'Play days, times, timezone', Icon: IconCalendar },
+  { id: 'sessions', label: 'Sessions', hint: 'Auto-reset rack on play day', Icon: IconRefresh },
+  { id: 'matchmaking', label: 'Matchmaking', hint: 'Wait thresholds for promotion', Icon: IconShuffle },
+  { id: 'matchDefaults', label: 'Match Defaults', hint: 'Target score, mix, leaderboard', Icon: IconTarget },
+  { id: 'danger', label: 'Danger Zone', hint: 'Reset, transfer, delete', Icon: IconAlert, danger: true },
 ];
 
-/** Reverse lookup: kebab-case URL slug → internal section id. */
-export const SETTINGS_SECTION_SLUGS = SECTIONS.map((s) => s.slug);
-export function sectionIdFromSlug(slug) {
-  return SECTIONS.find((s) => s.slug === slug)?.id ?? null;
-}
-
-/**
- * Owner/organizer settings page body for one arena. Left-nav sections; each
- * section owns its form state and calls a guarded server action. Danger Zone is
- * owner-only (also enforced server-side).
- *
- * @param {object} props
- * @param {string} props.arenaId
- * @param {string} props.arenaName
- * @param {string} props.description
- * @param {{days:number[], start:string|null, end:string|null, timezone:string}} props.schedule
- * @param {{starveThreshold:number, emergencyWait:number}} props.matchmaking
- * @param {{targetScore:number, autoMixDefault:boolean, leaderboardSize:number, countOffScheduleGames:boolean}} props.matchDefaults
- * @param {boolean} props.isOwner
- * @param {string|null} props.viewerUserId
- * @param {Array<{userId:string, name:string, role:string}>} props.members
- */
 /**
  * Render the body for a given section id. Centralised so the desktop shell
  * and the mobile section page can call the same render path.
@@ -229,7 +202,7 @@ export function ArenaSettings({ section = null, arenaId, arenaName, description,
             {SECTIONS.map((s) => (
               <li key={s.id}>
                 <Link
-                  href={`/arena/${arenaId}/settings/${s.slug}`}
+                  href={`/arena/${arenaId}/settings/${slugFromSectionId(s.id)}`}
                   className={`flex items-center gap-3 px-4 py-3.5 transition active:bg-slate-50 ${s.danger ? 'text-red-600 hover:bg-red-50/40' : 'text-slate-800 hover:bg-slate-50'}`}
                 >
                   <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ring-1 ring-inset ${s.danger ? 'bg-red-50 text-red-600 ring-red-100' : 'bg-emerald-50 text-emerald-700 ring-emerald-100'}`}>
@@ -275,7 +248,7 @@ export function ArenaSettings({ section = null, arenaId, arenaName, description,
                 <Link
                   key={s.id}
                   ref={(el) => { tabRefs.current[s.id] = el; }}
-                  href={`/arena/${arenaId}/settings/${s.slug}`}
+                  href={`/arena/${arenaId}/settings/${slugFromSectionId(s.id)}`}
                   role="tab"
                   aria-selected={active}
                   tabIndex={active ? 0 : -1}
