@@ -23,7 +23,15 @@ const ROLE_BADGE = {
   MEMBER: 'bg-slate-100 text-slate-600',
 };
 
-/** Members tab: roster with roles, owner controls, pending requests, and leave. */
+/**
+ * Members tab: pill-tabbed view of the arena's people. Three pills —
+ * `members` (account holders, with role management for the owner),
+ * `walkins` (orphan walk-in players, read-only for non-managers, with a
+ * Link Player action for managers), and `requests` (manager-only: pending
+ * join requests + pending link requests). A manager-only count banner sits
+ * above the pills on non-`requests` pills so unattended approvals are
+ * always visible without flooding the list view.
+ */
 export function ArenaMembers({
   arenaId,
   members,
@@ -37,6 +45,7 @@ export function ArenaMembers({
   const router = useRouter();
   const [error, setError] = useState('');
   const [isPending, startTransition] = useTransition();
+  const [activePill, setActivePill] = useState('members');
   // Two independent modal slots: the member self-request picker and the
   // manager direct-link picker (keyed by the orphan player it was opened on).
   const [selfLinkOpen, setSelfLinkOpen] = useState(false);
@@ -44,6 +53,8 @@ export function ArenaMembers({
 
   const isOwner = viewerRole === ROLES.OWNER;
   const isMember = !!viewerRole;
+  const orphanPlayers = viewerLinkContext?.orphanPlayers ?? [];
+  const pendingTotal = pendingRequests.length + pendingLinkRequests.length;
 
   const act = (fn) => {
     setError('');
@@ -78,7 +89,6 @@ export function ArenaMembers({
   };
   const approve = (r) => act(() => approveJoinRequest(arenaId, r.userId));
   const reject = (r) => act(() => rejectJoinRequest(arenaId, r.userId));
-
   const approveLink = (r) => act(() => approveLinkRequest(arenaId, r.requestId));
   const rejectLink = (r) => act(() => rejectLinkRequest(arenaId, r.requestId));
   const cancelLink = () => act(() => cancelLinkRequest(arenaId));
@@ -93,30 +103,30 @@ export function ArenaMembers({
 
   // Self-link is offered when: a signed-in member has no linked Player here,
   // and there's at least one orphan walk-in to claim. Members with a pending
-  // request still see the section (in its "pending" state) so they can cancel.
+  // request still see the panel (in its "pending" state) so they can cancel.
   const showSelfLink =
     isMember &&
     !!viewerLinkContext &&
     !viewerLinkContext.hasLinkedPlayer &&
-    (viewerLinkContext.pendingRequest || viewerLinkContext.orphanPlayers.length > 0);
+    (viewerLinkContext.pendingRequest || orphanPlayers.length > 0);
 
-  // Manager direct-link is offered when there are orphan walk-ins to act on.
-  // Reuse the viewer's orphan list when present (same query result); managers
-  // who already have a linked player still need this list, so fall back to
-  // collecting orphans from pendingLinkRequests is not enough — but every
-  // signed-in viewer gets a `viewerLinkContext` so this is reliable for
-  // managers, who are signed in by definition of `canManage`.
-  const orphanPlayers = viewerLinkContext?.orphanPlayers ?? [];
+  // Pill nav. The Requests pill is manager-only — non-managers have nothing
+  // actionable there. Walk-ins is always visible (read-only for non-managers).
+  const pills = [
+    { id: 'members', label: 'Members', count: members.length },
+    { id: 'walkins', label: 'Walk-ins', count: orphanPlayers.length },
+    ...(canManage ? [{ id: 'requests', label: 'Requests', count: pendingTotal }] : []),
+  ];
 
   return (
     <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-5 animate-fade-in">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-extrabold uppercase tracking-widest text-slate-400">
-            Members ({members.length})
+            People
           </h3>
           <p className="text-xs text-slate-500 mt-1.5">
-            Owners and organizers can run the session; members can view it.
+            Members have an account and a role. Walk-ins are temporary — link them to a member to keep their stats.
           </p>
         </div>
         {isMember && !isOwner && (
@@ -136,192 +146,98 @@ export function ArenaMembers({
         </div>
       )}
 
-      {canManage && pendingLinkRequests.length > 0 && (
-        <div className="rounded-xl border border-sky-200 bg-sky-50/50 p-4">
-          <h4 className="text-xs font-extrabold uppercase tracking-widest text-sky-700 mb-3">
-            Pending link requests ({pendingLinkRequests.length})
-          </h4>
-          <ul className="space-y-2">
-            {pendingLinkRequests.map((r) => (
-              <li key={r.requestId} className="flex items-center justify-between gap-3">
-                <span className="text-sm text-slate-800 truncate">
-                  <span className="font-semibold">{r.memberName}</span>
-                  <span className="text-slate-400"> claims </span>
-                  <span className="font-semibold">{r.playerName}</span>
-                </span>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => approveLink(r)}
-                    disabled={isPending}
-                    className="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
-                  >
-                    Accept
-                  </button>
-                  <button
-                    onClick={() => rejectLink(r)}
-                    disabled={isPending}
-                    className="text-[11px] bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-600 border border-slate-200 px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
-                  >
-                    Reject
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
+      {canManage && pendingTotal > 0 && activePill !== 'requests' && (
+        <button
+          type="button"
+          onClick={() => setActivePill('requests')}
+          className="w-full text-left rounded-xl border border-amber-200 bg-amber-50/60 hover:bg-amber-50 px-4 py-2.5 flex items-center justify-between gap-3 transition"
+        >
+          <span className="text-xs font-semibold text-amber-800">
+            {summariseRequests(pendingRequests.length, pendingLinkRequests.length)} pending
+          </span>
+          <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider">
+            Review →
+          </span>
+        </button>
       )}
 
-      {canManage && pendingRequests.length > 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
-          <h4 className="text-xs font-extrabold uppercase tracking-widest text-amber-700 mb-3">
-            Pending join requests ({pendingRequests.length})
-          </h4>
-          <ul className="space-y-2">
-            {pendingRequests.map((r) => (
-              <li key={r.requestId} className="flex items-center justify-between gap-3">
-                <span className="text-sm font-semibold text-slate-800 truncate">{r.name}</span>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => approve(r)}
-                    disabled={isPending}
-                    className="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
-                  >
-                    Accept
-                  </button>
-                  <button
-                    onClick={() => reject(r)}
-                    disabled={isPending}
-                    className="text-[11px] bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-600 border border-slate-200 px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
-                  >
-                    Reject
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {showSelfLink && (
-        <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
-          <h4 className="text-xs font-extrabold uppercase tracking-widest text-slate-500 mb-2">
-            Link your account
-          </h4>
-          {viewerLinkContext.pendingRequest ? (
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs text-slate-600">
-                Pending approval — claimed as{' '}
-                <span className="font-semibold text-slate-800">
-                  {viewerLinkContext.pendingRequest.playerName}
-                </span>
-                .
-              </p>
-              <button
-                onClick={cancelLink}
-                disabled={isPending}
-                className="text-[11px] bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-600 border border-slate-200 px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs text-slate-600">
-                If a walk-in row in the rack is really you, request to claim it so your stats carry over.
-              </p>
-              <button
-                onClick={() => setSelfLinkOpen(true)}
-                disabled={isPending}
-                className="text-[11px] bg-sky-600 hover:bg-sky-700 text-white px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
-              >
-                Link Player
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {canManage && orphanPlayers.length > 0 && (
-        <div className="rounded-xl border border-slate-200 p-4">
-          <h4 className="text-xs font-extrabold uppercase tracking-widest text-slate-500 mb-3">
-            Walk-in players ({orphanPlayers.length})
-          </h4>
-          <p className="text-xs text-slate-500 mb-3">
-            Walk-ins have no account. Link one to a member to merge their stats.
-          </p>
-          <ul className="divide-y divide-slate-100">
-            {orphanPlayers.map((p) => (
-              <li key={p.id} className="flex items-center justify-between gap-3 py-2">
-                <span className="text-sm font-semibold text-slate-800 truncate">{p.displayName}</span>
-                <button
-                  onClick={() => setManagerLinkFor(p)}
-                  disabled={isPending}
-                  className="text-[11px] bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-100 px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
-                >
-                  Link Player
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <ul className="divide-y divide-slate-100">
-        {members.map((m) => (
-          <li key={m.membershipId} className="flex items-center justify-between gap-3 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-800 truncate">
-                {m.name}
-                {m.userId === viewerUserId && <span className="text-slate-400 font-normal"> (you)</span>}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
+      <div role="tablist" aria-label="People pills" className="inline-flex gap-1 p-1 bg-slate-100 rounded-xl">
+        {pills.map((p) => {
+          const active = activePill === p.id;
+          return (
+            <button
+              key={p.id}
+              role="tab"
+              aria-selected={active}
+              onClick={() => setActivePill(p.id)}
+              className={`text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
+                active ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {p.label}
               <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${ROLE_BADGE[m.role]}`}
+                className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${
+                  active ? 'bg-slate-100 text-slate-600' : 'bg-slate-200/70 text-slate-500'
+                }`}
               >
-                {m.role}
+                {p.count}
               </span>
-              {isOwner && m.role !== ROLES.OWNER && (
-                <>
-                  <button
-                    onClick={() => promoteToggle(m)}
-                    disabled={isPending}
-                    className="text-[11px] bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-100 px-2 py-1 rounded-lg font-bold transition disabled:opacity-50"
-                  >
-                    {m.role === ROLES.ORGANIZER ? 'Demote' : 'Make organizer'}
-                  </button>
-                  <button
-                    onClick={() => transfer(m)}
-                    disabled={isPending}
-                    className="text-[11px] bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-100 px-2 py-1 rounded-lg font-bold transition disabled:opacity-50"
-                  >
-                    Make owner
-                  </button>
-                  <button
-                    onClick={() => remove(m)}
-                    disabled={isPending}
-                    className="text-[11px] bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 px-2 py-1 rounded-lg font-bold transition disabled:opacity-50"
-                  >
-                    Remove
-                  </button>
-                </>
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
+            </button>
+          );
+        })}
+      </div>
+
+      {activePill === 'members' && (
+        <div className="space-y-4">
+          {showSelfLink && (
+            <SelfLinkPanel
+              pendingRequest={viewerLinkContext.pendingRequest}
+              onOpenModal={() => setSelfLinkOpen(true)}
+              onCancel={cancelLink}
+              disabled={isPending}
+            />
+          )}
+          <MembersList
+            members={members}
+            viewerUserId={viewerUserId}
+            isOwner={isOwner}
+            isPending={isPending}
+            onPromoteToggle={promoteToggle}
+            onTransfer={transfer}
+            onRemove={remove}
+          />
+        </div>
+      )}
+
+      {activePill === 'walkins' && (
+        <WalkInsList
+          orphans={orphanPlayers}
+          canManage={canManage}
+          isPending={isPending}
+          onLink={(p) => setManagerLinkFor(p)}
+        />
+      )}
+
+      {activePill === 'requests' && canManage && (
+        <RequestsList
+          pendingLinkRequests={pendingLinkRequests}
+          pendingRequests={pendingRequests}
+          isPending={isPending}
+          onApproveLink={approveLink}
+          onRejectLink={rejectLink}
+          onApproveJoin={approve}
+          onRejectJoin={reject}
+        />
+      )}
 
       {selfLinkOpen && (
         <LinkPlayerModal
           title="Request to link your account"
           description="Pick the walk-in player that's really you. An owner or organizer will approve it."
           submitLabel="Send request"
-          options={(viewerLinkContext?.orphanPlayers ?? []).map((p) => ({
-            value: p.id,
-            label: p.displayName,
-          }))}
+          options={orphanPlayers.map((p) => ({ value: p.id, label: p.displayName }))}
           onCancel={() => setSelfLinkOpen(false)}
-          onSubmit={(playerId) => submitSelfLink(playerId)}
+          onSubmit={submitSelfLink}
           disabled={isPending}
         />
       )}
@@ -336,6 +252,218 @@ export function ArenaMembers({
           onSubmit={(userId) => submitManagerLink(managerLinkFor.id, userId)}
           disabled={isPending}
         />
+      )}
+    </div>
+  );
+}
+
+/** One-line summary like "2 join + 3 link requests" / "1 link request". */
+function summariseRequests(joinCount, linkCount) {
+  const parts = [];
+  if (joinCount > 0) parts.push(`${joinCount} join`);
+  if (linkCount > 0) parts.push(`${linkCount} link`);
+  const total = joinCount + linkCount;
+  const label = total === 1 ? 'request' : 'requests';
+  return `${parts.join(' + ')} ${label}`;
+}
+
+function SelfLinkPanel({ pendingRequest, onOpenModal, onCancel, disabled }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+      <h4 className="text-xs font-extrabold uppercase tracking-widest text-slate-500 mb-2">
+        Link your account
+      </h4>
+      {pendingRequest ? (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-slate-600">
+            Pending approval — claimed as{' '}
+            <span className="font-semibold text-slate-800">{pendingRequest.playerName}</span>.
+          </p>
+          <button
+            onClick={onCancel}
+            disabled={disabled}
+            className="text-[11px] bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-600 border border-slate-200 px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-slate-600">
+            If a walk-in row in the rack is really you, request to claim it so your stats carry over.
+          </p>
+          <button
+            onClick={onOpenModal}
+            disabled={disabled}
+            className="text-[11px] bg-sky-600 hover:bg-sky-700 text-white px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
+          >
+            Link Player
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MembersList({ members, viewerUserId, isOwner, isPending, onPromoteToggle, onTransfer, onRemove }) {
+  if (members.length === 0) {
+    return <p className="text-xs text-slate-500 py-2">No members yet.</p>;
+  }
+  return (
+    <ul className="divide-y divide-slate-100">
+      {members.map((m) => (
+        <li key={m.membershipId} className="flex items-center justify-between gap-3 py-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-slate-800 truncate">
+              {m.name}
+              {m.userId === viewerUserId && <span className="text-slate-400 font-normal"> (you)</span>}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span
+              className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${ROLE_BADGE[m.role]}`}
+            >
+              {m.role}
+            </span>
+            {isOwner && m.role !== ROLES.OWNER && (
+              <>
+                <button
+                  onClick={() => onPromoteToggle(m)}
+                  disabled={isPending}
+                  className="text-[11px] bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-100 px-2 py-1 rounded-lg font-bold transition disabled:opacity-50"
+                >
+                  {m.role === ROLES.ORGANIZER ? 'Demote' : 'Make organizer'}
+                </button>
+                <button
+                  onClick={() => onTransfer(m)}
+                  disabled={isPending}
+                  className="text-[11px] bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-100 px-2 py-1 rounded-lg font-bold transition disabled:opacity-50"
+                >
+                  Make owner
+                </button>
+                <button
+                  onClick={() => onRemove(m)}
+                  disabled={isPending}
+                  className="text-[11px] bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 px-2 py-1 rounded-lg font-bold transition disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              </>
+            )}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function WalkInsList({ orphans, canManage, isPending, onLink }) {
+  if (orphans.length === 0) {
+    return <p className="text-xs text-slate-500 py-2">No walk-in players right now.</p>;
+  }
+  return (
+    <ul className="divide-y divide-slate-100">
+      {orphans.map((p) => (
+        <li key={p.id} className="flex items-center justify-between gap-3 py-2.5">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-semibold text-slate-800 truncate">{p.displayName}</span>
+            <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-600">
+              walk-in
+            </span>
+          </div>
+          {canManage && (
+            <button
+              onClick={() => onLink(p)}
+              disabled={isPending}
+              className="text-[11px] bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-100 px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
+            >
+              Link Player
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function RequestsList({
+  pendingLinkRequests,
+  pendingRequests,
+  isPending,
+  onApproveLink,
+  onRejectLink,
+  onApproveJoin,
+  onRejectJoin,
+}) {
+  if (pendingLinkRequests.length === 0 && pendingRequests.length === 0) {
+    return <p className="text-xs text-slate-500 py-2">No pending requests.</p>;
+  }
+  return (
+    <div className="space-y-4">
+      {pendingLinkRequests.length > 0 && (
+        <div className="rounded-xl border border-sky-200 bg-sky-50/50 p-4">
+          <h4 className="text-xs font-extrabold uppercase tracking-widest text-sky-700 mb-3">
+            Link requests ({pendingLinkRequests.length})
+          </h4>
+          <ul className="space-y-2">
+            {pendingLinkRequests.map((r) => (
+              <li key={r.requestId} className="flex items-center justify-between gap-3">
+                <span className="text-sm text-slate-800 truncate">
+                  <span className="font-semibold">{r.memberName}</span>
+                  <span className="text-slate-400"> claims </span>
+                  <span className="font-semibold">{r.playerName}</span>
+                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => onApproveLink(r)}
+                    disabled={isPending}
+                    className="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
+                  >
+                    Accept
+                  </button>
+                  <button
+                    onClick={() => onRejectLink(r)}
+                    disabled={isPending}
+                    className="text-[11px] bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-600 border border-slate-200 px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {pendingRequests.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+          <h4 className="text-xs font-extrabold uppercase tracking-widest text-amber-700 mb-3">
+            Join requests ({pendingRequests.length})
+          </h4>
+          <ul className="space-y-2">
+            {pendingRequests.map((r) => (
+              <li key={r.requestId} className="flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold text-slate-800 truncate">{r.name}</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => onApproveJoin(r)}
+                    disabled={isPending}
+                    className="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
+                  >
+                    Accept
+                  </button>
+                  <button
+                    onClick={() => onRejectJoin(r)}
+                    disabled={isPending}
+                    className="text-[11px] bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-600 border border-slate-200 px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
