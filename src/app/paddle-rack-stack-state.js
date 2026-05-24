@@ -3,8 +3,12 @@
 // severity, display name/initials) is unit-testable in node, mirroring the
 // arena-session-prep-state.js / sessions.js pure-module convention.
 
-/** How many front-of-rack paddles stack onto the next open court. */
-export const ON_DECK_SIZE = 4;
+// Re-export the shared on-deck size so existing consumers keep importing it
+// from here, while the single source of truth lives in @/lib/matchmaking
+// (shared with the fillCourt / skipPlayer server actions).
+import { ON_DECK_SIZE } from '@/lib/matchmaking';
+
+export { ON_DECK_SIZE };
 
 /** "Ada Lovelace" / "Ada" — falls back to Unknown for malformed rows. */
 export const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');

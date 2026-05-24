@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { getState } from '@/lib/data';
 import { getCurrentUser, requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
 import { ROLES } from '@/lib/roles';
-import { MAX_WAIT_THRESHOLD, bandOf } from '@/lib/matchmaking';
+import { MAX_WAIT_THRESHOLD, ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
 import {
   DEFAULT_TARGET_SCORE,
   MIN_TARGET_SCORE,
@@ -1093,15 +1093,21 @@ export async function skipPlayer(arenaId, playerId) {
   let moved = false;
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
-    // Re-check under the lock: only act on a paddle still on the rack.
-    const player = await tx.player.findFirst({
-      where: { id: playerId, arenaId, leftAt: null, queueOrder: { not: null } },
+    // Enforce the same eligibility the UI gates on (deriveRackRow.canSkip),
+    // server-authoritatively: skip is only valid for an ON-DECK paddle (top
+    // ON_DECK_SIZE of the rack) AND only when someone is waiting behind to
+    // take the freed spot. Re-checked under the lock so a direct POST can't
+    // skip an off-deck paddle to reset waitRounds and dodge the fairness rules.
+    const queued = await tx.player.findMany({
+      where: { arenaId, leftAt: null, queueOrder: { not: null } },
+      orderBy: { queueOrder: 'asc' },
       select: { id: true },
     });
-    if (!player) return;
+    const index = queued.findIndex((p) => p.id === playerId);
+    if (index === -1 || index >= ON_DECK_SIZE || queued.length <= ON_DECK_SIZE) return;
     const order = (await maxQueueOrder(tx, arenaId)) + 1;
     await tx.player.update({
-      where: { id: player.id },
+      where: { id: playerId },
       data: { queueOrder: order, waitRounds: 0 },
     });
     moved = true;

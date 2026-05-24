@@ -14,6 +14,12 @@
 export const DEFAULT_STARVE_THRESHOLD = 2;
 export const DEFAULT_EMERGENCY_WAIT = 4;
 
+// Size of the "on deck" group — the front-of-rack paddles next in line for a
+// court. The rack UI highlights this many, and `skipPlayer` only lets an
+// on-deck paddle skip. Equals a doubles court (4), which `fillCourt` pulls
+// (its matchup logic is hardwired to 4, so it isn't parameterized by this).
+export const ON_DECK_SIZE = 4;
+
 // Reasonable bounds on the per-arena thresholds. Lower bound is 1 (zero would
 // mean "everyone is protected" — useless); upper bound stops a typo from
 // creating a runaway value. Shared by the server validation and the Settings

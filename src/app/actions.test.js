@@ -1241,36 +1241,59 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('confirms with a notification when the paddle is moved to the back', async () => {
+  // Helper: a tx stub whose ordered rack is `rackIds`, used to drive the
+  // eligibility checks inside the transaction.
+  const txWithRack = (rackIds, maxOrder = rackIds.length) => ({
+    $executeRaw: vi.fn(),
+    player: {
+      findMany: vi.fn().mockResolvedValue(rackIds.map((id) => ({ id }))),
+      aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: maxOrder } }),
+      update: vi.fn(),
+    },
+  });
+
+  it('confirms with a notification and moves an on-deck paddle to the back', async () => {
     getCurrentUser.mockResolvedValue({ id: 'u-me' });
     prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
-    const tx = {
-      $executeRaw: vi.fn(),
-      player: {
-        findFirst: vi.fn().mockResolvedValue({ id: 'p1' }),
-        aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 7 } }),
-        update: vi.fn(),
-      },
-    };
+    const tx = txWithRack(['p1', 'p2', 'p3', 'p4', 'p5'], 5); // p1 on deck, 5 > ON_DECK_SIZE
     prisma.$transaction.mockImplementation(async (cb) => cb(tx));
     const result = await actions.skipPlayer(ARENA, 'p1');
     expect(result.notification).toBe('Paddle sent to the back of the rack.');
     expect(tx.player.update).toHaveBeenCalledWith({
       where: { id: 'p1' },
-      data: { queueOrder: 8, waitRounds: 0 },
+      data: { queueOrder: 6, waitRounds: 0 },
     });
   });
 
   it('returns NO notification on a no-op skip (paddle already left the rack)', async () => {
     getCurrentUser.mockResolvedValue({ id: 'u-me' });
     prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
-    const tx = {
-      $executeRaw: vi.fn(),
-      player: { findFirst: vi.fn().mockResolvedValue(null), aggregate: vi.fn(), update: vi.fn() },
-    };
+    const tx = txWithRack(['p2', 'p3', 'p4', 'p5', 'p6']); // p1 not present
     prisma.$transaction.mockImplementation(async (cb) => cb(tx));
     const result = await actions.skipPlayer(ARENA, 'p1');
     expect(result.error).toBeUndefined();
+    expect(result.notification).toBe('');
+    expect(tx.player.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects skipping an OFF-deck paddle server-side, even for the owner (no-op)', async () => {
+    getCurrentUser.mockResolvedValue({ id: 'u-me' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
+    // p1 sits at index 5 — past the on-deck group — so a direct POST can't move
+    // it (and can't reset waitRounds) despite passing self-auth.
+    const tx = txWithRack(['a', 'b', 'c', 'd', 'e', 'p1', 'g', 'h']);
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+    const result = await actions.skipPlayer(ARENA, 'p1');
+    expect(result.notification).toBe('');
+    expect(tx.player.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects skipping when nobody waits behind the on-deck group (no-op)', async () => {
+    getCurrentUser.mockResolvedValue({ id: 'u-me' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
+    const tx = txWithRack(['p1', 'b', 'c', 'd']); // exactly ON_DECK_SIZE, none waiting
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+    const result = await actions.skipPlayer(ARENA, 'p1');
     expect(result.notification).toBe('');
     expect(tx.player.update).not.toHaveBeenCalled();
   });
