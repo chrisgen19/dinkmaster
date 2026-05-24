@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { currentSession, lastSession, nextSession, IMMINENT_WINDOW_MS } from '@/lib/sessions';
+import { deriveState } from './arena-session-prep-state';
 
 /** Format a UTC instant as "Tue May 26 · 6:00 PM" in the arena's timezone. */
 function formatSessionStart(instant, timeZone) {
@@ -27,31 +27,6 @@ function formatCountdown(ms) {
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
   return m ? `in ${h} h ${m} min` : `in ${h} h`;
-}
-
-/**
- * Derive the banner state from schedule + last-reset + now. Pure helper so
- * the component is easy to test by tweaking inputs; mirrors the same shape
- * the JSX consumes. `prepared` is true when the rack has been session-reset
- * since the previous session's end — i.e. the manager already prepped.
- */
-function deriveState({ schedule, lastSessionResetAt, now }) {
-  const days = Array.isArray(schedule?.days) ? schedule.days : [];
-  if (days.length === 0) return { kind: 'none' };
-
-  const live = currentSession(schedule, now);
-  if (live) return { kind: 'live', session: live };
-
-  const next = nextSession(schedule, now);
-  if (!next) return { kind: 'none' };
-
-  const prev = lastSession(schedule, now);
-  const last = lastSessionResetAt ? new Date(lastSessionResetAt) : null;
-  const prepared = last !== null && (!prev || last > prev.end);
-
-  const msToStart = next.start.getTime() - now.getTime();
-  const kind = msToStart < IMMINENT_WINDOW_MS ? 'imminent' : 'between';
-  return { kind, session: next, prepared, msToStart };
 }
 
 /**
@@ -96,17 +71,22 @@ export function ArenaSessionPrepBanner({
   onPrepareAndOpen,
   onOpenRoster,
 }) {
-  // Re-evaluate every minute so a between→imminent→live transition doesn't
-  // need a page refresh. Initial render uses Date.now() — re-renders update it.
+  // Re-evaluate every minute so a between→imminent→live transition (and the
+  // "starts in N min" countdown) update without a page refresh. Only tick
+  // when the banner can actually render something — a manager with a
+  // scheduled arena. Spectators and unscheduled arenas render null, so a
+  // perpetual no-op timer would just be waste.
+  const hasSchedule = (schedule?.days?.length ?? 0) > 0;
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
+    if (!canManage || !hasSchedule) return undefined;
     const t = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(t);
-  }, []);
+  }, [canManage, hasSchedule]);
 
   const state = useMemo(
-    () => deriveState({ schedule, lastSessionResetAt, now }),
-    [schedule, lastSessionResetAt, now],
+    () => deriveState({ schedule, lastSessionResetAt, autoResetOnSession, now }),
+    [schedule, lastSessionResetAt, autoResetOnSession, now],
   );
 
   // Dismissal is only offered on actual play days (imminent or live) — on
@@ -139,15 +119,11 @@ export function ArenaSessionPrepBanner({
   const tz = schedule.timezone || 'Asia/Manila';
   const sessionStartLabel = state.session ? formatSessionStart(state.session.start, tz) : null;
 
-  // Single CTA per state. `needsReset` is the only case that does the
-  // rack/matrix wipe on tap (Prepare next session) — every other case just
-  // opens the modal (Edit/Manage roster). Two gates:
-  //   1. The session isn't already prepped (a reset since the prior session).
-  //   2. `autoResetOnSession` is on — when off the arena keeps the perpetual
-  //      rack, so the banner never auto-wipes; the manager opens the roster
-  //      to adjust by hand, or resets explicitly from Settings → Sessions.
-  const needsReset =
-    autoResetOnSession && (state.kind === 'between' || state.kind === 'imminent') && !state.prepared;
+  // `needsReset` (computed in deriveState) is the only case whose CTA wipes
+  // rack + matrix on tap — every other case just opens the modal. It's
+  // false for live sessions, already-prepped days, and arenas with
+  // auto-reset off (those keep the perpetual rack).
+  const { needsReset } = state;
   let title;
   let label;
   if (state.kind === 'live') {

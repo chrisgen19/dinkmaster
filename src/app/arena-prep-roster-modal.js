@@ -101,6 +101,12 @@ export function ArenaPrepRosterModal({
       .sort(byPlayerName);
   }, [players, queue]);
 
+  // Rack actions (check-in/out, add walk-in) return a fresh state envelope
+  // we reconcile into the parent's local rack state via `onApplyResult` —
+  // no full refetch. Request actions instead use `router.refresh()` (see
+  // `handleRequest`) because they mutate membership rows that live on
+  // server-rendered props. The two paths are deliberately separate; both
+  // converge once arena.js re-syncs from the next server read.
   const run = (fn) => {
     startTransition(async () => {
       const result = await fn();
