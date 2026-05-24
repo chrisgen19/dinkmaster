@@ -1,12 +1,7 @@
 'use client';
 
 import { Fragment } from 'react';
-
-/** "Ada Lovelace" / "Ada" — falls back to Unknown for malformed rows. */
-const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
-
-/** Two-letter avatar initials from first/last name (uppercased). */
-const initials = (p) => `${p?.firstName?.[0] ?? ''}${p?.lastName?.[0] ?? ''}`.toUpperCase() || '?';
+import { deriveRackRow, ON_DECK_SIZE } from './paddle-rack-stack-state';
 
 // --- Inline Lucide icons -------------------------------------------------
 // Hand-inlined Lucide path data (matching the app's inline-SVG convention, so
@@ -210,16 +205,20 @@ export function PaddleRackStack({
             const player = players.find((p) => p.id === playerId);
             if (!player) return null;
 
-            const isOnDeck = index < 4;
-            const isYou = player.userId && player.userId === viewerUserId;
-            const isWalkIn = !player.userId;
-            const starving = player.waitRounds >= starveThreshold;
-            const emergency = player.waitRounds >= emergencyWait;
+            const { rank, isOnDeck, isYou, isWalkIn, badge, waitRounds, name, initials } = deriveRackRow(
+              player,
+              index,
+              { viewerUserId, starveThreshold, emergencyWait },
+            );
+            const starving = badge !== 'none';
+            const emergency = badge === 'emergency';
 
             return (
               <Fragment key={playerId}>
                 {index === 0 && <GroupLabel accent>On deck · next court</GroupLabel>}
-                {index === 4 && <GroupLabel className="pt-2">Waiting · {queue.length - 4}</GroupLabel>}
+                {index === ON_DECK_SIZE && (
+                  <GroupLabel className="pt-2">Waiting · {queue.length - ON_DECK_SIZE}</GroupLabel>
+                )}
 
                 <div
                   className={`group relative flex items-center gap-3 rounded-xl border p-3 transition ${
@@ -236,7 +235,7 @@ export function PaddleRackStack({
                       isOnDeck ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500'
                     }`}
                   >
-                    {index + 1}
+                    {rank}
                   </span>
 
                   {/* Avatar */}
@@ -246,13 +245,13 @@ export function PaddleRackStack({
                     } ${isYou ? 'ring-2 ring-emerald-400' : isOnDeck ? 'ring-1 ring-emerald-200' : 'ring-1 ring-slate-200'}`}
                     aria-hidden="true"
                   >
-                    {initials(player)}
+                    {initials}
                   </span>
 
                   {/* Identity */}
                   <div className="min-w-0 flex-1">
                     <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-slate-800">
-                      <span className="truncate">{fullName(player)}</span>
+                      <span className="truncate">{name}</span>
                       {isYou && (
                         <span className="shrink-0 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
                           You
@@ -271,10 +270,10 @@ export function PaddleRackStack({
                           className={`inline-flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
                             emergency ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
                           }`}
-                          title={`Waiting ${player.waitRounds} rounds`}
+                          title={`Waiting ${waitRounds} rounds`}
                         >
                           <IconClock className="h-3 w-3" />
-                          {player.waitRounds}
+                          {waitRounds}
                         </span>
                       )}
                     </p>
@@ -290,7 +289,7 @@ export function PaddleRackStack({
                       onClick={() => onRemovePlayer(player.id)}
                       className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 opacity-100 transition hover:bg-red-50 hover:text-red-600 active:scale-95 lg:opacity-0 lg:group-hover:opacity-100"
                       title="Remove player from the rack"
-                      aria-label={`Remove ${fullName(player)} from the rack`}
+                      aria-label={`Remove ${name} from the rack`}
                     >
                       <IconX className="h-4 w-4" />
                     </button>
