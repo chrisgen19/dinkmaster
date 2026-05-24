@@ -645,6 +645,11 @@ describe('arena server actions — authorization', () => {
       );
       expect(tx.player.deleteMany).not.toHaveBeenCalled();
       expect(tx.arenaMembership.deleteMany).toHaveBeenCalled();
+      // Loop-closing cleanup: a leaver should not be left with a lingering
+      // LinkRequest (mirrors the existing JoinRequest cleanup).
+      expect(tx.linkRequest.deleteMany).toHaveBeenCalledWith({
+        where: { arenaId: ARENA, userId: 'u2' },
+      });
     });
 
     // --- linkPlayerToMember branches & merge semantics ---------------------

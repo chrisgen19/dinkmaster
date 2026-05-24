@@ -71,6 +71,24 @@ const onScoreChange = (setter, raw) => {
   if (raw === '' || /^\d+$/.test(raw)) setter(raw);
 };
 
+/**
+ * Numeric badge for the Members tab in the arena nav. Counts unresolved
+ * items needing the viewer's attention: pending join + link requests for
+ * managers, and the viewer's own pending self-link for non-managers.
+ * A manager's own self-link is already inside `pendingLinkRequests`, so it
+ * must not be added a second time via `viewerLinkContext`. Returns `null`
+ * (not 0) when there is nothing to surface, so the consumer can render a
+ * falsy badge without an extra check.
+ */
+const computeMembersBadge = ({ canManage, pendingRequests, pendingLinkRequests, viewerLinkContext }) => {
+  const count = canManage
+    ? pendingRequests.length + pendingLinkRequests.length
+    : viewerLinkContext?.pendingRequest
+      ? 1
+      : 0;
+  return count || null;
+};
+
 const playPaddleSound = () => {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -353,16 +371,12 @@ export default function Arena({
     {
       id: 'members',
       label: 'Members',
-      // Surface anything that needs the viewer's attention: pending join
-      // requests and pending link requests for managers, and the viewer's own
-      // pending link request for non-managers (managers' own request is
-      // already counted in `pendingLinkRequests`, so don't double-add it).
-      badge:
-        (canManage
-          ? pendingRequests.length + pendingLinkRequests.length
-          : viewerLinkContext?.pendingRequest
-            ? 1
-            : 0) || null,
+      badge: computeMembersBadge({
+        canManage,
+        pendingRequests,
+        pendingLinkRequests,
+        viewerLinkContext,
+      }),
     },
     ...(myPlayer ? [{ id: 'mystats', label: 'My Stats' }] : []),
   ];

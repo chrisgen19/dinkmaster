@@ -548,7 +548,7 @@ async function applyLinkPlayerToMember(tx, arenaId, playerId, userId) {
  */
 export async function linkPlayerToMember(arenaId, playerId, userId) {
   const guard = await requireArenaManager(arenaId);
-  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+  if (guard.error) return { error: guard.error };
 
   let reason = '';
   await prisma.$transaction(async (tx) => {
@@ -557,8 +557,12 @@ export async function linkPlayerToMember(arenaId, playerId, userId) {
     if (result.reason) reason = result.reason;
   });
 
-  if (reason) return { error: LINK_PLAYER_MESSAGES[reason], state: await getState(arenaId) };
-  return { state: await getState(arenaId) };
+  if (reason) return { error: LINK_PLAYER_MESSAGES[reason] };
+  // Same shape as the other link-flow actions (`requestLinkPlayer`,
+  // `approveLinkRequest`, etc.) — the Members tab consumes `result.error`
+  // only and calls `router.refresh()` to repaint the rack, so returning
+  // server state here would just be a wasted `getState` query.
+  return { ok: true };
 }
 
 /** Randomly reorder everyone currently waiting in the rack. */
@@ -1058,16 +1062,16 @@ export async function requestLinkPlayer(arenaId, playerId) {
         return;
       }
 
-      // The requester must be a member of this arena.
-      const isOwner = arena.ownerId === guard.user.id;
-      if (!isOwner) {
-        const membership = await tx.arenaMembership.findUnique({
-          where: { arenaId_userId: { arenaId, userId: guard.user.id } },
-        });
-        if (!membership) {
-          errorMessage = 'Join the arena before requesting a player link.';
-          return;
-        }
+      // The requester must be a member of this arena. Owners have a
+      // membership row too (created on arena creation / kept in sync on
+      // transfer), so a single membership check covers everyone — no
+      // separate isOwner branch needed.
+      const membership = await tx.arenaMembership.findUnique({
+        where: { arenaId_userId: { arenaId, userId: guard.user.id } },
+      });
+      if (!membership) {
+        errorMessage = 'Join the arena before requesting a player link.';
+        return;
       }
 
       // NOTE: we intentionally do NOT block when the requester already has
@@ -1158,6 +1162,12 @@ export async function approveLinkRequest(arenaId, requestId) {
       }
       return;
     }
+    // Belt-and-suspenders cleanup by request id. `applyLinkPlayerToMember`
+    // already deletes by `userId` OR `playerId` on success (which covers
+    // this row), so this line is effectively a no-op there. Kept explicit
+    // so future maintainers reading the approve path see the contract
+    // ("the request is gone after a successful approve") without having
+    // to trace through the shared helper.
     await tx.linkRequest.deleteMany({ where: { id: request.id } });
   });
 
@@ -1175,7 +1185,12 @@ export async function rejectLinkRequest(arenaId, requestId) {
   return { ok: true };
 }
 
-/** Cancel your own pending link request in this arena. */
+/**
+ * Cancel your own pending link request in this arena. Deliberately does not
+ * gate on arena membership (unlike `requestLinkPlayer`): the delete is
+ * scoped by `userId`, so a non-member call simply matches zero rows. Cheap,
+ * symmetric with "leave deletes my own state", and avoids a wasted lookup.
+ */
 export async function cancelLinkRequest(arenaId) {
   const guard = await requireUser();
   if (guard.error) return { error: guard.error };

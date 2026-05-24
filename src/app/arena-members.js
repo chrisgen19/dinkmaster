@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   updateMemberRole,
@@ -501,6 +501,17 @@ function RequestsList({
 function LinkPlayerModal({ title, description, submitLabel, options, onCancel, onSubmit, disabled }) {
   const [value, setValue] = useState('');
   const canSubmit = !!value && !disabled;
+  // Escape-to-close. Backdrop-click is handled inline below; full focus
+  // trap + body scroll lock are out of scope for this iteration (the modal
+  // is small and short-lived; no other dialog component in the app uses
+  // them either).
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape' && !disabled) onCancel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [disabled, onCancel]);
   return (
     <div
       role="dialog"
