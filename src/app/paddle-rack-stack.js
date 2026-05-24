@@ -166,10 +166,18 @@ export function PaddleRackStack({
             role="switch"
             aria-checked={autoMix}
             onClick={() => onToggleAutoMix(!autoMix)}
-            className="group flex items-center gap-2 text-xs font-semibold text-slate-600"
+            className="group inline-flex items-center gap-2 rounded-md text-xs font-semibold text-slate-600 transition-colors hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:ring-offset-2"
           >
-            <span className={`relative h-5 w-9 shrink-0 rounded-full transition ${autoMix ? 'bg-emerald-500' : 'bg-slate-300'}`}>
-              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${autoMix ? 'left-4' : 'left-0.5'}`} />
+            <span
+              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 ease-in-out ${
+                autoMix ? 'bg-emerald-500' : 'bg-slate-300 group-hover:bg-slate-400'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-transform duration-200 ease-in-out ${
+                  autoMix ? 'translate-x-[18px]' : 'translate-x-0.5'
+                }`}
+              />
             </span>
             Auto-mix after each game
           </button>
