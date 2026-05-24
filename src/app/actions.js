@@ -155,6 +155,7 @@ async function removeArenaMember(tx, arenaId, userId) {
   // Clear any stale pending request for the same user (cheap insurance against
   // odd orderings — a leaver should not be left with a lingering request).
   await tx.joinRequest.deleteMany({ where: { arenaId, userId } });
+  await tx.linkRequest.deleteMany({ where: { arenaId, userId } });
   return true;
 }
 
@@ -443,101 +444,125 @@ export async function removePlayer(arenaId, playerId) {
 }
 
 /**
- * Link a temporary (walk-in) player to a registered member: the temp player
- * keeps its id, stats, and queue position but gains a `userId`, and the
- * member's auto-created player is merged away. Owner only. This is how a
- * walk-in's record carries over once they have an account.
+ * Human-readable error message for each `applyLinkPlayerToMember` failure
+ * reason. Shared between the direct-link path (`linkPlayerToMember`) and the
+ * approval path (`approveLinkRequest`) so both report the same wording.
+ */
+const LINK_PLAYER_MESSAGES = {
+  NO_PLAYER: 'That player no longer exists.',
+  ALREADY_LINKED: 'That player is already linked to an account.',
+  NOT_MEMBER: 'That user must join the arena before they can be linked.',
+  MEMBER_PLAYING: 'That member is on a court. Finish their match first.',
+};
+
+/**
+ * Link a walk-in (orphan) Player to a registered member inside an existing
+ * transaction: the walk-in keeps its id, stats, and queue position but gains
+ * a `userId`, and the member's auto-created player (if any) is merged away.
+ * The caller is responsible for `lockQueue` and for translating the returned
+ * `reason` into a user-facing error. Returns `{ reason }` on failure or `{}`
+ * on success.
+ */
+async function applyLinkPlayerToMember(tx, arenaId, playerId, userId) {
+  const temp = await tx.player.findFirst({
+    where: { id: playerId, arenaId },
+    select: { id: true, userId: true, gamesPlayed: true, rating: true },
+  });
+  if (!temp) return { reason: 'NO_PLAYER' };
+  if (temp.userId) return { reason: 'ALREADY_LINKED' };
+
+  const membership = await tx.arenaMembership.findUnique({
+    where: { arenaId_userId: { arenaId, userId } },
+  });
+  if (!membership) return { reason: 'NOT_MEMBER' };
+
+  // Merge the member's own auto-created player into the temp player so it
+  // becomes their single linked player (the @@unique([arenaId,userId])
+  // constraint also forbids two linked players for one user). The temp
+  // player keeps its id, queue position, and court slot.
+  const ownPlayer = await tx.player.findUnique({
+    where: { arenaId_userId: { arenaId, userId } },
+    select: { id: true, gamesPlayed: true, wins: true, losses: true, rating: true },
+  });
+  if (ownPlayer) {
+    const onCourt = await tx.courtSlot.findFirst({
+      where: { playerId: ownPlayer.id, court: { status: 'playing' } },
+    });
+    if (onCourt) return { reason: 'MEMBER_PLAYING' };
+    // Fold the existing player's win/loss/game counters into the survivor
+    // and re-point its finished-match snapshots, so nothing the member has
+    // already played is lost when the records are merged. Elo is not
+    // additive, so blend the two ratings by games played — a row with no
+    // games (never rated, still at baseline) contributes nothing and the
+    // survivor simply keeps the other side's rating.
+    const totalGames = temp.gamesPlayed + ownPlayer.gamesPlayed;
+    const mergedRating =
+      totalGames > 0
+        ? Math.round(
+            (temp.rating * temp.gamesPlayed + ownPlayer.rating * ownPlayer.gamesPlayed) /
+              totalGames,
+          )
+        : temp.rating;
+    // Order matters: the `(arenaId, userId)` unique constraint forbids two
+    // Players with the same userId in the same arena, so we MUST delete
+    // `ownPlayer` before we set `userId` on the walk-in. `MatchPlayer` is
+    // a snapshot (no FK), so re-pointing it before the delete is safe;
+    // `Partnership` likewise has no FK to Player.
+    await tx.matchPlayer.updateMany({
+      where: { playerId: ownPlayer.id },
+      data: { playerId: temp.id },
+    });
+    await tx.partnership.deleteMany({
+      where: { arenaId, OR: [{ playerA: ownPlayer.id }, { playerB: ownPlayer.id }] },
+    });
+    await tx.player.deleteMany({ where: { id: ownPlayer.id, arenaId } });
+    await tx.player.update({
+      where: { id: temp.id },
+      data: {
+        userId,
+        gamesPlayed: { increment: ownPlayer.gamesPlayed },
+        wins: { increment: ownPlayer.wins },
+        losses: { increment: ownPlayer.losses },
+        rating: mergedRating,
+      },
+    });
+  } else {
+    await tx.player.update({ where: { id: temp.id }, data: { userId } });
+  }
+  // Consume any pending LinkRequest tied to either side of this link so the
+  // approval queue doesn't keep showing a request that would now fail with
+  // `ALREADY_LINKED` (the orphan no longer is) or that is moot because the
+  // claiming member has already been linked another way.
+  await tx.linkRequest.deleteMany({
+    where: { arenaId, OR: [{ userId }, { playerId: temp.id }] },
+  });
+  return {};
+}
+
+/**
+ * Directly link a walk-in player to a registered member (owner or organizer):
+ * the temp player keeps its id, stats, and queue position but gains a
+ * `userId`, and the member's auto-created player is merged away. This is the
+ * manager shortcut; members can also self-claim via `requestLinkPlayer` →
+ * `approveLinkRequest`.
  */
 export async function linkPlayerToMember(arenaId, playerId, userId) {
-  const guard = await requireArenaOwner(arenaId);
-  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
 
   let reason = '';
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
-
-    const temp = await tx.player.findFirst({
-      where: { id: playerId, arenaId },
-      select: { id: true, userId: true, gamesPlayed: true, rating: true },
-    });
-    if (!temp) {
-      reason = 'NO_PLAYER';
-      return;
-    }
-    if (temp.userId) {
-      reason = 'ALREADY_LINKED';
-      return;
-    }
-
-    const membership = await tx.arenaMembership.findUnique({
-      where: { arenaId_userId: { arenaId, userId } },
-    });
-    if (!membership) {
-      reason = 'NOT_MEMBER';
-      return;
-    }
-
-    // Merge the member's own auto-created player into the temp player so it
-    // becomes their single linked player (the @@unique([arenaId,userId])
-    // constraint also forbids two linked players for one user). The temp
-    // player keeps its id, queue position, and court slot.
-    const ownPlayer = await tx.player.findUnique({
-      where: { arenaId_userId: { arenaId, userId } },
-      select: { id: true, gamesPlayed: true, wins: true, losses: true, rating: true },
-    });
-    if (ownPlayer) {
-      const onCourt = await tx.courtSlot.findFirst({
-        where: { playerId: ownPlayer.id, court: { status: 'playing' } },
-      });
-      if (onCourt) {
-        reason = 'MEMBER_PLAYING';
-        return;
-      }
-      // Fold the existing player's win/loss/game counters into the survivor
-      // and re-point its finished-match snapshots, so nothing the member has
-      // already played is lost when the records are merged. Elo is not
-      // additive, so blend the two ratings by games played — a row with no
-      // games (never rated, still at baseline) contributes nothing and the
-      // survivor simply keeps the other side's rating.
-      const totalGames = temp.gamesPlayed + ownPlayer.gamesPlayed;
-      const mergedRating =
-        totalGames > 0
-          ? Math.round(
-              (temp.rating * temp.gamesPlayed + ownPlayer.rating * ownPlayer.gamesPlayed) /
-                totalGames,
-            )
-          : temp.rating;
-      await tx.player.update({
-        where: { id: temp.id },
-        data: {
-          userId,
-          gamesPlayed: { increment: ownPlayer.gamesPlayed },
-          wins: { increment: ownPlayer.wins },
-          losses: { increment: ownPlayer.losses },
-          rating: mergedRating,
-        },
-      });
-      await tx.matchPlayer.updateMany({
-        where: { playerId: ownPlayer.id },
-        data: { playerId: temp.id },
-      });
-      await tx.partnership.deleteMany({
-        where: { arenaId, OR: [{ playerA: ownPlayer.id }, { playerB: ownPlayer.id }] },
-      });
-      await tx.player.deleteMany({ where: { id: ownPlayer.id, arenaId } });
-    } else {
-      await tx.player.update({ where: { id: temp.id }, data: { userId } });
-    }
+    const result = await applyLinkPlayerToMember(tx, arenaId, playerId, userId);
+    if (result.reason) reason = result.reason;
   });
 
-  const messages = {
-    NO_PLAYER: 'That player no longer exists.',
-    ALREADY_LINKED: 'That player is already linked to an account.',
-    NOT_MEMBER: 'That user must join the arena before they can be linked.',
-    MEMBER_PLAYING: 'That member is on a court. Finish their match first.',
-  };
-  if (reason) return { error: messages[reason], state: await getState(arenaId) };
-  return { state: await getState(arenaId) };
+  if (reason) return { error: LINK_PLAYER_MESSAGES[reason] };
+  // Same shape as the other link-flow actions (`requestLinkPlayer`,
+  // `approveLinkRequest`, etc.) — the Members tab consumes `result.error`
+  // only and calls `router.refresh()` to repaint the rack, so returning
+  // server state here would just be a wasted `getState` query.
+  return { ok: true };
 }
 
 /** Randomly reorder everyone currently waiting in the rack. */
@@ -1005,6 +1030,173 @@ export async function rejectJoinRequest(arenaId, userId) {
   if (guard.error) return { error: guard.error };
 
   await prisma.joinRequest.deleteMany({ where: { arenaId, userId } });
+  return { ok: true };
+}
+
+/**
+ * Request to be linked to an existing walk-in (orphan) Player in this arena.
+ * Available to any member who does not already have a linked Player in this
+ * arena; the request is queued for owner/organizer approval. The
+ * `[arenaId, userId]` unique key enforces one open request per member —
+ * resubmitting with a different `playerId` updates the existing row in place
+ * so a member can switch their pick without cancelling first.
+ */
+export async function requestLinkPlayer(arenaId, playerId) {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error };
+  if (!arenaId || !playerId) return { error: 'Player not found.' };
+
+  // All eligibility checks AND the upsert run inside `lockQueue` so a
+  // concurrent direct-link, leave/remove, or player removal cannot invalidate
+  // the checks before we write. Unique-constraint races (P2002) and FK races
+  // (P2003 — e.g. the orphan got cascade-deleted between read and write) are
+  // translated to the same user-facing messages.
+  let errorMessage = '';
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockQueue(tx, arenaId);
+
+      const arena = await tx.arena.findUnique({ where: { id: arenaId } });
+      if (!arena) {
+        errorMessage = 'Arena not found.';
+        return;
+      }
+
+      // The requester must be a member of this arena. Owners have a
+      // membership row too (created on arena creation / kept in sync on
+      // transfer), so a single membership check covers everyone — no
+      // separate isOwner branch needed.
+      const membership = await tx.arenaMembership.findUnique({
+        where: { arenaId_userId: { arenaId, userId: guard.user.id } },
+      });
+      if (!membership) {
+        errorMessage = 'Join the arena before requesting a player link.';
+        return;
+      }
+
+      // NOTE: we intentionally do NOT block when the requester already has
+      // a linked Player here. `approveJoinRequest` auto-creates a fresh
+      // Player on join (`activateArenaPlayer`), so every member arrives
+      // with one — gating on that would make the canonical "claim my
+      // historical walk-in" flow unreachable. `applyLinkPlayerToMember`
+      // handles the merge: it folds the existing Player's stats into the
+      // walk-in row, preserving everything.
+
+      // The target must be a walk-in (orphan) Player in this arena.
+      const target = await tx.player.findFirst({
+        where: { id: playerId, arenaId },
+        select: { id: true, userId: true, leftAt: true },
+      });
+      if (!target) {
+        errorMessage = 'That player no longer exists.';
+        return;
+      }
+      if (target.userId) {
+        errorMessage = 'That player is already linked to an account.';
+        return;
+      }
+      if (target.leftAt) {
+        errorMessage = 'That player is no longer active in this arena.';
+        return;
+      }
+
+      // Block if another member has a pending request against the same orphan.
+      const existingForPlayer = await tx.linkRequest.findUnique({
+        where: { arenaId_playerId: { arenaId, playerId } },
+        select: { userId: true },
+      });
+      if (existingForPlayer && existingForPlayer.userId !== guard.user.id) {
+        errorMessage = 'Another member already requested to be linked to that player.';
+        return;
+      }
+
+      await tx.linkRequest.upsert({
+        where: { arenaId_userId: { arenaId, userId: guard.user.id } },
+        create: { arenaId, userId: guard.user.id, playerId },
+        update: { playerId }, // member switched their pick before approval
+      });
+    });
+  } catch (err) {
+    if (err?.code === 'P2002') {
+      return { error: 'Another member already requested to be linked to that player.' };
+    }
+    if (err?.code === 'P2003') {
+      return { error: 'That player no longer exists.' };
+    }
+    throw err;
+  }
+  if (errorMessage) return { error: errorMessage };
+  return { ok: true };
+}
+
+/**
+ * Approve a pending link request (owner or organizer): the walk-in Player is
+ * merged into the requesting member via `applyLinkPlayerToMember`, and the
+ * request row is consumed.
+ */
+export async function approveLinkRequest(arenaId, requestId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  let reason = '';
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+    const request = await tx.linkRequest.findFirst({
+      where: { id: requestId, arenaId },
+      select: { id: true, userId: true, playerId: true },
+    });
+    if (!request) {
+      reason = 'NO_REQUEST';
+      return;
+    }
+    const result = await applyLinkPlayerToMember(tx, arenaId, request.playerId, request.userId);
+    if (result.reason) {
+      reason = result.reason;
+      // Terminal reasons can never become approvable later (the orphan is
+      // gone, already linked, or the requester has since left the arena),
+      // so consume the row to clear the queue. `MEMBER_PLAYING` is
+      // retriable once the match ends — keep the row so the manager can
+      // try again from the same place in the list.
+      if (reason !== 'MEMBER_PLAYING') {
+        await tx.linkRequest.deleteMany({ where: { id: request.id } });
+      }
+      return;
+    }
+    // Belt-and-suspenders cleanup by request id. `applyLinkPlayerToMember`
+    // already deletes by `userId` OR `playerId` on success (which covers
+    // this row), so this line is effectively a no-op there. Kept explicit
+    // so future maintainers reading the approve path see the contract
+    // ("the request is gone after a successful approve") without having
+    // to trace through the shared helper.
+    await tx.linkRequest.deleteMany({ where: { id: request.id } });
+  });
+
+  if (reason === 'NO_REQUEST') return { error: 'That link request no longer exists.' };
+  if (reason) return { error: LINK_PLAYER_MESSAGES[reason] };
+  return { ok: true };
+}
+
+/** Reject (delete) a pending link request (owner or organizer). */
+export async function rejectLinkRequest(arenaId, requestId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  await prisma.linkRequest.deleteMany({ where: { id: requestId, arenaId } });
+  return { ok: true };
+}
+
+/**
+ * Cancel your own pending link request in this arena. Deliberately does not
+ * gate on arena membership (unlike `requestLinkPlayer`): the delete is
+ * scoped by `userId`, so a non-member call simply matches zero rows. Cheap,
+ * symmetric with "leave deletes my own state", and avoids a wasted lookup.
+ */
+export async function cancelLinkRequest(arenaId) {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error };
+  if (!arenaId) return { error: 'Arena not found.' };
+
+  await prisma.linkRequest.deleteMany({ where: { arenaId, userId: guard.user.id } });
   return { ok: true };
 }
 

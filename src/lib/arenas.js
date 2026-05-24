@@ -59,14 +59,32 @@ export async function getArena(id) {
 /**
  * List an arena's members (oldest first) with role. Returns only
  * non-sensitive fields: `/arena/[id]` is publicly viewable, so email and
- * other account identifiers must not be in this payload.
+ * other account identifiers must not be in this payload. `hasLinkedPlayer`
+ * flags members who already have an active `Player` row in this arena —
+ * the manager direct-link modal uses it to append a `· existing player`
+ * suffix on those option labels, signalling that picking them will merge
+ * stats into the walk-in (rather than hiding them, which would make the
+ * canonical "claim historical walk-in" flow unreachable).
  * @param {string} arenaId
- * @returns {Promise<Array<{membershipId:string,userId:string,name:string,role:string}>>}
+ * @returns {Promise<Array<{membershipId:string,userId:string,name:string,role:string,hasLinkedPlayer:boolean}>>}
  */
 export async function getArenaMembers(arenaId) {
   const members = await prisma.arenaMembership.findMany({
     where: { arenaId },
-    include: { user: { select: { id: true, name: true } } },
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          // One linked Player per (arena, user) — active rows have leftAt null.
+          players: {
+            where: { arenaId, leftAt: null },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
+    },
     orderBy: { createdAt: 'asc' },
   });
 
@@ -75,6 +93,7 @@ export async function getArenaMembers(arenaId) {
     userId: m.userId,
     name: m.user.name,
     role: m.role,
+    hasLinkedPlayer: m.user.players.length > 0,
   }));
 }
 
@@ -108,6 +127,98 @@ export async function getArenaJoinRequests(arenaId) {
     name: r.user.name,
     requestedAt: new Date(r.createdAt).toISOString(),
   }));
+}
+
+/** Walk-in display name; mirrors `formatShortName` for an empty linked user. */
+function playerDisplayName(p) {
+  return p.lastName ? `${p.firstName} ${p.lastName}` : p.firstName;
+}
+
+/**
+ * An arena's pending link requests (oldest first), with the requesting
+ * member's name and the orphan Player they want to claim. For owner/organizer
+ * use in the Members tab. Same non-PII shape as the join requests loader.
+ * @param {string} arenaId
+ * @returns {Promise<Array<{requestId:string,userId:string,memberName:string,playerId:string,playerName:string,requestedAt:string}>>}
+ */
+export async function getArenaLinkRequests(arenaId) {
+  const requests = await prisma.linkRequest.findMany({
+    where: { arenaId },
+    include: {
+      user: { select: { id: true, name: true } },
+      player: { select: { id: true, firstName: true, lastName: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+  return requests.map((r) => ({
+    requestId: r.id,
+    userId: r.userId,
+    memberName: r.user.name,
+    playerId: r.playerId,
+    playerName: playerDisplayName(r.player),
+    requestedAt: new Date(r.createdAt).toISOString(),
+  }));
+}
+
+/**
+ * Per-viewer link-request context for the Members tab. Returns the viewer's
+ * pending link request (if any), the full active walk-in list (for the
+ * manager Walk-ins pill — each row carries `hasPendingRequest` so the UI
+ * can show a "claim pending" badge), and the claimable subset (the
+ * self-link modal's option list). Returns `null`-shaped fields when no
+ * viewer is signed in or no arena is given, so the Members tab can render
+ * safely without extra conditionals.
+ * @param {string} arenaId
+ * @param {string|null|undefined} userId
+ */
+export async function getViewerLinkContext(arenaId, userId) {
+  if (!userId || !arenaId) {
+    return { pendingRequest: null, orphanPlayers: [], claimableOrphans: [] };
+  }
+
+  const [pending, orphans] = await Promise.all([
+    prisma.linkRequest.findUnique({
+      where: { arenaId_userId: { arenaId, userId } },
+      include: {
+        player: { select: { id: true, firstName: true, lastName: true } },
+      },
+    }),
+    prisma.player.findMany({
+      // All active walk-ins. Includes ones that already have a pending
+      // LinkRequest so managers can still see + act on them (direct-link,
+      // approve via the Requests pill, or remove). The self-link modal uses
+      // `claimableOrphans` below, which excludes already-claimed rows.
+      where: { arenaId, userId: null, leftAt: null },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        linkRequests: { select: { id: true }, take: 1 },
+      },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+    }),
+  ]);
+
+  const orphanPlayers = orphans.map((p) => ({
+    id: p.id,
+    displayName: playerDisplayName(p),
+    hasPendingRequest: p.linkRequests.length > 0,
+  }));
+
+  return {
+    pendingRequest: pending
+      ? {
+          requestId: pending.id,
+          playerId: pending.playerId,
+          playerName: playerDisplayName(pending.player),
+        }
+      : null,
+    // Full list of active walk-ins (for the manager Walk-ins pill).
+    orphanPlayers,
+    // Subset eligible for a self-link request (no other pending claim).
+    // Drives the member self-link modal's option list.
+    claimableOrphans: orphanPlayers.filter((p) => !p.hasPendingRequest),
+  };
 }
 
 /**

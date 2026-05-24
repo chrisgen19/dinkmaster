@@ -60,6 +60,7 @@ model Arena {
   partnerships Partnership[]
   memberships  ArenaMembership[]
   joinRequests JoinRequest[]
+  linkRequests LinkRequest[]
 
   @@index([ownerId])
 }
@@ -79,6 +80,31 @@ model JoinRequest {
   @@unique([arenaId, userId])
   @@index([arenaId])
   @@index([userId])
+}
+
+/// A pending request from an arena member to be linked to an existing
+/// walk-in (orphan) Player row in that arena. A row's existence means the
+/// request is pending; it is deleted when an owner/organizer approves it
+/// (merging the member into the orphan player via `linkPlayerToMember`),
+/// rejects it, or the requester cancels it.
+model LinkRequest {
+  id        String   @id @default(cuid())
+  arenaId   String
+  userId    String // the requesting member
+  playerId  String // the orphan walk-in Player they claim
+  createdAt DateTime @default(now())
+
+  arena Arena @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Composite FK on (arenaId, playerId) so the DB rejects a request whose
+  // player belongs to a different arena than the request itself. Target is
+  // Player's `@@unique([arenaId, id])`, which exists solely to make this
+  // composite reference valid.
+  player Player @relation(fields: [arenaId, playerId], references: [arenaId, id], onDelete: Cascade)
+
+  @@unique([arenaId, userId]) // one open request per member per arena
+  @@unique([arenaId, playerId]) // one open request per orphan per arena
+  @@index([arenaId])
 }
 
 /// A member's role within an arena. Enforced at the database level so an
@@ -129,11 +155,13 @@ model Player {
 
   createdAt   DateTime @default(now())
 
-  arena      Arena       @relation(fields: [arenaId], references: [id], onDelete: Cascade)
-  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
-  courtSlots CourtSlot[]
+  arena        Arena         @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  courtSlots   CourtSlot[]
+  linkRequests LinkRequest[]
 
   @@unique([arenaId, userId]) // one linked player per user per arena (multiple NULLs allowed)
+  @@unique([arenaId, id]) // target for LinkRequest's composite FK (enforces same-arena)
   @@index([arenaId])
   @@index([queueOrder])
   @@index([userId])
@@ -244,6 +272,7 @@ model User {
   memberships  ArenaMembership[]
   players      Player[]
   joinRequests JoinRequest[]
+  linkRequests LinkRequest[]
 }
 
 /// A signed-in session (cookie-backed).

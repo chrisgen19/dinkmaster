@@ -30,6 +30,12 @@ vi.mock('@/lib/prisma', () => ({
     court: { findMany: vi.fn() },
     player: { count: vi.fn() },
     joinRequest: { upsert: vi.fn(), deleteMany: vi.fn(), findUnique: vi.fn() },
+    linkRequest: {
+      upsert: vi.fn(),
+      deleteMany: vi.fn(),
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+    },
   },
 }));
 
@@ -59,13 +65,15 @@ const PLAY = [
   ['updateArenaMatchDefaults', () => actions.updateArenaMatchDefaults(ARENA, { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true })],
   ['approveJoinRequest', () => actions.approveJoinRequest(ARENA, 'u2')],
   ['rejectJoinRequest', () => actions.rejectJoinRequest(ARENA, 'u2')],
+  ['linkPlayerToMember', () => actions.linkPlayerToMember(ARENA, 'p1', 'u2')],
+  ['approveLinkRequest', () => actions.approveLinkRequest(ARENA, 'r1')],
+  ['rejectLinkRequest', () => actions.rejectLinkRequest(ARENA, 'r1')],
 ];
 // Owner-only gated (requireArenaOwner).
 const OWNER_ONLY = [
   ['updateMemberRole', () => actions.updateMemberRole(ARENA, 'u2', ROLES.ORGANIZER)],
   ['removeMember', () => actions.removeMember(ARENA, 'u2')],
   ['transferOwnership', () => actions.transferOwnership(ARENA, 'u2')],
-  ['linkPlayerToMember', () => actions.linkPlayerToMember(ARENA, 'p1', 'u2')],
   ['deleteArena', () => actions.deleteArena(ARENA)],
 ];
 // Any signed-in user (requireUser).
@@ -73,6 +81,8 @@ const USER_GATED = [
   ['createArena', () => actions.createArena('My Arena')],
   ['requestToJoin', () => actions.requestToJoin(ARENA)],
   ['leaveArena', () => actions.leaveArena(ARENA)],
+  ['requestLinkPlayer', () => actions.requestLinkPlayer(ARENA, 'p1')],
+  ['cancelLinkRequest', () => actions.cancelLinkRequest(ARENA)],
 ];
 
 describe('arena server actions — authorization', () => {
@@ -623,6 +633,7 @@ describe('arena server actions — authorization', () => {
         courtSlot: { findFirst: vi.fn().mockResolvedValue(null) },
         arenaMembership: { deleteMany: vi.fn() },
         joinRequest: { deleteMany: vi.fn() },
+        linkRequest: { deleteMany: vi.fn() },
       };
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
@@ -634,6 +645,11 @@ describe('arena server actions — authorization', () => {
       );
       expect(tx.player.deleteMany).not.toHaveBeenCalled();
       expect(tx.arenaMembership.deleteMany).toHaveBeenCalled();
+      // Loop-closing cleanup: a leaver should not be left with a lingering
+      // LinkRequest (mirrors the existing JoinRequest cleanup).
+      expect(tx.linkRequest.deleteMany).toHaveBeenCalledWith({
+        where: { arenaId: ARENA, userId: 'u2' },
+      });
     });
 
     // --- linkPlayerToMember branches & merge semantics ---------------------
@@ -651,6 +667,7 @@ describe('arena server actions — authorization', () => {
       courtSlot: { findFirst: vi.fn().mockResolvedValue(onCourt) },
       matchPlayer: { updateMany: vi.fn() },
       partnership: { deleteMany: vi.fn() },
+      linkRequest: { deleteMany: vi.fn() },
     });
 
     it('linkPlayerToMember() merges the member’s existing player into the walk-in', async () => {
@@ -682,6 +699,12 @@ describe('arena server actions — authorization', () => {
         data: { playerId: 'temp1' },
       });
       expect(tx.player.deleteMany).toHaveBeenCalledWith({ where: { id: 'own1', arenaId: ARENA } });
+      // Order matters: the walk-in `update` claims (arenaId, userId), so the
+      // existing `ownPlayer` must be deleted FIRST or the @@unique constraint
+      // fires with P2002. Lock the ordering here so a future reorder is loud.
+      const deleteOrder = tx.player.deleteMany.mock.invocationCallOrder[0];
+      const updateOrder = tx.player.update.mock.invocationCallOrder[0];
+      expect(deleteOrder).toBeLessThan(updateOrder);
     });
 
     it('linkPlayerToMember() just links when the member has no player yet', async () => {
@@ -695,6 +718,10 @@ describe('arena server actions — authorization', () => {
 
       await actions.linkPlayerToMember(ARENA, 'temp1', 'u2');
       expect(tx.player.update).toHaveBeenCalledWith({ where: { id: 'temp1' }, data: { userId: 'u2' } });
+      // Consume stale LinkRequest rows for the same user OR the same player.
+      expect(tx.linkRequest.deleteMany).toHaveBeenCalledWith({
+        where: { arenaId: ARENA, OR: [{ userId: 'u2' }, { playerId: 'temp1' }] },
+      });
       expect(tx.matchPlayer.updateMany).not.toHaveBeenCalled();
       expect(tx.player.deleteMany).not.toHaveBeenCalled();
     });
@@ -740,6 +767,241 @@ describe('arena server actions — authorization', () => {
       const result = await actions.linkPlayerToMember(ARENA, 'temp1', 'u2');
       expect(result.error).toMatch(/already linked/i);
       expect(tx.player.update).not.toHaveBeenCalled();
+    });
+
+    // --- requestLinkPlayer (member self-claim) ----------------------------
+
+    /**
+     * Build a fake transaction for `requestLinkPlayer` with overridable mocks.
+     * The action does all its validation inside `prisma.$transaction`, so each
+     * scenario seeds the reads it needs and watches `linkRequest.upsert`.
+     */
+    const requestTx = ({ arena, membership, ownPlayer, target, existingForPlayer, upsertImpl }) => ({
+      $executeRaw: vi.fn(),
+      arena: { findUnique: vi.fn().mockResolvedValue(arena) },
+      arenaMembership: { findUnique: vi.fn().mockResolvedValue(membership) },
+      player: {
+        findUnique: vi.fn().mockResolvedValue(ownPlayer),
+        findFirst: vi.fn().mockResolvedValue(target),
+      },
+      linkRequest: {
+        findUnique: vi.fn().mockResolvedValue(existingForPlayer),
+        upsert: upsertImpl ?? vi.fn(),
+      },
+    });
+
+    it('requestLinkPlayer() upserts a pending request when eligible', async () => {
+      const tx = requestTx({
+        arena: { id: ARENA, ownerId: 'someone-else' },
+        membership: { role: ROLES.MEMBER },
+        ownPlayer: null,
+        target: { id: 'p1', userId: null, leftAt: null },
+        existingForPlayer: null,
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.requestLinkPlayer(ARENA, 'p1');
+      expect(result.ok).toBe(true);
+      expect(tx.linkRequest.upsert).toHaveBeenCalledWith({
+        where: { arenaId_userId: { arenaId: ARENA, userId: 'u1' } },
+        create: { arenaId: ARENA, userId: 'u1', playerId: 'p1' },
+        update: { playerId: 'p1' },
+      });
+    });
+
+    // The "Yosh" flow: a member who joined via approveJoinRequest already
+    // has a fresh auto-created Player (`activateArenaPlayer`). Locking this
+    // case as a test pins down the guard removal from f18ab38 — re-adding
+    // the "you already have a linked player" block would silently kill the
+    // canonical "claim my historical walk-in" feature.
+    it('requestLinkPlayer() still succeeds when the requester already has a linked Player (claim-historical-walk-in flow)', async () => {
+      const tx = requestTx({
+        arena: { id: ARENA, ownerId: 'someone-else' },
+        membership: { role: ROLES.MEMBER },
+        ownPlayer: { id: 'own1', leftAt: null },
+        target: { id: 'p1', userId: null, leftAt: null },
+        existingForPlayer: null,
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.requestLinkPlayer(ARENA, 'p1');
+      expect(result.ok).toBe(true);
+      expect(result.error).toBeUndefined();
+      expect(tx.linkRequest.upsert).toHaveBeenCalledWith({
+        where: { arenaId_userId: { arenaId: ARENA, userId: 'u1' } },
+        create: { arenaId: ARENA, userId: 'u1', playerId: 'p1' },
+        update: { playerId: 'p1' },
+      });
+    });
+
+    it('requestLinkPlayer() blocks when the target is already linked', async () => {
+      const tx = requestTx({
+        arena: { id: ARENA, ownerId: 'someone-else' },
+        membership: { role: ROLES.MEMBER },
+        ownPlayer: null,
+        target: { id: 'p1', userId: 'u9', leftAt: null },
+        existingForPlayer: null,
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.requestLinkPlayer(ARENA, 'p1');
+      expect(result.error).toMatch(/already linked/i);
+      expect(tx.linkRequest.upsert).not.toHaveBeenCalled();
+    });
+
+    it('requestLinkPlayer() blocks when another member already requested the same orphan', async () => {
+      const tx = requestTx({
+        arena: { id: ARENA, ownerId: 'someone-else' },
+        membership: { role: ROLES.MEMBER },
+        ownPlayer: null,
+        target: { id: 'p1', userId: null, leftAt: null },
+        existingForPlayer: { userId: 'someone-else' },
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.requestLinkPlayer(ARENA, 'p1');
+      expect(result.error).toMatch(/another member already requested/i);
+      expect(tx.linkRequest.upsert).not.toHaveBeenCalled();
+    });
+
+    it('requestLinkPlayer() maps a P2002 race to the same user-facing error', async () => {
+      const upsertImpl = vi.fn(async () => {
+        const err = new Error('unique violation');
+        err.code = 'P2002';
+        throw err;
+      });
+      const tx = requestTx({
+        arena: { id: ARENA, ownerId: 'someone-else' },
+        membership: { role: ROLES.MEMBER },
+        ownPlayer: null,
+        target: { id: 'p1', userId: null, leftAt: null },
+        existingForPlayer: null,
+        upsertImpl,
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.requestLinkPlayer(ARENA, 'p1');
+      expect(result.error).toMatch(/another member already requested/i);
+    });
+
+    it('requestLinkPlayer() maps a P2003 (FK gone) to "no longer exists"', async () => {
+      const upsertImpl = vi.fn(async () => {
+        const err = new Error('fk violation');
+        err.code = 'P2003';
+        throw err;
+      });
+      const tx = requestTx({
+        arena: { id: ARENA, ownerId: 'someone-else' },
+        membership: { role: ROLES.MEMBER },
+        ownPlayer: null,
+        target: { id: 'p1', userId: null, leftAt: null },
+        existingForPlayer: null,
+        upsertImpl,
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.requestLinkPlayer(ARENA, 'p1');
+      expect(result.error).toMatch(/no longer exists/i);
+    });
+
+    // --- approveLinkRequest / rejectLinkRequest / cancelLinkRequest -------
+
+    /** Fake tx for approveLinkRequest that hands the request through `applyLinkPlayerToMember`. */
+    const approveTx = ({ request, temp, member, ownPlayer, onCourt }) => ({
+      $executeRaw: vi.fn(),
+      linkRequest: {
+        findFirst: vi.fn().mockResolvedValue(request),
+        deleteMany: vi.fn(),
+      },
+      player: {
+        findFirst: vi.fn().mockResolvedValue(temp),
+        findUnique: vi.fn().mockResolvedValue(ownPlayer),
+        update: vi.fn(),
+        deleteMany: vi.fn(),
+      },
+      arenaMembership: { findUnique: vi.fn().mockResolvedValue(member) },
+      courtSlot: { findFirst: vi.fn().mockResolvedValue(onCourt) },
+      matchPlayer: { updateMany: vi.fn() },
+      partnership: { deleteMany: vi.fn() },
+    });
+
+    it('approveLinkRequest() merges and deletes the request row', async () => {
+      const tx = approveTx({
+        request: { id: 'r1', userId: 'u2', playerId: 'temp1' },
+        temp: { id: 'temp1', userId: null, gamesPlayed: 0, rating: 1000 },
+        member: { role: ROLES.MEMBER },
+        ownPlayer: null,
+        onCourt: null,
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.approveLinkRequest(ARENA, 'r1');
+      expect(result.ok).toBe(true);
+      // Approval consumes the request after a successful link.
+      expect(tx.linkRequest.deleteMany).toHaveBeenCalledWith({ where: { id: 'r1' } });
+    });
+
+    it('approveLinkRequest() returns NO_REQUEST when the row is missing', async () => {
+      const tx = approveTx({
+        request: null,
+        temp: null,
+        member: null,
+        ownPlayer: null,
+        onCourt: null,
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.approveLinkRequest(ARENA, 'r1');
+      expect(result.error).toMatch(/no longer exists/i);
+      expect(tx.linkRequest.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('approveLinkRequest() keeps the row when the member is on court (retriable)', async () => {
+      const tx = approveTx({
+        request: { id: 'r1', userId: 'u2', playerId: 'temp1' },
+        temp: { id: 'temp1', userId: null, gamesPlayed: 1, rating: 1100 },
+        member: { role: ROLES.MEMBER },
+        ownPlayer: { id: 'own1', gamesPlayed: 3, wins: 2, losses: 1, rating: 1300 },
+        onCourt: { id: 'cs1' },
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.approveLinkRequest(ARENA, 'r1');
+      expect(result.error).toMatch(/on a court/i);
+      expect(tx.linkRequest.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('approveLinkRequest() deletes the row on terminal ALREADY_LINKED failure', async () => {
+      const tx = approveTx({
+        request: { id: 'r1', userId: 'u2', playerId: 'temp1' },
+        // Walk-in is no longer an orphan — applyLink returns ALREADY_LINKED.
+        temp: { id: 'temp1', userId: 'someone', gamesPlayed: 0, rating: 1000 },
+        member: { role: ROLES.MEMBER },
+        ownPlayer: null,
+        onCourt: null,
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.approveLinkRequest(ARENA, 'r1');
+      expect(result.error).toMatch(/already linked/i);
+      // Terminal failure consumes the row so it doesn't sit in the queue forever.
+      expect(tx.linkRequest.deleteMany).toHaveBeenCalledWith({ where: { id: 'r1' } });
+    });
+
+    it('rejectLinkRequest() deletes the request', async () => {
+      const result = await actions.rejectLinkRequest(ARENA, 'r1');
+      expect(result.ok).toBe(true);
+      expect(prisma.linkRequest.deleteMany).toHaveBeenCalledWith({
+        where: { id: 'r1', arenaId: ARENA },
+      });
+    });
+
+    it('cancelLinkRequest() deletes the caller’s own pending request', async () => {
+      const result = await actions.cancelLinkRequest(ARENA);
+      expect(result.ok).toBe(true);
+      expect(prisma.linkRequest.deleteMany).toHaveBeenCalledWith({
+        where: { arenaId: ARENA, userId: 'u1' },
+      });
     });
   });
 });

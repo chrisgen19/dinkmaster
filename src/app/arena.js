@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import {
   addPlayer,
   removePlayer,
-  linkPlayerToMember,
   shuffleQueue,
   fillCourt,
   endMatch,
@@ -72,6 +71,24 @@ const onScoreChange = (setter, raw) => {
   if (raw === '' || /^\d+$/.test(raw)) setter(raw);
 };
 
+/**
+ * Numeric badge for the Members tab in the arena nav. Counts unresolved
+ * items needing the viewer's attention: pending join + link requests for
+ * managers, and the viewer's own pending self-link for non-managers.
+ * A manager's own self-link is already inside `pendingLinkRequests`, so it
+ * must not be added a second time via `viewerLinkContext`. Returns `null`
+ * (not 0) when there is nothing to surface, so the consumer can render a
+ * falsy badge without an extra check.
+ */
+const computeMembersBadge = ({ canManage, pendingRequests, pendingLinkRequests, viewerLinkContext }) => {
+  const count = canManage
+    ? pendingRequests.length + pendingLinkRequests.length
+    : viewerLinkContext?.pendingRequest
+      ? 1
+      : 0;
+  return count || null;
+};
+
 const playPaddleSound = () => {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -135,6 +152,8 @@ export default function Arena({
   members,
   pendingRequests = [],
   viewerPending = false,
+  pendingLinkRequests = [],
+  viewerLinkContext = null,
 }) {
   const router = useRouter();
   const [players, setPlayers] = useState(initialState.players);
@@ -142,6 +161,22 @@ export default function Arena({
   const [courts, setCourts] = useState(initialState.courts);
   const [matchHistory, setMatchHistory] = useState(initialState.matchHistory);
   const [history, setHistory] = useState(initialState.history);
+  // Resync local rack state when the server refetches (e.g. after a child
+  // component's `router.refresh()`). Without this, actions that only refresh
+  // — link approvals, member removals — leave the rack UI showing the pre-
+  // refresh players/queue/courts, while tabs reading the new props update.
+  // Setting state during render with a sentinel is the React-recommended
+  // pattern for prop-driven state resets (`useEffect` would lint as
+  // `react-hooks/set-state-in-effect`).
+  const [lastSyncedState, setLastSyncedState] = useState(initialState);
+  if (initialState !== lastSyncedState) {
+    setLastSyncedState(initialState);
+    setPlayers(initialState.players);
+    setQueue(initialState.queue);
+    setCourts(initialState.courts);
+    setMatchHistory(initialState.matchHistory);
+    setHistory(initialState.history);
+  }
 
   const [isPending, startTransition] = useTransition();
 
@@ -282,11 +317,6 @@ export default function Arena({
     run(() => removePlayer(arenaId, id));
   };
 
-  const handleLinkPlayer = (playerId, userId) => {
-    if (!canManage || !userId) return;
-    run(() => linkPlayerToMember(arenaId, playerId, userId));
-  };
-
   const handleTriggerScoreModal = (court) => {
     if (!canManage) return;
     setSelectedCourtForScore(court);
@@ -338,7 +368,16 @@ export default function Arena({
     { id: 'thisweek', label: 'This Week' },
     { id: 'stats', label: 'Partnership Matrix' },
     { id: 'history', label: 'Match Log' },
-    { id: 'members', label: 'Members', badge: canManage && pendingRequests.length > 0 ? pendingRequests.length : null },
+    {
+      id: 'members',
+      label: 'Members',
+      badge: computeMembersBadge({
+        canManage,
+        pendingRequests,
+        pendingLinkRequests,
+        viewerLinkContext,
+      }),
+    },
     ...(myPlayer ? [{ id: 'mystats', label: 'My Stats' }] : []),
   ];
   // The "My Stats" tab is conditional on myPlayer. If it disappears (e.g. after
@@ -639,6 +678,14 @@ export default function Arena({
                                 you
                               </span>
                             )}
+                            {!player.userId && (
+                              <span
+                                className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-600"
+                                title="Walk-in player — no linked account. Link them from the Members tab."
+                              >
+                                walk-in
+                              </span>
+                            )}
                             {player.waitRounds >= matchmakingProp.starveThreshold && (
                               <span
                                 className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
@@ -660,22 +707,6 @@ export default function Arena({
 
                       {canManage && (
                         <div className="flex items-center space-x-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                          {!player.userId && members.length > 0 && (
-                            <select
-                              value=""
-                              onChange={(e) => handleLinkPlayer(player.id, e.target.value)}
-                              disabled={isPending}
-                              title="Link this walk-in to a member's account"
-                              className="text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-100 rounded-lg px-1.5 py-1 outline-none cursor-pointer disabled:opacity-50"
-                            >
-                              <option value="">Link…</option>
-                              {members.map((m) => (
-                                <option key={m.userId} value={m.userId}>
-                                  {m.name}
-                                </option>
-                              ))}
-                            </select>
-                          )}
                           <button
                             onClick={() => handleRemovePlayer(player.id)}
                             className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:text-red-700 hover:bg-red-100 border border-red-100"
@@ -1015,6 +1046,8 @@ export default function Arena({
                 viewerRole={viewerRole}
                 canManage={canManage}
                 pendingRequests={pendingRequests}
+                pendingLinkRequests={pendingLinkRequests}
+                viewerLinkContext={viewerLinkContext}
               />
             </div>
           )}
