@@ -495,17 +495,21 @@ export default function Arena({
       </SiteHeader>
 
       {!canManage && (
-        <div className="mx-4 md:mx-8 mt-4 p-3 bg-slate-100 border border-slate-200 text-slate-600 rounded-xl text-xs font-medium flex flex-wrap items-center justify-between gap-2">
-          <span className="flex items-center gap-2">
-            <span>👁️</span>
-            <span>
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed z-40 inset-x-0 bottom-[72px] md:inset-x-auto md:bottom-6 md:left-6 md:max-w-md bg-emerald-600 text-white shadow-2xl shadow-emerald-900/30 ring-1 ring-emerald-700/40 md:rounded-2xl px-4 py-3 md:px-5 md:py-4 flex flex-wrap items-center justify-between gap-3 animate-fade-in"
+        >
+          <div className="flex items-start gap-3 flex-1 min-w-0">
+            <span className="text-xl md:text-2xl shrink-0" aria-hidden="true">👁️</span>
+            <p className="text-sm md:text-base font-semibold leading-snug">
               {viewerRole
                 ? "You're a member of this arena. An owner can promote you to organizer to manage it."
                 : "You're viewing this arena. Only its owner and organizers can manage it."}
-            </span>
-          </span>
+            </p>
+          </div>
           {isAuthenticated && !viewerRole && viewerPending && (
-            <span className="text-xs bg-amber-50 text-amber-700 border border-amber-200 font-bold px-3 py-1.5 rounded-lg shrink-0">
+            <span className="text-xs md:text-sm bg-emerald-50 text-emerald-800 border border-emerald-100 font-bold px-3 py-1.5 md:px-4 md:py-2 rounded-lg shrink-0">
               Request pending approval
             </span>
           )}
@@ -513,13 +517,16 @@ export default function Arena({
             <button
               onClick={handleRequestJoin}
               disabled={isPending}
-              className="text-xs bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold px-3 py-1.5 rounded-lg transition shrink-0"
+              className="text-sm md:text-base bg-white hover:bg-emerald-50 disabled:opacity-50 text-emerald-700 font-extrabold px-4 py-2 md:px-5 md:py-2.5 rounded-lg transition shadow-sm shrink-0"
             >
               Request to join
             </button>
           )}
           {!isAuthenticated && (
-            <Link href="/login" className="text-xs text-emerald-700 font-bold hover:underline shrink-0">
+            <Link
+              href="/login"
+              className="text-sm md:text-base bg-white hover:bg-emerald-50 text-emerald-700 font-extrabold px-4 py-2 md:px-5 md:py-2.5 rounded-lg shadow-sm shrink-0"
+            >
               Sign in to join
             </Link>
           )}
@@ -540,7 +547,7 @@ export default function Arena({
       )}
 
       {/* Main Grid Workspace */}
-      <main className="flex-1 p-4 pb-28 md:p-6 md:pb-6 lg:p-8 lg:pb-8 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <main className={`flex-1 p-4 md:p-6 lg:p-8 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start ${!canManage ? 'pb-44 md:pb-32 lg:pb-32' : 'pb-28 md:pb-6 lg:pb-8'}`}>
 
         {/* Left Column: Player Administration & Paddle Queue */}
         <div className="lg:col-span-5 space-y-6">
