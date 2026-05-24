@@ -68,6 +68,11 @@ export default async function ArenaPage({ params }) {
         leaderboardSize: arena.leaderboardSize,
         countOffScheduleGames: arena.countOffScheduleGames,
       }}
+      sessionPrep={{
+        autoResetOnSession: arena.autoResetOnSession,
+        // ISO string so the client doesn't accidentally serialize a Date.
+        lastSessionResetAt: arena.lastSessionResetAt ? arena.lastSessionResetAt.toISOString() : null,
+      }}
       canManage={canManage}
       viewerRole={viewerRole}
       viewerUserId={user?.id ?? null}

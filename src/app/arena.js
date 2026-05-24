@@ -4,7 +4,6 @@ import React, { useState, useEffect, useMemo, useRef, useTransition } from 'reac
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  addPlayer,
   removePlayer,
   shuffleQueue,
   fillCourt,
@@ -13,6 +12,7 @@ import {
   removeCourt,
   requestToJoin,
   updateArenaSchedule,
+  prepareNextSession,
 } from './actions';
 import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE } from '@/lib/match-defaults';
@@ -26,6 +26,8 @@ import { ArenaMembers } from './arena-members';
 import { ArenaNavDrawer } from './arena-nav-drawer';
 import { ArenaScheduleModal } from './arena-schedule-modal';
 import { ArenaCourtsPanel } from './arena-courts-panel';
+import { ArenaSessionPrepBanner } from './arena-session-prep-banner';
+import { ArenaPrepRosterModal } from './arena-prep-roster-modal';
 
 /** Display name: "First Last", or just "First" when no last name is set. */
 const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
@@ -145,6 +147,7 @@ export default function Arena({
     leaderboardSize: DEFAULT_LEADERBOARD_SIZE,
     countOffScheduleGames: DEFAULT_COUNT_OFF_SCHEDULE,
   },
+  sessionPrep = { autoResetOnSession: true, lastSessionResetAt: null },
   canManage,
   viewerRole,
   viewerUserId,
@@ -187,8 +190,6 @@ export default function Arena({
   const [team1Score, setTeam1Score] = useState('');
   const [team2Score, setTeam2Score] = useState('');
 
-  const [newFirstName, setNewFirstName] = useState('');
-  const [newLastName, setNewLastName] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [activeTab, setActiveTab] = useState('courts');
 
@@ -211,12 +212,20 @@ export default function Arena({
 
   // Viewer notice can be dismissed for the session.
   const [viewerNoticeDismissed, setViewerNoticeDismissed] = useState(false);
-  // Height of the sticky site header, so the floating viewer notice can sit
-  // flush beneath it. Measured because the header grows when the arena name
-  // wraps or the stat chips reflow on narrow viewports. Seeded with a typical
-  // height so the notice is positioned correctly on the first paint, before
-  // the ResizeObserver refines it.
+  // Height of the sticky site header, so the floating viewer notice OR the
+  // manager prep banner can sit flush beneath it. Measured because the
+  // header grows when the arena name wraps or the stat chips reflow on
+  // narrow viewports. Seeded with a typical height so the notice is
+  // positioned correctly on the first paint, before the ResizeObserver
+  // refines it.
   const [headerHeight, setHeaderHeight] = useState(96);
+  // Prep Roster modal — managers tap a banner button to open it. State lives
+  // here (rather than inside the banner) so the modal renders at the page
+  // root, outside the sticky banner container.
+  const [rosterModalOpen, setRosterModalOpen] = useState(false);
+  // Local copy of the session-prep server state so the banner reflects a
+  // just-fired `prepareNextSession` without waiting for a server refetch.
+  const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
 
   // Persist the dismissal for the browser session, per arena, so a router
   // refresh (e.g. after requesting to join) or reload keeps it hidden.
@@ -232,7 +241,9 @@ export default function Arena({
   };
 
   useEffect(() => {
-    if (canManage || viewerNoticeDismissed) return undefined;
+    // Both the viewer notice and the manager prep banner pin themselves
+    // `headerHeight + 12px` below the sticky site header, so run the
+    // observer unconditionally — managers also need a measured offset.
     const header = document.querySelector('[data-site-header]');
     if (!header) return undefined;
     const measure = () => setHeaderHeight(header.getBoundingClientRect().height);
@@ -240,7 +251,7 @@ export default function Arena({
     const ro = new ResizeObserver(measure);
     ro.observe(header);
     return () => ro.disconnect();
-  }, [canManage, viewerNoticeDismissed]);
+  }, []);
   const formatTimestamp = (iso) =>
     mounted ? new Date(iso).toLocaleString() : iso.replace('T', ' ').slice(0, 16);
 
@@ -335,16 +346,6 @@ export default function Arena({
     run(() => fillCourt(arenaId, courtId));
   };
 
-  const handleAddPlayer = (e) => {
-    e.preventDefault();
-    if (!canManage || !newFirstName.trim()) return;
-    const first = newFirstName;
-    const last = newLastName;
-    setNewFirstName('');
-    setNewLastName('');
-    run(() => addPlayer(arenaId, first, last));
-  };
-
   const handleRemovePlayer = (id) => {
     if (!canManage) return;
     run(() => removePlayer(arenaId, id));
@@ -372,6 +373,28 @@ export default function Arena({
   const handleRemoveCourt = (id) => {
     if (!canManage) return;
     run(() => removeCourt(arenaId, id));
+  };
+
+  const handlePrepareAndOpen = () => {
+    if (!canManage) return;
+    if (!window.confirm(
+      'Start a new session? This empties the rack and resets the partnership matrix so tonight\'s mix is unbiased. Lifetime stats and match history are not touched.',
+    )) return;
+    startTransition(async () => {
+      try {
+        const result = await prepareNextSession(arenaId);
+        applyResult(result);
+        if (!result?.error) {
+          // Stamp locally so the banner re-renders as "prepared" right away,
+          // without waiting for the next server read. The next router.refresh
+          // (e.g. on tab switch) will replace this with the server value.
+          setLastSessionResetAt(new Date().toISOString());
+          setRosterModalOpen(true);
+        }
+      } catch {
+        setErrorMsg('Something went wrong preparing the session. Please try again.');
+      }
+    });
   };
 
   const handleSaveSchedule = (next) => {
@@ -527,6 +550,19 @@ export default function Arena({
         <AuthStatus />
       </SiteHeader>
 
+      <ArenaSessionPrepBanner
+        arenaId={arenaId}
+        canManage={canManage}
+        schedule={schedule}
+        lastSessionResetAt={lastSessionResetAt}
+        autoResetOnSession={sessionPrep.autoResetOnSession}
+        headerHeight={headerHeight}
+        checkedInCount={queue.length}
+        isPending={isPending}
+        onPrepareAndOpen={handlePrepareAndOpen}
+        onOpenRoster={() => setRosterModalOpen(true)}
+      />
+
       {!canManage && !viewerNoticeDismissed && (
         <div
           style={{ top: headerHeight + 12 }}
@@ -599,51 +635,6 @@ export default function Arena({
         {/* Left Column: Player Administration & Paddle Queue */}
         <div className="lg:col-span-5 space-y-6">
 
-          {/* Quick Add Section — owners/organizers only */}
-          {canManage && (
-            <section className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-400">
-                  Register Players
-                </h3>
-                <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-2 py-0.5 rounded-md">
-                  One player at a time
-                </span>
-              </div>
-
-              <form onSubmit={handleAddPlayer} className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="First name"
-                  value={newFirstName}
-                  onChange={(e) => setNewFirstName(e.target.value)}
-                  className="flex-1 min-w-0 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400"
-                />
-                <input
-                  type="text"
-                  placeholder="Last name (optional)"
-                  value={newLastName}
-                  onChange={(e) => setNewLastName(e.target.value)}
-                  className="flex-1 min-w-0 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400"
-                />
-                <button
-                  type="submit"
-                  disabled={isPending}
-                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold px-5 py-2.5 rounded-xl transition duration-150 flex items-center justify-center shadow-sm shrink-0"
-                >
-                  Add
-                </button>
-              </form>
-
-              {errorMsg && (
-                <div className="mt-3 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-start gap-2">
-                  <span className="font-bold">⚠️</span>
-                  <span>{errorMsg}</span>
-                </div>
-              )}
-            </section>
-          )}
-
           {/* Visual Paddle Stack Section */}
           <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
             <div className="p-5 border-b border-slate-100 bg-slate-50/50 space-y-3">
@@ -654,10 +645,29 @@ export default function Arena({
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">Top 4 paddles will stack into the next available court.</p>
                 </div>
-                <span className="bg-emerald-50 text-emerald-800 border border-emerald-100/50 text-[10px] font-black tracking-wider uppercase px-2.5 py-1 rounded-full shrink-0">
-                  {queue.length} Stacked
-                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="bg-emerald-50 text-emerald-800 border border-emerald-100/50 text-[10px] font-black tracking-wider uppercase px-2.5 py-1 rounded-full">
+                    {queue.length} Stacked
+                  </span>
+                  {canManage && (
+                    <button
+                      type="button"
+                      onClick={() => setRosterModalOpen(true)}
+                      className="text-[11px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition"
+                      title="Open the Prep Roster modal to check in members and add walk-ins"
+                    >
+                      + Players
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {errorMsg && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-start gap-2">
+                  <span className="font-bold">⚠️</span>
+                  <span>{errorMsg}</span>
+                </div>
+              )}
 
               {/* Silo Buster Controls */}
               <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-200/60 items-center justify-between">
@@ -1235,6 +1245,21 @@ export default function Arena({
           }}
           isPending={isPending}
           error={scheduleError}
+        />
+      )}
+
+      {/* Prep Roster modal (owner or organizer). Each toggle hits a server
+          action immediately; the parent reconciles state via applyResult. */}
+      {rosterModalOpen && canManage && (
+        <ArenaPrepRosterModal
+          arenaId={arenaId}
+          members={members}
+          players={players}
+          queue={queue}
+          pendingRequests={pendingRequests}
+          pendingLinkRequests={pendingLinkRequests}
+          onApplyResult={applyResult}
+          onClose={() => setRosterModalOpen(false)}
         />
       )}
 

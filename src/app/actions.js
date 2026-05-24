@@ -955,6 +955,129 @@ export async function resetArena(arenaId) {
   return { state: await getState(arenaId) };
 }
 
+// --- Session prep (Phase 10a) ---------------------------------------------
+
+/**
+ * Prepare the arena for an upcoming play session. Manager-gated. Empties
+ * the rack (`queueOrder = null` for every active player), wipes
+ * `Partnership` rows so the variety algorithm starts the new session
+ * unbiased by last week's pairings, zeroes `waitRounds`, and stamps
+ * `Arena.lastSessionResetAt`. The UI immediately opens the Prep Roster
+ * modal after this so the manager fills the empty rack with tonight's
+ * attendees in one flow — preventing the "checked-in but matrix still
+ * polluted" failure mode.
+ *
+ * Deliberately untouched: `gamesPlayed`, `wins`, `losses`, `rating`, all
+ * `Match`/`MatchPlayer` rows, and `CourtSlot` (a live match keeps playing
+ * across a reset; players come off into the empty rack via `endMatch`).
+ */
+export async function prepareNextSession(arenaId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  // updateMany (not update) on the arena row so a delete that races in after
+  // requireArenaManager passes is a clean count===0, not an uncaught P2025 —
+  // same pattern as the other manager-gated arena writes. The partnership /
+  // player writes already no-op on zero matched rows (a cascade-deleted arena
+  // leaves nothing to match), so the whole transaction is a safe no-op then.
+  let arenaGone = false;
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+    await tx.partnership.deleteMany({ where: { arenaId } });
+    await tx.player.updateMany({
+      where: { arenaId, leftAt: null },
+      data: { queueOrder: null, waitRounds: 0 },
+    });
+    const updated = await tx.arena.updateMany({
+      where: { id: arenaId },
+      data: { lastSessionResetAt: new Date() },
+    });
+    if (updated.count === 0) arenaGone = true;
+  });
+
+  if (arenaGone) return { error: 'This arena no longer exists.', state: await getState(arenaId) };
+  return { state: await getState(arenaId) };
+}
+
+/**
+ * Check a player into the rack — bottom-of-queue placement. Works for both
+ * registered members and walk-ins; the Prep Roster modal uses this for
+ * either kind of player. Manager-gated. Re-anchors `gamesOffset` so the
+ * returning player sorts as a peer (same pattern as `activateArenaPlayer`).
+ * Idempotent: a player already on the rack (or on a court mid-match) is a
+ * clean no-op.
+ */
+export async function checkInPlayer(arenaId, playerId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+    const player = await tx.player.findFirst({
+      where: { id: playerId, arenaId, leftAt: null },
+      select: { id: true, queueOrder: true, gamesPlayed: true },
+    });
+    if (!player) return;
+    if (player.queueOrder !== null) return;
+    // Skip if the player is currently on a court — they'll return to the rack
+    // when `endMatch` fires, and double-queueing would put them in two places.
+    const onCourt = await tx.courtSlot.findFirst({
+      where: { playerId: player.id, court: { status: 'playing' } },
+    });
+    if (onCourt) return;
+    const avg = await groupAverageMetric(tx, arenaId);
+    const order = (await maxQueueOrder(tx, arenaId)) + 1;
+    await tx.player.update({
+      where: { id: player.id },
+      data: { queueOrder: order, waitRounds: 0, gamesOffset: avg - player.gamesPlayed },
+    });
+  });
+
+  return { state: await getState(arenaId) };
+}
+
+/**
+ * Check a player out of the rack — clears `queueOrder` so they don't get
+ * stacked onto the next court. Manager-gated. A player currently mid-match
+ * is left alone (their `queueOrder` is already null while playing).
+ */
+export async function checkOutPlayer(arenaId, playerId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+    await tx.player.updateMany({
+      where: { id: playerId, arenaId, leftAt: null, queueOrder: { not: null } },
+      data: { queueOrder: null, waitRounds: 0 },
+    });
+  });
+
+  return { state: await getState(arenaId) };
+}
+
+/**
+ * Toggle whether the session boundary auto-empties the rack. Manager-gated.
+ * Decoupled from `updateArenaGeneral` so the Sessions settings section
+ * matches the per-section action pattern of Schedule / Matchmaking /
+ * Match Defaults.
+ */
+export async function updateArenaSessions(arenaId, { autoResetOnSession } = {}) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  if (typeof autoResetOnSession !== 'boolean') {
+    return { error: 'autoResetOnSession must be true or false.' };
+  }
+
+  const updated = await prisma.arena.updateMany({
+    where: { id: arenaId },
+    data: { autoResetOnSession },
+  });
+  if (updated.count === 0) return { error: 'This arena no longer exists.' };
+  return { sessions: { autoResetOnSession } };
+}
+
 // --- Membership (Phase 3) -------------------------------------------------
 
 /**
