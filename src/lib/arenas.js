@@ -60,9 +60,11 @@ export async function getArena(id) {
  * List an arena's members (oldest first) with role. Returns only
  * non-sensitive fields: `/arena/[id]` is publicly viewable, so email and
  * other account identifiers must not be in this payload. `hasLinkedPlayer`
- * flags members who already have an active `Player` row in this arena, so
- * the manager direct-link modal can hide them — picking them would trigger
- * an irreversible stat merge against the wrong walk-in.
+ * flags members who already have an active `Player` row in this arena —
+ * the manager direct-link modal uses it to append a `· existing player`
+ * suffix on those option labels, signalling that picking them will merge
+ * stats into the walk-in (rather than hiding them, which would make the
+ * canonical "claim historical walk-in" flow unreachable).
  * @param {string} arenaId
  * @returns {Promise<Array<{membershipId:string,userId:string,name:string,role:string,hasLinkedPlayer:boolean}>>}
  */
@@ -159,24 +161,22 @@ export async function getArenaLinkRequests(arenaId) {
 }
 
 /**
- * Per-viewer link-request context for the Members tab. Tells the UI whether
- * the viewer already has a linked Player here, whether they have a pending
- * link request, and which orphan walk-ins they could request. Returns
- * `null`-shaped fields when no viewer is signed in or no arena is given, so
- * the Members tab can render safely without extra conditionals.
+ * Per-viewer link-request context for the Members tab. Returns the viewer's
+ * pending link request (if any), the full active walk-in list (for the
+ * manager Walk-ins pill — each row carries `hasPendingRequest` so the UI
+ * can show a "claim pending" badge), and the claimable subset (the
+ * self-link modal's option list). Returns `null`-shaped fields when no
+ * viewer is signed in or no arena is given, so the Members tab can render
+ * safely without extra conditionals.
  * @param {string} arenaId
  * @param {string|null|undefined} userId
  */
 export async function getViewerLinkContext(arenaId, userId) {
   if (!userId || !arenaId) {
-    return { hasLinkedPlayer: false, pendingRequest: null, orphanPlayers: [] };
+    return { pendingRequest: null, orphanPlayers: [], claimableOrphans: [] };
   }
 
-  const [ownPlayer, pending, orphans] = await Promise.all([
-    prisma.player.findUnique({
-      where: { arenaId_userId: { arenaId, userId } },
-      select: { id: true, leftAt: true },
-    }),
+  const [pending, orphans] = await Promise.all([
     prisma.linkRequest.findUnique({
       where: { arenaId_userId: { arenaId, userId } },
       include: {
@@ -206,7 +206,6 @@ export async function getViewerLinkContext(arenaId, userId) {
   }));
 
   return {
-    hasLinkedPlayer: !!(ownPlayer && !ownPlayer.leftAt),
     pendingRequest: pending
       ? {
           requestId: pending.id,

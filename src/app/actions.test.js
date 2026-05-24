@@ -694,6 +694,12 @@ describe('arena server actions — authorization', () => {
         data: { playerId: 'temp1' },
       });
       expect(tx.player.deleteMany).toHaveBeenCalledWith({ where: { id: 'own1', arenaId: ARENA } });
+      // Order matters: the walk-in `update` claims (arenaId, userId), so the
+      // existing `ownPlayer` must be deleted FIRST or the @@unique constraint
+      // fires with P2002. Lock the ordering here so a future reorder is loud.
+      const deleteOrder = tx.player.deleteMany.mock.invocationCallOrder[0];
+      const updateOrder = tx.player.update.mock.invocationCallOrder[0];
+      expect(deleteOrder).toBeLessThan(updateOrder);
     });
 
     it('linkPlayerToMember() just links when the member has no player yet', async () => {
@@ -791,6 +797,31 @@ describe('arena server actions — authorization', () => {
 
       const result = await actions.requestLinkPlayer(ARENA, 'p1');
       expect(result.ok).toBe(true);
+      expect(tx.linkRequest.upsert).toHaveBeenCalledWith({
+        where: { arenaId_userId: { arenaId: ARENA, userId: 'u1' } },
+        create: { arenaId: ARENA, userId: 'u1', playerId: 'p1' },
+        update: { playerId: 'p1' },
+      });
+    });
+
+    // The "Yosh" flow: a member who joined via approveJoinRequest already
+    // has a fresh auto-created Player (`activateArenaPlayer`). Locking this
+    // case as a test pins down the guard removal from f18ab38 — re-adding
+    // the "you already have a linked player" block would silently kill the
+    // canonical "claim my historical walk-in" feature.
+    it('requestLinkPlayer() still succeeds when the requester already has a linked Player (claim-historical-walk-in flow)', async () => {
+      const tx = requestTx({
+        arena: { id: ARENA, ownerId: 'someone-else' },
+        membership: { role: ROLES.MEMBER },
+        ownPlayer: { id: 'own1', leftAt: null },
+        target: { id: 'p1', userId: null, leftAt: null },
+        existingForPlayer: null,
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.requestLinkPlayer(ARENA, 'p1');
+      expect(result.ok).toBe(true);
+      expect(result.error).toBeUndefined();
       expect(tx.linkRequest.upsert).toHaveBeenCalledWith({
         where: { arenaId_userId: { arenaId: ARENA, userId: 'u1' } },
         create: { arenaId: ARENA, userId: 'u1', playerId: 'p1' },
