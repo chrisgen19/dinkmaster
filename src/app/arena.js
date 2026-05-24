@@ -13,6 +13,7 @@ import {
   removeCourt,
   requestToJoin,
   updateArenaSchedule,
+  prepareNextSession,
 } from './actions';
 import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE } from '@/lib/match-defaults';
@@ -26,6 +27,8 @@ import { ArenaMembers } from './arena-members';
 import { ArenaNavDrawer } from './arena-nav-drawer';
 import { ArenaScheduleModal } from './arena-schedule-modal';
 import { ArenaCourtsPanel } from './arena-courts-panel';
+import { ArenaSessionPrepBanner } from './arena-session-prep-banner';
+import { ArenaPrepRosterModal } from './arena-prep-roster-modal';
 
 /** Display name: "First Last", or just "First" when no last name is set. */
 const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
@@ -145,6 +148,7 @@ export default function Arena({
     leaderboardSize: DEFAULT_LEADERBOARD_SIZE,
     countOffScheduleGames: DEFAULT_COUNT_OFF_SCHEDULE,
   },
+  sessionPrep = { autoResetOnSession: true, lastSessionResetAt: null },
   canManage,
   viewerRole,
   viewerUserId,
@@ -211,12 +215,20 @@ export default function Arena({
 
   // Viewer notice can be dismissed for the session.
   const [viewerNoticeDismissed, setViewerNoticeDismissed] = useState(false);
-  // Height of the sticky site header, so the floating viewer notice can sit
-  // flush beneath it. Measured because the header grows when the arena name
-  // wraps or the stat chips reflow on narrow viewports. Seeded with a typical
-  // height so the notice is positioned correctly on the first paint, before
-  // the ResizeObserver refines it.
+  // Height of the sticky site header, so the floating viewer notice OR the
+  // manager prep banner can sit flush beneath it. Measured because the
+  // header grows when the arena name wraps or the stat chips reflow on
+  // narrow viewports. Seeded with a typical height so the notice is
+  // positioned correctly on the first paint, before the ResizeObserver
+  // refines it.
   const [headerHeight, setHeaderHeight] = useState(96);
+  // Prep Roster modal — managers tap a banner button to open it. State lives
+  // here (rather than inside the banner) so the modal renders at the page
+  // root, outside the sticky banner container.
+  const [rosterModalOpen, setRosterModalOpen] = useState(false);
+  // Local copy of the session-prep server state so the banner reflects a
+  // just-fired `prepareNextSession` without waiting for a server refetch.
+  const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
 
   // Persist the dismissal for the browser session, per arena, so a router
   // refresh (e.g. after requesting to join) or reload keeps it hidden.
@@ -232,7 +244,9 @@ export default function Arena({
   };
 
   useEffect(() => {
-    if (canManage || viewerNoticeDismissed) return undefined;
+    // Both the viewer notice and the manager prep banner pin themselves
+    // `headerHeight + 12px` below the sticky site header, so run the
+    // observer unconditionally — managers also need a measured offset.
     const header = document.querySelector('[data-site-header]');
     if (!header) return undefined;
     const measure = () => setHeaderHeight(header.getBoundingClientRect().height);
@@ -240,7 +254,7 @@ export default function Arena({
     const ro = new ResizeObserver(measure);
     ro.observe(header);
     return () => ro.disconnect();
-  }, [canManage, viewerNoticeDismissed]);
+  }, []);
   const formatTimestamp = (iso) =>
     mounted ? new Date(iso).toLocaleString() : iso.replace('T', ' ').slice(0, 16);
 
@@ -372,6 +386,25 @@ export default function Arena({
   const handleRemoveCourt = (id) => {
     if (!canManage) return;
     run(() => removeCourt(arenaId, id));
+  };
+
+  const handlePrepareSession = (mode) => {
+    if (!canManage) return;
+    const confirmMsg =
+      mode === 'fresh'
+        ? 'Empty the rack and reset the partnership matrix for the next session? Lifetime stats and match history are not touched.'
+        : 'Keep the current rack but reset the partnership matrix for the next session? Lifetime stats and match history are not touched.';
+    if (!window.confirm(confirmMsg)) return;
+    startTransition(async () => {
+      const result = await prepareNextSession(arenaId, { mode });
+      applyResult(result);
+      if (!result?.error) {
+        // Stamp locally so the banner re-renders as "prepared" right away,
+        // without waiting for the next server read. The next router.refresh
+        // (e.g. on tab switch) will replace this with the server value.
+        setLastSessionResetAt(new Date().toISOString());
+      }
+    });
   };
 
   const handleSaveSchedule = (next) => {
@@ -526,6 +559,19 @@ export default function Arena({
 
         <AuthStatus />
       </SiteHeader>
+
+      <ArenaSessionPrepBanner
+        arenaId={arenaId}
+        canManage={canManage}
+        schedule={schedule}
+        lastSessionResetAt={lastSessionResetAt}
+        headerHeight={headerHeight}
+        checkedInCount={queue.length}
+        isPending={isPending}
+        onStartFresh={() => handlePrepareSession('fresh')}
+        onCarryOver={() => handlePrepareSession('carry')}
+        onOpenRoster={() => setRosterModalOpen(true)}
+      />
 
       {!canManage && !viewerNoticeDismissed && (
         <div
@@ -1235,6 +1281,19 @@ export default function Arena({
           }}
           isPending={isPending}
           error={scheduleError}
+        />
+      )}
+
+      {/* Prep Roster modal (owner or organizer). Each toggle hits a server
+          action immediately; the parent reconciles state via applyResult. */}
+      {rosterModalOpen && canManage && (
+        <ArenaPrepRosterModal
+          arenaId={arenaId}
+          members={members}
+          players={players}
+          queue={queue}
+          onApplyResult={applyResult}
+          onClose={() => setRosterModalOpen(false)}
         />
       )}
 
