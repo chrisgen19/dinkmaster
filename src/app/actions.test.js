@@ -1240,4 +1240,38 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
     expect(result.error).toBe('You can only rest your own paddle.');
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
+
+  it('confirms with a notification when the paddle is moved to the back', async () => {
+    getCurrentUser.mockResolvedValue({ id: 'u-me' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
+    const tx = {
+      $executeRaw: vi.fn(),
+      player: {
+        findFirst: vi.fn().mockResolvedValue({ id: 'p1' }),
+        aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 7 } }),
+        update: vi.fn(),
+      },
+    };
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+    const result = await actions.skipPlayer(ARENA, 'p1');
+    expect(result.notification).toBe('Paddle sent to the back of the rack.');
+    expect(tx.player.update).toHaveBeenCalledWith({
+      where: { id: 'p1' },
+      data: { queueOrder: 8, waitRounds: 0 },
+    });
+  });
+
+  it('returns NO notification on a no-op skip (paddle already left the rack)', async () => {
+    getCurrentUser.mockResolvedValue({ id: 'u-me' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
+    const tx = {
+      $executeRaw: vi.fn(),
+      player: { findFirst: vi.fn().mockResolvedValue(null), aggregate: vi.fn(), update: vi.fn() },
+    };
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+    const result = await actions.skipPlayer(ARENA, 'p1');
+    expect(result.error).toBeUndefined();
+    expect(result.notification).toBe('');
+    expect(tx.player.update).not.toHaveBeenCalled();
+  });
 });

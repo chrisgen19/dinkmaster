@@ -1090,6 +1090,7 @@ export async function skipPlayer(arenaId, playerId) {
     }
   }
 
+  let moved = false;
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
     // Re-check under the lock: only act on a paddle still on the rack.
@@ -1103,9 +1104,15 @@ export async function skipPlayer(arenaId, playerId) {
       where: { id: player.id },
       data: { queueOrder: order, waitRounds: 0 },
     });
+    moved = true;
   });
 
-  return { notification: 'Paddle sent to the back of the rack.', state: await getState(arenaId) };
+  // Only confirm when something actually moved — a no-op (the paddle already
+  // left the rack mid-race) must not show a false-positive success toast.
+  return {
+    notification: moved ? 'Paddle sent to the back of the rack.' : '',
+    state: await getState(arenaId),
+  };
 }
 
 /**
