@@ -1068,8 +1068,9 @@ export async function checkOutPlayer(arenaId, playerId) {
  * `gamesPlayed` is untouched (they didn't play); the player slots in at the
  * back as a peer on their existing count.
  *
- * No-op (clean) if the paddle is no longer on the rack — it left, was checked
- * out, or got pulled onto a court between the tap and this write.
+ * No-op (clean) if the paddle is no longer eligible under the queue lock: it
+ * left the rack, is no longer on deck, or nobody is waiting behind the on-deck
+ * group to take the freed spot.
  */
 export async function skipPlayer(arenaId, playerId) {
   const user = await getCurrentUser();
