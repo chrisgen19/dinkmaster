@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { listArenas, getUserMemberships, getUserPendingRequestArenaIds } from '@/lib/arenas';
+import { partitionArenaDirectory } from '@/lib/arena-directory';
 import { getCurrentUser } from '@/lib/session';
 import { AuthStatus } from './auth-status';
 import { SiteHeader } from './site-header';
@@ -70,9 +71,10 @@ export default async function Page() {
     ? await Promise.all([getUserMemberships(user.id), getUserPendingRequestArenaIds(user.id)])
     : [[], new Set()];
   const roleByArena = new Map(memberships.map((m) => [m.arenaId, m.role]));
-  const memberArenaIds = new Set(roleByArena.keys());
-  const yourArenas = user ? arenas.filter((arena) => memberArenaIds.has(arena.id)) : [];
-  const publicArenas = user ? arenas.filter((arena) => !memberArenaIds.has(arena.id)) : arenas;
+  const { yourArenas, publicArenas } = partitionArenaDirectory(arenas, {
+    userId: user?.id,
+    memberArenaIds: roleByArena.keys(),
+  });
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
@@ -106,7 +108,7 @@ export default async function Page() {
 
             {yourArenas.length === 0 ? (
               <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-10 text-center text-sm text-slate-400">
-                You are not in any arenas yet. Browse public arenas below to request access.
+                You are not in any arenas yet. Browse other arenas below to request access.
               </div>
             ) : (
               <ArenaGrid arenas={yourArenas} roleByArena={roleByArena} pendingArenaIds={pendingArenaIds} />
@@ -122,7 +124,7 @@ export default async function Page() {
           {publicArenas.length === 0 ? (
             <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-10 text-center text-sm text-slate-400">
               {user
-                ? 'No public arenas outside your memberships right now.'
+                ? 'No other arenas outside your memberships right now.'
                 : 'No arenas yet. Sign in to create the first one.'}
             </div>
           ) : (
