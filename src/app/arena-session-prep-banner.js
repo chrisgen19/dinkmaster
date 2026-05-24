@@ -95,14 +95,19 @@ export function ArenaSessionPrepBanner({
   // is mostly contextual ("starts in 45 min" / "live · N in") so a
   // manager can stash it to focus on the live UI. Scoped per (arena,
   // upcoming session): a dismiss for tonight doesn't suppress next week's.
-  const isPlayDay = state.kind === 'imminent' || state.kind === 'live';
-  const sessionKey = state.session && isPlayDay
+  // Only the imminent banner is dismissible — it's a pre-session nudge the
+  // manager may want to stash. The between banner is the sole entry to the
+  // prep modal so it must not be dismissable; the live banner isn't
+  // rendered at all (see early return below). Scoped per (arena, session)
+  // so a dismiss for tonight doesn't suppress next week's.
+  const canDismiss = state.kind === 'imminent';
+  const sessionKey = state.session && canDismiss
     ? `arena:${arenaId}:sessionPrepDismissed:${state.session.start.toISOString()}`
     : null;
   const [dismissed, setDismissed] = useState(false);
   useEffect(() => {
     if (!sessionKey) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset dismissed when we cross from a play day back to a between day
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset dismissed when the session window changes (e.g. imminent → between)
       setDismissed(false);
       return;
     }
@@ -114,22 +119,23 @@ export function ArenaSessionPrepBanner({
     sessionStorage.setItem(sessionKey, '1');
   };
 
-  if (!canManage || state.kind === 'none' || dismissed) return null;
+  // Suppressed during a live session: the rack, courts, and the always-on
+  // "+ Players" button already cover mid-game roster changes, so a sticky
+  // banner here is just wasted space. Also hidden for spectators, arenas
+  // with no schedule, and a dismissed imminent nudge.
+  if (!canManage || state.kind === 'none' || state.kind === 'live' || dismissed) return null;
 
   const tz = schedule.timezone || 'Asia/Manila';
   const sessionStartLabel = state.session ? formatSessionStart(state.session.start, tz) : null;
 
   // `needsReset` (computed in deriveState) is the only case whose CTA wipes
   // rack + matrix on tap — every other case just opens the modal. It's
-  // false for live sessions, already-prepped days, and arenas with
-  // auto-reset off (those keep the perpetual rack).
+  // false for already-prepped days and arenas with auto-reset off (those
+  // keep the perpetual rack).
   const { needsReset } = state;
   let title;
   let label;
-  if (state.kind === 'live') {
-    title = `Session live · ${checkedInCount} checked in`;
-    label = 'Manage roster';
-  } else if (state.kind === 'imminent') {
+  if (state.kind === 'imminent') {
     title = needsReset
       ? `Session starts ${formatCountdown(state.msToStart)} · ${sessionStartLabel}`
       : `${checkedInCount} on the rack · Session starts ${formatCountdown(state.msToStart)}`;
@@ -148,9 +154,9 @@ export function ArenaSessionPrepBanner({
     >
       <div
         role="status"
-        className={`relative p-4 ${isPlayDay ? 'pr-10' : ''} bg-amber-50/95 backdrop-blur border border-amber-200 text-amber-900 rounded-2xl shadow-lg shadow-amber-900/10 flex flex-col items-center text-center gap-3 animate-fade-in`}
+        className={`relative p-4 ${canDismiss ? 'pr-10' : ''} bg-amber-50/95 backdrop-blur border border-amber-200 text-amber-900 rounded-2xl shadow-lg shadow-amber-900/10 flex flex-col items-center text-center gap-3 animate-fade-in`}
       >
-        {isPlayDay && (
+        {canDismiss && (
           <button
             type="button"
             onClick={dismiss}
