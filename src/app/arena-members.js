@@ -54,6 +54,7 @@ export function ArenaMembers({
   const isOwner = viewerRole === ROLES.OWNER;
   const isMember = !!viewerRole;
   const orphanPlayers = viewerLinkContext?.orphanPlayers ?? [];
+  const claimableOrphans = viewerLinkContext?.claimableOrphans ?? [];
   const pendingTotal = pendingRequests.length + pendingLinkRequests.length;
 
   const act = (fn) => {
@@ -102,13 +103,14 @@ export function ArenaMembers({
   };
 
   // Self-link is offered when: a signed-in member has no linked Player here,
-  // and there's at least one orphan walk-in to claim. Members with a pending
-  // request still see the panel (in its "pending" state) so they can cancel.
+  // and there's at least one *claimable* orphan (i.e. one without an open
+  // request from someone else). Members with a pending request still see the
+  // panel (in its "pending" state) so they can cancel.
   const showSelfLink =
     isMember &&
     !!viewerLinkContext &&
     !viewerLinkContext.hasLinkedPlayer &&
-    (viewerLinkContext.pendingRequest || orphanPlayers.length > 0);
+    (viewerLinkContext.pendingRequest || claimableOrphans.length > 0);
 
   // Pill nav. The Requests pill is manager-only — non-managers have nothing
   // actionable there. Walk-ins is always visible (read-only for non-managers).
@@ -235,7 +237,7 @@ export function ArenaMembers({
           title="Request to link your account"
           description="Pick the walk-in player that's really you. An owner or organizer will approve it."
           submitLabel="Send request"
-          options={orphanPlayers.map((p) => ({ value: p.id, label: p.displayName }))}
+          options={claimableOrphans.map((p) => ({ value: p.id, label: p.displayName }))}
           onCancel={() => setSelfLinkOpen(false)}
           onSubmit={submitSelfLink}
           disabled={isPending}
@@ -370,6 +372,14 @@ function WalkInsList({ orphans, canManage, isPending, onLink }) {
             <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-600">
               walk-in
             </span>
+            {p.hasPendingRequest && (
+              <span
+                className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700"
+                title="A member has requested to claim this walk-in. Review in the Requests pill."
+              >
+                claim pending
+              </span>
+            )}
           </div>
           {canManage && (
             <button
@@ -469,9 +479,15 @@ function RequestsList({
   );
 }
 
-/** Generic single-select modal reused by both self-link and manager-link flows. */
+/**
+ * Generic single-select modal reused by both self-link and manager-link
+ * flows. The initial value is intentionally blank — a stray click on the
+ * pre-selected first option would otherwise link a walk-in to the wrong
+ * member and merge their stats. The submit button stays disabled until the
+ * user makes an explicit choice.
+ */
 function LinkPlayerModal({ title, description, submitLabel, options, onCancel, onSubmit, disabled }) {
-  const [value, setValue] = useState(options[0]?.value ?? '');
+  const [value, setValue] = useState('');
   const canSubmit = !!value && !disabled;
   return (
     <div
@@ -496,6 +512,9 @@ function LinkPlayerModal({ title, description, submitLabel, options, onCancel, o
             onChange={(e) => setValue(e.target.value)}
             className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-sky-200"
           >
+            <option value="" disabled>
+              Select…
+            </option>
             {options.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}

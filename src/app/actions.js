@@ -155,6 +155,7 @@ async function removeArenaMember(tx, arenaId, userId) {
   // Clear any stale pending request for the same user (cheap insurance against
   // odd orderings — a leaver should not be left with a lingering request).
   await tx.joinRequest.deleteMany({ where: { arenaId, userId } });
+  await tx.linkRequest.deleteMany({ where: { arenaId, userId } });
   return true;
 }
 
@@ -523,6 +524,13 @@ async function applyLinkPlayerToMember(tx, arenaId, playerId, userId) {
   } else {
     await tx.player.update({ where: { id: temp.id }, data: { userId } });
   }
+  // Consume any pending LinkRequest tied to either side of this link so the
+  // approval queue doesn't keep showing a request that would now fail with
+  // `ALREADY_LINKED` (the orphan no longer is) or that is moot because the
+  // claiming member has already been linked another way.
+  await tx.linkRequest.deleteMany({
+    where: { arenaId, OR: [{ userId }, { playerId: temp.id }] },
+  });
   return {};
 }
 
@@ -1029,52 +1037,88 @@ export async function requestLinkPlayer(arenaId, playerId) {
   if (guard.error) return { error: guard.error };
   if (!arenaId || !playerId) return { error: 'Player not found.' };
 
-  const arena = await prisma.arena.findUnique({ where: { id: arenaId } });
-  if (!arena) return { error: 'Arena not found.' };
+  // All eligibility checks AND the upsert run inside `lockQueue` so a
+  // concurrent direct-link, leave/remove, or player removal cannot invalidate
+  // the checks before we write. Unique-constraint races (P2002) and FK races
+  // (P2003 — e.g. the orphan got cascade-deleted between read and write) are
+  // translated to the same user-facing messages.
+  let errorMessage = '';
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockQueue(tx, arenaId);
 
-  // The requester must be a member of this arena.
-  const isOwner = arena.ownerId === guard.user.id;
-  if (!isOwner) {
-    const membership = await prisma.arenaMembership.findUnique({
-      where: { arenaId_userId: { arenaId, userId: guard.user.id } },
+      const arena = await tx.arena.findUnique({ where: { id: arenaId } });
+      if (!arena) {
+        errorMessage = 'Arena not found.';
+        return;
+      }
+
+      // The requester must be a member of this arena.
+      const isOwner = arena.ownerId === guard.user.id;
+      if (!isOwner) {
+        const membership = await tx.arenaMembership.findUnique({
+          where: { arenaId_userId: { arenaId, userId: guard.user.id } },
+        });
+        if (!membership) {
+          errorMessage = 'Join the arena before requesting a player link.';
+          return;
+        }
+      }
+
+      // The requester cannot already have an active linked Player here.
+      const ownPlayer = await tx.player.findUnique({
+        where: { arenaId_userId: { arenaId, userId: guard.user.id } },
+        select: { id: true, leftAt: true },
+      });
+      if (ownPlayer && !ownPlayer.leftAt) {
+        errorMessage = 'You already have a linked player in this arena.';
+        return;
+      }
+
+      // The target must be a walk-in (orphan) Player in this arena.
+      const target = await tx.player.findFirst({
+        where: { id: playerId, arenaId },
+        select: { id: true, userId: true, leftAt: true },
+      });
+      if (!target) {
+        errorMessage = 'That player no longer exists.';
+        return;
+      }
+      if (target.userId) {
+        errorMessage = 'That player is already linked to an account.';
+        return;
+      }
+      if (target.leftAt) {
+        errorMessage = 'That player is no longer active in this arena.';
+        return;
+      }
+
+      // Block if another member has a pending request against the same orphan.
+      const existingForPlayer = await tx.linkRequest.findUnique({
+        where: { arenaId_playerId: { arenaId, playerId } },
+        select: { userId: true },
+      });
+      if (existingForPlayer && existingForPlayer.userId !== guard.user.id) {
+        errorMessage = 'Another member already requested to be linked to that player.';
+        return;
+      }
+
+      await tx.linkRequest.upsert({
+        where: { arenaId_userId: { arenaId, userId: guard.user.id } },
+        create: { arenaId, userId: guard.user.id, playerId },
+        update: { playerId }, // member switched their pick before approval
+      });
     });
-    if (!membership) {
-      return { error: 'Join the arena before requesting a player link.' };
+  } catch (err) {
+    if (err?.code === 'P2002') {
+      return { error: 'Another member already requested to be linked to that player.' };
     }
+    if (err?.code === 'P2003') {
+      return { error: 'That player no longer exists.' };
+    }
+    throw err;
   }
-
-  // The requester cannot already have a linked Player in this arena.
-  const ownPlayer = await prisma.player.findUnique({
-    where: { arenaId_userId: { arenaId, userId: guard.user.id } },
-    select: { id: true, leftAt: true },
-  });
-  if (ownPlayer && !ownPlayer.leftAt) {
-    return { error: 'You already have a linked player in this arena.' };
-  }
-
-  // The target must be a walk-in (orphan) Player in this arena.
-  const target = await prisma.player.findFirst({
-    where: { id: playerId, arenaId },
-    select: { id: true, userId: true, leftAt: true },
-  });
-  if (!target) return { error: 'That player no longer exists.' };
-  if (target.userId) return { error: 'That player is already linked to an account.' };
-  if (target.leftAt) return { error: 'That player is no longer active in this arena.' };
-
-  // Block if another member has a pending request against the same orphan.
-  const existingForPlayer = await prisma.linkRequest.findUnique({
-    where: { arenaId_playerId: { arenaId, playerId } },
-    select: { userId: true },
-  });
-  if (existingForPlayer && existingForPlayer.userId !== guard.user.id) {
-    return { error: 'Another member already requested to be linked to that player.' };
-  }
-
-  await prisma.linkRequest.upsert({
-    where: { arenaId_userId: { arenaId, userId: guard.user.id } },
-    create: { arenaId, userId: guard.user.id, playerId },
-    update: { playerId }, // member switched their pick before approval
-  });
+  if (errorMessage) return { error: errorMessage };
   return { ok: true };
 }
 

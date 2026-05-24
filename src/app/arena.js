@@ -143,6 +143,22 @@ export default function Arena({
   const [courts, setCourts] = useState(initialState.courts);
   const [matchHistory, setMatchHistory] = useState(initialState.matchHistory);
   const [history, setHistory] = useState(initialState.history);
+  // Resync local rack state when the server refetches (e.g. after a child
+  // component's `router.refresh()`). Without this, actions that only refresh
+  // — link approvals, member removals — leave the rack UI showing the pre-
+  // refresh players/queue/courts, while tabs reading the new props update.
+  // Setting state during render with a sentinel is the React-recommended
+  // pattern for prop-driven state resets (`useEffect` would lint as
+  // `react-hooks/set-state-in-effect`).
+  const [lastSyncedState, setLastSyncedState] = useState(initialState);
+  if (initialState !== lastSyncedState) {
+    setLastSyncedState(initialState);
+    setPlayers(initialState.players);
+    setQueue(initialState.queue);
+    setCourts(initialState.courts);
+    setMatchHistory(initialState.matchHistory);
+    setHistory(initialState.history);
+  }
 
   const [isPending, startTransition] = useTransition();
 
@@ -339,10 +355,14 @@ export default function Arena({
       label: 'Members',
       // Surface anything that needs the viewer's attention: pending join
       // requests and pending link requests for managers, and the viewer's own
-      // pending link request for non-managers.
+      // pending link request for non-managers (managers' own request is
+      // already counted in `pendingLinkRequests`, so don't double-add it).
       badge:
-        (canManage ? pendingRequests.length + pendingLinkRequests.length : 0) +
-          (viewerLinkContext?.pendingRequest ? 1 : 0) || null,
+        (canManage
+          ? pendingRequests.length + pendingLinkRequests.length
+          : viewerLinkContext?.pendingRequest
+            ? 1
+            : 0) || null,
     },
     ...(myPlayer ? [{ id: 'mystats', label: 'My Stats' }] : []),
   ];

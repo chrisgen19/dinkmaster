@@ -30,6 +30,12 @@ vi.mock('@/lib/prisma', () => ({
     court: { findMany: vi.fn() },
     player: { count: vi.fn() },
     joinRequest: { upsert: vi.fn(), deleteMany: vi.fn(), findUnique: vi.fn() },
+    linkRequest: {
+      upsert: vi.fn(),
+      deleteMany: vi.fn(),
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+    },
   },
 }));
 
@@ -623,6 +629,7 @@ describe('arena server actions — authorization', () => {
         courtSlot: { findFirst: vi.fn().mockResolvedValue(null) },
         arenaMembership: { deleteMany: vi.fn() },
         joinRequest: { deleteMany: vi.fn() },
+        linkRequest: { deleteMany: vi.fn() },
       };
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
@@ -651,6 +658,7 @@ describe('arena server actions — authorization', () => {
       courtSlot: { findFirst: vi.fn().mockResolvedValue(onCourt) },
       matchPlayer: { updateMany: vi.fn() },
       partnership: { deleteMany: vi.fn() },
+      linkRequest: { deleteMany: vi.fn() },
     });
 
     it('linkPlayerToMember() merges the member’s existing player into the walk-in', async () => {

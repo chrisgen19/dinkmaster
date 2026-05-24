@@ -167,11 +167,26 @@ export async function getViewerLinkContext(arenaId, userId) {
       },
     }),
     prisma.player.findMany({
+      // All active walk-ins. Includes ones that already have a pending
+      // LinkRequest so managers can still see + act on them (direct-link,
+      // approve via the Requests pill, or remove). The self-link modal uses
+      // `claimableOrphans` below, which excludes already-claimed rows.
       where: { arenaId, userId: null, leftAt: null },
-      select: { id: true, firstName: true, lastName: true },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        linkRequests: { select: { id: true }, take: 1 },
+      },
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
     }),
   ]);
+
+  const orphanPlayers = orphans.map((p) => ({
+    id: p.id,
+    displayName: playerDisplayName(p),
+    hasPendingRequest: p.linkRequests.length > 0,
+  }));
 
   return {
     hasLinkedPlayer: !!(ownPlayer && !ownPlayer.leftAt),
@@ -182,10 +197,11 @@ export async function getViewerLinkContext(arenaId, userId) {
           playerName: playerDisplayName(pending.player),
         }
       : null,
-    orphanPlayers: orphans.map((p) => ({
-      id: p.id,
-      displayName: playerDisplayName(p),
-    })),
+    // Full list of active walk-ins (for the manager Walk-ins pill).
+    orphanPlayers,
+    // Subset eligible for a self-link request (no other pending claim).
+    // Drives the member self-link modal's option list.
+    claimableOrphans: orphanPlayers.filter((p) => !p.hasPendingRequest),
   };
 }
 
