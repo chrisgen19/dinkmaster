@@ -25,6 +25,12 @@ const SLUG_TO_ID = {
   danger: 'danger',
 };
 
+// Precomputed inverse so slugFromSectionId is an O(1) lookup instead of an
+// `Object.entries().find()` on every Link render (12+ per settings page).
+const ID_TO_SLUG = Object.fromEntries(
+  Object.entries(SLUG_TO_ID).map(([slug, id]) => [id, slug]),
+);
+
 /** Reverse lookup: kebab-case URL slug → internal section id, or null. */
 export function sectionIdFromSlug(slug) {
   return SLUG_TO_ID[slug] ?? null;
@@ -32,6 +38,8 @@ export function sectionIdFromSlug(slug) {
 
 /** Forward lookup used by the client shell for section nav `<Link>` hrefs. */
 export function slugFromSectionId(id) {
-  const entry = Object.entries(SLUG_TO_ID).find(([, v]) => v === id);
-  return entry ? entry[0] : null;
+  return ID_TO_SLUG[id] ?? null;
 }
+
+/** The canonical set of internal section ids (used to drift-check the UI). */
+export const SETTINGS_SECTION_IDS = Object.values(SLUG_TO_ID);

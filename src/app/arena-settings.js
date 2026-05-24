@@ -155,148 +155,134 @@ export function ArenaSettings({ section = null, arenaId, arenaName, description,
   const validSection = section && SECTIONS.some((s) => s.id === section) ? section : null;
   const desktopSection = validSection ?? 'general';
   const activeMeta = SECTIONS.find((s) => s.id === desktopSection);
+  const isIndex = !validSection;
 
-  // Roving arrow-key navigation across the desktop tablist (focus, not state —
-  // the buttons-as-Links navigate on click, and arrows move focus between them
-  // so a keyboard user can preview by focusing then activate by Enter/Space).
-  const tabRefs = useRef({});
-  const focusByIndex = (i) => {
-    const next = SECTIONS[(i + SECTIONS.length) % SECTIONS.length];
-    tabRefs.current[next.id]?.focus();
-  };
-  const onTabKeyDown = (e, idx) => {
-    const map = { ArrowDown: idx + 1, ArrowRight: idx + 1, ArrowUp: idx - 1, ArrowLeft: idx - 1, Home: 0, End: SECTIONS.length - 1 };
-    if (e.key in map) { e.preventDefault(); focusByIndex(map[e.key]); }
-  };
-
-  const sectionProps = { arenaId, arenaName, description, schedule, matchmaking, matchDefaults, sessions, isOwner, viewerUserId, members };
+  // On the mobile back chevron's destination:
+  // - On a section page → up to the section list.
+  // - On the index → back to the arena page itself.
+  const mobileBackHref = isIndex ? `/arena/${arenaId}` : `/arena/${arenaId}/settings`;
+  const mobileBackLabel = isIndex ? `Back to ${arenaName}` : 'Back to Settings';
+  const mobileTitle = isIndex ? 'Settings' : activeMeta.label;
+  const mobileDanger = !isIndex && activeMeta.danger;
 
   return (
     <div className="animate-fade-in">
-      {/* ── Mobile: section page (sticky chevron + just the section) ── */}
-      {validSection && (
-        <div className="md:hidden">
-          <SettingsTopBar
-            backHref={`/arena/${arenaId}/settings`}
-            backLabel="Back to Settings"
-            title={activeMeta.label}
-            subtitle={arenaName}
-            danger={activeMeta.danger}
-          />
-          <div className="mt-4">
-            <SectionBody id={validSection} {...sectionProps} />
-          </div>
-        </div>
-      )}
-
-      {/* ── Mobile: index (iOS-style sections list) ── */}
-      {!validSection && (
-        <div className="md:hidden">
-          <SettingsTopBar
-            backHref={`/arena/${arenaId}`}
-            backLabel={`Back to ${arenaName}`}
-            title="Settings"
-            subtitle={arenaName}
-          />
-          <ul className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm divide-y divide-slate-100">
-            {SECTIONS.map((s) => (
-              <li key={s.id}>
-                <Link
-                  href={`/arena/${arenaId}/settings/${slugFromSectionId(s.id)}`}
-                  className={`flex items-center gap-3 px-4 py-3.5 transition active:bg-slate-50 ${s.danger ? 'text-red-600 hover:bg-red-50/40' : 'text-slate-800 hover:bg-slate-50'}`}
-                >
-                  <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ring-1 ring-inset ${s.danger ? 'bg-red-50 text-red-600 ring-red-100' : 'bg-emerald-50 text-emerald-700 ring-emerald-100'}`}>
-                    <s.Icon className="h-4 w-4" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-bold leading-tight">{s.label}</span>
-                    <span className={`block text-xs leading-tight ${s.danger ? 'text-red-500/80' : 'text-slate-400'}`}>{s.hint}</span>
-                  </span>
-                  <IconChevronRight className={`h-4 w-4 shrink-0 ${s.danger ? 'text-red-300' : 'text-slate-300'}`} />
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* ── Desktop: heading + side-nav grid (always rendered on md+) ── */}
-      <div className="hidden md:block">
-        <div className="flex items-center gap-3 mb-6">
-          <span aria-hidden="true" className="grid place-items-center w-10 h-10 rounded-xl bg-emerald-600 shadow-sm shadow-emerald-600/30 shrink-0">
-            <IconSettings className="w-5 h-5 text-white" />
-          </span>
-          <div className="min-w-0">
-            <Link
-              href={`/arena/${arenaId}`}
-              className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-emerald-600 font-semibold transition"
-            >
-              <IconChevronLeft className="h-3 w-3" />
-              Back to {arenaName}
-            </Link>
-            <h1 className="font-display text-xl md:text-2xl font-extrabold tracking-tight text-slate-900 leading-none">
-              Arena Settings
-            </h1>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-[200px_1fr] gap-6">
-          <nav className="flex flex-col gap-1 sticky top-24 self-start" role="tablist" aria-label="Settings sections">
-            {SECTIONS.map((s, i) => {
-              const active = desktopSection === s.id;
-              return (
-                <Link
-                  key={s.id}
-                  ref={(el) => { tabRefs.current[s.id] = el; }}
-                  href={`/arena/${arenaId}/settings/${slugFromSectionId(s.id)}`}
-                  role="tab"
-                  aria-selected={active}
-                  tabIndex={active ? 0 : -1}
-                  onKeyDown={(e) => onTabKeyDown(e, i)}
-                  className={`group flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-semibold transition ${
-                    active
-                      ? s.danger
-                        ? 'bg-red-50 text-red-600 ring-1 ring-inset ring-red-200/70'
-                        : 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200/70'
-                      : s.danger
-                        ? 'text-red-500/80 hover:bg-red-50/50 hover:text-red-600'
-                        : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
-                  }`}
-                >
-                  <s.Icon className={`h-4 w-4 shrink-0 ${active ? '' : 'opacity-70 group-hover:opacity-100'}`} />
-                  <span>{s.label}</span>
-                </Link>
-              );
-            })}
-          </nav>
-
-          <div className="min-w-0" role="tabpanel" aria-label={activeMeta.label}>
-            <SectionBody id={desktopSection} {...sectionProps} />
-          </div>
+      {/* Mobile-only chrome — chevron back + title/subtitle. Not sticky on
+          purpose: the SiteHeader (sticky top-0 z-50) already occupies the top
+          of the viewport, so a second sticky bar would either render behind
+          it (lower z) or stack awkwardly below it without a measured offset.
+          A short scroll back is fine — matches the existing desktop "Back to"
+          link in the heading. */}
+      <div className="md:hidden -mx-4 -mt-4 mb-4 flex items-center gap-3 border-b border-slate-200/70 bg-white/85 px-4 py-3 backdrop-blur-md">
+        <Link
+          href={mobileBackHref}
+          aria-label={mobileBackLabel}
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:scale-95"
+        >
+          <IconChevronLeft className="h-5 w-5" />
+        </Link>
+        <div className="min-w-0">
+          <p className={`truncate text-base font-bold leading-tight ${mobileDanger ? 'text-red-600' : 'text-slate-900'}`}>{mobileTitle}</p>
+          <p className="truncate text-xs leading-tight text-slate-400">{arenaName}</p>
         </div>
       </div>
-    </div>
-  );
-}
 
-/**
- * Mobile sticky top bar: 44×44 chevron tile (back), then a stacked
- * title/subtitle. Used by both the index list and a section page; the
- * destination it goes back to depends on which.
- */
-function SettingsTopBar({ backHref, backLabel, title, subtitle, danger = false }) {
-  return (
-    <div className="sticky top-0 z-30 -mx-4 -mt-4 mb-1 flex items-center gap-3 border-b border-slate-200/70 bg-white/85 px-4 py-3 backdrop-blur-md">
-      <Link
-        href={backHref}
-        aria-label={backLabel}
-        className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:scale-95"
-      >
-        <IconChevronLeft className="h-5 w-5" />
-      </Link>
-      <div className="min-w-0">
-        <p className={`truncate text-base font-bold leading-tight ${danger ? 'text-red-600' : 'text-slate-900'}`}>{title}</p>
-        <p className="truncate text-xs text-slate-400 leading-tight">{subtitle}</p>
+      {/* Desktop-only heading — icon chip + back link + h1. */}
+      <div className="hidden md:flex items-center gap-3 mb-6">
+        <span aria-hidden="true" className="grid place-items-center w-10 h-10 rounded-xl bg-emerald-600 shadow-sm shadow-emerald-600/30 shrink-0">
+          <IconSettings className="w-5 h-5 text-white" />
+        </span>
+        <div className="min-w-0">
+          <Link
+            href={`/arena/${arenaId}`}
+            className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-emerald-600 font-semibold transition"
+          >
+            <IconChevronLeft className="h-3 w-3" />
+            Back to {arenaName}
+          </Link>
+          <h1 className="font-display text-xl md:text-2xl font-extrabold tracking-tight text-slate-900 leading-none">
+            Arena Settings
+          </h1>
+        </div>
+      </div>
+
+      {/* Body: one tree across breakpoints — collapses to a single column on
+          mobile, becomes a 200px nav + content grid on md+. The mobile iOS
+          list lives in the content column too (md:hidden), and the side-nav
+          lives in its own column (hidden md:flex). SectionBody renders
+          exactly once across breakpoints — `validSection` shows it on both;
+          the index shows it as the desktop default ('general') only on md+,
+          while mobile sees the list instead. This avoids the prior
+          double-mount of the active section's form state on a section URL. */}
+      <div className="md:grid md:grid-cols-[200px_1fr] md:gap-6">
+        <nav className="hidden md:flex md:flex-col md:gap-1 md:sticky md:top-24 md:self-start" aria-label="Settings sections">
+          {SECTIONS.map((s) => {
+            const active = desktopSection === s.id;
+            return (
+              <Link
+                key={s.id}
+                href={`/arena/${arenaId}/settings/${slugFromSectionId(s.id)}`}
+                aria-current={active ? 'page' : undefined}
+                className={`group flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                  active
+                    ? s.danger
+                      ? 'bg-red-50 text-red-600 ring-1 ring-inset ring-red-200/70'
+                      : 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200/70'
+                    : s.danger
+                      ? 'text-red-500/80 hover:bg-red-50/50 hover:text-red-600'
+                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                }`}
+              >
+                <s.Icon className={`h-4 w-4 shrink-0 ${active ? '' : 'opacity-70 group-hover:opacity-100'}`} />
+                <span>{s.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="min-w-0">
+          {/* Mobile-only iOS-style sections list (index page only). */}
+          {isIndex && (
+            <ul className="md:hidden overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm divide-y divide-slate-100">
+              {SECTIONS.map((s) => (
+                <li key={s.id}>
+                  <Link
+                    href={`/arena/${arenaId}/settings/${slugFromSectionId(s.id)}`}
+                    className={`flex items-center gap-3 px-4 py-3.5 transition active:bg-slate-50 ${s.danger ? 'text-red-600 hover:bg-red-50/40' : 'text-slate-800 hover:bg-slate-50'}`}
+                  >
+                    <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ring-1 ring-inset ${s.danger ? 'bg-red-50 text-red-600 ring-red-100' : 'bg-emerald-50 text-emerald-700 ring-emerald-100'}`}>
+                      <s.Icon className="h-4 w-4" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-bold leading-tight">{s.label}</span>
+                      <span className={`block text-xs leading-tight ${s.danger ? 'text-red-500/80' : 'text-slate-400'}`}>{s.hint}</span>
+                    </span>
+                    <IconChevronRight className={`h-4 w-4 shrink-0 ${s.danger ? 'text-red-300' : 'text-slate-300'}`} />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {/* Section body — rendered ONCE across breakpoints. On a section
+              URL it shows on both; on the index it's hidden on mobile (the
+              list takes the column) and shows General by default on desktop. */}
+          <div className={isIndex ? 'hidden md:block' : 'block'}>
+            <SectionBody
+              id={desktopSection}
+              arenaId={arenaId}
+              arenaName={arenaName}
+              description={description}
+              schedule={schedule}
+              matchmaking={matchmaking}
+              matchDefaults={matchDefaults}
+              sessions={sessions}
+              isOwner={isOwner}
+              viewerUserId={viewerUserId}
+              members={members}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
