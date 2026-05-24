@@ -30,7 +30,7 @@ function formatCountdown(ms) {
 }
 
 /**
- * Manager-only floating banner that prompts the organizer to prep the next
+ * Manager-only in-flow banner that prompts the organizer to prep the next
  * session's roster. Hidden for non-managers (the viewer notice covers that
  * case) and for arenas without a schedule. Dismissal is per-session: the
  * key includes the upcoming session's start instant, so dismissing one
@@ -60,7 +60,6 @@ function formatCountdown(ms) {
  *   secondary action so a manager can clear the rack + matrix on demand without
  *   the Settings → Sessions detour — it runs the same `prepareNextSession`
  *   transaction behind a confirm prompt.
- * @param {number} props.headerHeight - sticky offset so the banner sits flush below the header
  * @param {number} props.checkedInCount - rack length, surfaced in the `live` state
  * @param {boolean} props.isPending - disable action buttons while a server action is in flight
  * @param {() => void} props.onPrepareAndOpen - reset rack/matrix then open the roster modal
@@ -72,7 +71,6 @@ export function ArenaSessionPrepBanner({
   schedule,
   lastSessionResetAt = null,
   autoResetOnSession = true,
-  headerHeight = 96,
   checkedInCount = 0,
   isPending = false,
   onPrepareAndOpen,
@@ -127,7 +125,7 @@ export function ArenaSessionPrepBanner({
   };
 
   // Suppressed during a live session: the rack, courts, and the always-on
-  // "+ Players" button already cover mid-game roster changes, so a sticky
+  // "+ Players" button already cover mid-game roster changes, so a prep
   // banner here is just wasted space. Also hidden for spectators, arenas
   // with no schedule, and a dismissed imminent nudge.
   if (!canManage || state.kind === 'none' || state.kind === 'live' || dismissed) return null;
@@ -140,35 +138,37 @@ export function ArenaSessionPrepBanner({
   // false for already-prepped days and arenas with auto-reset off (those
   // keep the perpetual rack).
   const { needsReset } = state;
-  let title;
-  let label;
+  const label = needsReset ? 'Prepare next session' : 'Edit roster';
+
+  // Split the copy into a bold headline (the thing that matters at a glance —
+  // the rack count or the countdown) and a muted meta line (the schedule), so
+  // the banner reads with hierarchy instead of one dense `·`-joined string.
+  let headline;
+  let meta;
   if (state.kind === 'imminent') {
-    title = needsReset
-      ? `Session starts ${formatCountdown(state.msToStart)} · ${sessionStartLabel}`
-      : `${checkedInCount} on the rack · Session starts ${formatCountdown(state.msToStart)}`;
-    label = needsReset ? 'Prepare next session' : 'Edit roster';
+    const countdown = formatCountdown(state.msToStart);
+    headline = needsReset ? `Session starts ${countdown}` : `${checkedInCount} on the rack`;
+    meta = needsReset ? sessionStartLabel : `Starts ${countdown} · ${sessionStartLabel}`;
   } else {
-    title = needsReset
-      ? `Next session ${sessionStartLabel}`
-      : `${checkedInCount} on the rack · Next session ${sessionStartLabel}`;
-    label = needsReset ? 'Prepare next session' : 'Edit roster';
+    headline = needsReset ? 'Next session' : `${checkedInCount} on the rack`;
+    meta = needsReset ? sessionStartLabel : `Next session · ${sessionStartLabel}`;
   }
 
   return (
-    <div
-      style={{ top: headerHeight + 12 }}
-      className="sticky z-40 mt-3 w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8"
-    >
+    <div className="mt-3 w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8">
       <div
         role="status"
-        className={`relative p-4 ${canDismiss ? 'pr-10' : ''} bg-amber-50/95 backdrop-blur border border-amber-200 text-amber-900 rounded-2xl shadow-lg shadow-amber-900/10 flex flex-col items-center text-center gap-3 animate-fade-in`}
+        className={`group relative overflow-hidden rounded-2xl border border-amber-200/80 bg-gradient-to-br from-amber-50/95 to-orange-50/90 px-4 py-3.5 text-amber-900 shadow-lg shadow-amber-900/[0.07] ring-1 ring-amber-900/5 backdrop-blur-md animate-fade-in flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 ${canDismiss ? 'sm:pr-12' : ''}`}
       >
+        {/* Soft glow for depth — purely decorative, clipped by overflow-hidden. */}
+        <span aria-hidden="true" className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-amber-300/20 blur-2xl" />
+
         {canDismiss && (
           <button
             type="button"
             onClick={dismiss}
             aria-label="Dismiss session prep notice"
-            className="absolute top-3 right-3 grid place-items-center h-7 w-7 rounded-lg text-amber-700/70 hover:text-amber-900 hover:bg-amber-100 transition"
+            className="absolute top-2.5 right-2.5 z-10 grid place-items-center h-7 w-7 rounded-lg text-amber-700/60 transition hover:bg-amber-500/10 hover:text-amber-900"
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M18 6 6 18" />
@@ -176,40 +176,53 @@ export function ArenaSessionPrepBanner({
             </svg>
           </button>
         )}
-        <div className="flex items-center gap-2.5">
-          <svg className="w-5 h-5 shrink-0 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect width="18" height="18" x="3" y="4" rx="2" />
-            <path d="M16 2v4" />
-            <path d="M8 2v4" />
-            <path d="M3 10h18" />
-            <path d="m9 16 2 2 4-4" />
-          </svg>
-          <p className="text-sm font-semibold leading-snug">{title}</p>
+
+        {/* Status: icon chip + headline/meta. min-w-0 lets the meta truncate
+            gracefully on narrow screens; pr-8 on mobile keeps it clear of the
+            absolute dismiss ✕ (desktop reserves room via the container's pr). */}
+        <div className={`relative flex items-center gap-3 min-w-0 ${canDismiss ? 'pr-8 sm:pr-0' : ''}`}>
+          <span className="grid place-items-center h-10 w-10 shrink-0 rounded-xl bg-amber-500/15 text-amber-700 ring-1 ring-inset ring-amber-600/20">
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect width="18" height="18" x="3" y="4" rx="2" />
+              <path d="M16 2v4" />
+              <path d="M8 2v4" />
+              <path d="M3 10h18" />
+              <path d="m9 16 2 2 4-4" />
+            </svg>
+          </span>
+          <div className="min-w-0">
+            <p className="text-[15px] font-bold leading-tight tracking-tight text-amber-950 tabular-nums">{headline}</p>
+            {meta && <p className="mt-0.5 truncate text-xs font-medium leading-tight text-amber-700/80 tabular-nums">{meta}</p>}
+          </div>
         </div>
-        <div className="flex flex-col items-center gap-2">
-          <button
-            type="button"
-            onClick={needsReset ? onPrepareAndOpen : onOpenRoster}
-            className="text-sm bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg transition"
-            disabled={isPending}
-          >
-            {label}
-          </button>
-          {/* Perpetual-rack mode: the primary CTA only opens the roster (no
-              wipe), so without this the only way to clear the carried-over rack
-              + partnership matrix is buried in Settings → Sessions. Surface it
-              here as a secondary action. onPrepareAndOpen carries its own
-              confirm prompt before the destructive reset. */}
+
+        {/* Actions: primary solid + optional reset ghost. flex-col-reverse keeps
+            the primary on top (full-width) on mobile and to the right on desktop
+            — primary stays the most prominent in both. onPrepareAndOpen carries
+            its own confirm prompt before the destructive reset. */}
+        <div className="relative flex shrink-0 flex-col-reverse gap-2 sm:flex-row sm:items-center sm:gap-2.5">
           {!autoResetOnSession && (
             <button
               type="button"
               onClick={onPrepareAndOpen}
-              className="text-xs font-semibold text-amber-700 hover:text-amber-900 underline underline-offset-2 disabled:opacity-50 transition"
+              className="inline-flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-500/10 hover:text-amber-900 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
               disabled={isPending}
             >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                <path d="M3 3v5h5" />
+              </svg>
               Reset session now
             </button>
           )}
+          <button
+            type="button"
+            onClick={needsReset ? onPrepareAndOpen : onOpenRoster}
+            className="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-amber-900/20 transition hover:bg-amber-700 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
+            disabled={isPending}
+          >
+            {label}
+          </button>
         </div>
       </div>
     </div>
