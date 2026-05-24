@@ -4,19 +4,24 @@ import { getCurrentUser } from '@/lib/session';
 import { canManageArena } from '@/lib/roles';
 import { SiteHeader } from '@/app/site-header';
 import { AuthStatus } from '@/app/auth-status';
-import { ArenaSettings } from '@/app/arena-settings';
+import { ArenaSettings, SETTINGS_SECTION_SLUGS, sectionIdFromSlug } from '@/app/arena-settings';
 
 // Settings reads/writes live arena config; never serve a cached copy.
 export const dynamic = 'force-dynamic';
 
 /**
- * Owner/organizer settings for one arena. Non-managers are bounced back to the
- * arena view; the page itself only renders for managers. Within Danger Zone,
- * reset is manager-accessible while transfer/delete are owner-only — gated in
- * the client component and re-enforced by the server actions they call.
+ * Per-section settings page (`/arena/[id]/settings/[section]`). Drives the
+ * mobile drill-down (iOS-style sections list → this page), and also serves as
+ * the deep-link target on desktop so the section nav is real URL navigation.
+ *
+ * Unknown slugs `notFound()` rather than silently falling back — a typo'd
+ * bookmark deserves a 404, and validating here means the client component
+ * never has to defend against a bogus section id.
  */
-export default async function ArenaSettingsPage({ params }) {
-  const { id } = await params;
+export default async function ArenaSettingsSectionPage({ params }) {
+  const { id, section: slug } = await params;
+  if (!SETTINGS_SECTION_SLUGS.includes(slug)) notFound();
+  const sectionId = sectionIdFromSlug(slug);
 
   const arena = await getArena(id);
   if (!arena) notFound();
@@ -37,7 +42,7 @@ export default async function ArenaSettingsPage({ params }) {
 
       <main className="flex-1 w-full max-w-7xl mx-auto p-4 md:p-6 lg:p-8">
         <ArenaSettings
-          section={null}
+          section={sectionId}
           arenaId={arena.id}
           arenaName={arena.name}
           description={arena.description ?? ''}

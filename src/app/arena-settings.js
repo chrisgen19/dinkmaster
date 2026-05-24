@@ -13,6 +13,65 @@ import {
   MAX_LEADERBOARD_SIZE,
 } from '@/lib/match-defaults';
 
+// --- Settings section icons (Lucide path data, inline) -----------------------
+// Hand-inlined so we don't pull in lucide-react for six icons. Sizing comes
+// from the parent via className so the chrome controls density.
+const ICON_PROPS = {
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 2,
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+  'aria-hidden': true,
+};
+const IconSettings = ({ className }) => (
+  <svg className={className} {...ICON_PROPS}>
+    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+const IconCalendar = ({ className }) => (
+  <svg className={className} {...ICON_PROPS}>
+    <rect width="18" height="18" x="3" y="4" rx="2" />
+    <path d="M16 2v4" /><path d="M8 2v4" /><path d="M3 10h18" />
+  </svg>
+);
+const IconRefresh = ({ className }) => (
+  <svg className={className} {...ICON_PROPS}>
+    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+    <path d="M21 3v5h-5" />
+    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+    <path d="M3 21v-5h5" />
+  </svg>
+);
+const IconShuffle = ({ className }) => (
+  <svg className={className} {...ICON_PROPS}>
+    <path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.7-1.1 2-1.7 3.3-1.7H22" />
+    <path d="m18 2 4 4-4 4" />
+    <path d="M2 6h1.9c1.5 0 2.9.9 3.6 2.2" />
+    <path d="M22 18h-5.9c-1.3 0-2.6-.7-3.3-1.8l-.5-.8" />
+    <path d="m18 14 4 4-4 4" />
+  </svg>
+);
+const IconTarget = ({ className }) => (
+  <svg className={className} {...ICON_PROPS}>
+    <circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" />
+  </svg>
+);
+const IconAlert = ({ className }) => (
+  <svg className={className} {...ICON_PROPS}>
+    <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+    <path d="M12 9v4" /><path d="M12 17h.01" />
+  </svg>
+);
+const IconChevronLeft = ({ className }) => (
+  <svg className={className} {...ICON_PROPS}><path d="m15 18-6-6 6-6" /></svg>
+);
+const IconChevronRight = ({ className }) => (
+  <svg className={className} {...ICON_PROPS}><path d="m9 18 6-6-6-6" /></svg>
+);
+
 const inputClass =
   'w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 text-sm font-bold text-slate-800 focus:bg-white focus:border-emerald-500 outline-none transition';
 const labelClass = 'block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5';
@@ -41,14 +100,30 @@ function useSavedFlag(ms = 2500) {
 
 /** Section definitions for the left nav. All are visible to managers; the
  *  owner-only actions (transfer, delete) are gated inside Danger Zone. */
+/**
+ * The settings sections, in display order. `slug` is the URL segment under
+ * `/arena/[id]/settings/<slug>`; `hint` shows below the row on the mobile
+ * iOS-style list so a manager can scan the page without drilling in.
+ *
+ * `matchDefaults` reads `match-defaults` in the URL (kebab-case is the
+ * conventional URL form); we keep the camelCase id internally so the existing
+ * section switch keeps working. The slug ↔ id mapping is the only place that
+ * cares about the difference.
+ */
 const SECTIONS = [
-  { id: 'general', label: 'General' },
-  { id: 'schedule', label: 'Schedule' },
-  { id: 'sessions', label: 'Sessions' },
-  { id: 'matchmaking', label: 'Matchmaking' },
-  { id: 'matchDefaults', label: 'Match Defaults' },
-  { id: 'danger', label: 'Danger Zone' },
+  { id: 'general', slug: 'general', label: 'General', hint: 'Name and description', Icon: IconSettings },
+  { id: 'schedule', slug: 'schedule', label: 'Schedule', hint: 'Play days, times, timezone', Icon: IconCalendar },
+  { id: 'sessions', slug: 'sessions', label: 'Sessions', hint: 'Auto-reset rack on play day', Icon: IconRefresh },
+  { id: 'matchmaking', slug: 'matchmaking', label: 'Matchmaking', hint: 'Wait thresholds for promotion', Icon: IconShuffle },
+  { id: 'matchDefaults', slug: 'match-defaults', label: 'Match Defaults', hint: 'Target score, mix, leaderboard', Icon: IconTarget },
+  { id: 'danger', slug: 'danger', label: 'Danger Zone', hint: 'Reset, transfer, delete', Icon: IconAlert, danger: true },
 ];
+
+/** Reverse lookup: kebab-case URL slug → internal section id. */
+export const SETTINGS_SECTION_SLUGS = SECTIONS.map((s) => s.slug);
+export function sectionIdFromSlug(slug) {
+  return SECTIONS.find((s) => s.slug === slug)?.id ?? null;
+}
 
 /**
  * Owner/organizer settings page body for one arena. Left-nav sections; each
@@ -66,98 +141,189 @@ const SECTIONS = [
  * @param {string|null} props.viewerUserId
  * @param {Array<{userId:string, name:string, role:string}>} props.members
  */
-export function ArenaSettings({ arenaId, arenaName, description, schedule, matchmaking, matchDefaults, sessions, isOwner, viewerUserId, members }) {
-  const [section, setSection] = useState('general');
-  // Defensive: every section is shown to all managers, so this never shrinks
-  // today — but guard against an unknown `section` id rendering a blank panel.
-  const effectiveSection = SECTIONS.some((s) => s.id === section) ? section : SECTIONS[0].id;
+/**
+ * Render the body for a given section id. Centralised so the desktop shell
+ * and the mobile section page can call the same render path.
+ */
+function SectionBody({ id, arenaId, arenaName, description, schedule, matchmaking, matchDefaults, sessions, isOwner, viewerUserId, members }) {
+  switch (id) {
+    case 'general':
+      return <GeneralSection arenaId={arenaId} initialName={arenaName} initialDescription={description} />;
+    case 'schedule':
+      return <ScheduleSection arenaId={arenaId} schedule={schedule} />;
+    case 'sessions':
+      return <SessionsSection arenaId={arenaId} sessions={sessions} />;
+    case 'matchmaking':
+      return <MatchmakingSection arenaId={arenaId} matchmaking={matchmaking} />;
+    case 'matchDefaults':
+      return <MatchDefaultsSection arenaId={arenaId} defaults={matchDefaults} />;
+    case 'danger':
+      return <DangerZone arenaId={arenaId} arenaName={arenaName} isOwner={isOwner} viewerUserId={viewerUserId} members={members} />;
+    default:
+      return null;
+  }
+}
 
-  // Roving arrow-key navigation across the tablist (matches the arena tab bar).
+/**
+ * Settings shell. `section` is the active section id (or null on the mobile
+ * index). The same component renders three layouts: the mobile index list
+ * (iOS-style row stack, when section is null on small screens), the mobile
+ * section page (sticky back-tile + section body), and the desktop side-nav
+ * grid (always shown on md+, with `section ?? 'general'` active).
+ *
+ * Section navigation is real URL navigation (`<Link>` to
+ * `/arena/[id]/settings/<slug>`), so deep links and the browser back button
+ * Just Work. The desktop tablist arrow-key handler still moves focus across
+ * the links, matching the arena tab bar pattern.
+ */
+export function ArenaSettings({ section = null, arenaId, arenaName, description, schedule, matchmaking, matchDefaults, sessions, isOwner, viewerUserId, members }) {
+  // Defensive: an unknown section id (legacy bookmark, typo) falls back to
+  // 'general' on desktop and to the index on mobile.
+  const validSection = section && SECTIONS.some((s) => s.id === section) ? section : null;
+  const desktopSection = validSection ?? 'general';
+  const activeMeta = SECTIONS.find((s) => s.id === desktopSection);
+
+  // Roving arrow-key navigation across the desktop tablist (focus, not state —
+  // the buttons-as-Links navigate on click, and arrows move focus between them
+  // so a keyboard user can preview by focusing then activate by Enter/Space).
   const tabRefs = useRef({});
-  const selectByIndex = (i) => {
+  const focusByIndex = (i) => {
     const next = SECTIONS[(i + SECTIONS.length) % SECTIONS.length];
-    setSection(next.id);
     tabRefs.current[next.id]?.focus();
   };
   const onTabKeyDown = (e, idx) => {
     const map = { ArrowDown: idx + 1, ArrowRight: idx + 1, ArrowUp: idx - 1, ArrowLeft: idx - 1, Home: 0, End: SECTIONS.length - 1 };
-    if (e.key in map) {
-      e.preventDefault();
-      selectByIndex(map[e.key]);
-    }
+    if (e.key in map) { e.preventDefault(); focusByIndex(map[e.key]); }
   };
 
+  const sectionProps = { arenaId, arenaName, description, schedule, matchmaking, matchDefaults, sessions, isOwner, viewerUserId, members };
+
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Page heading — mirrors the icon + title + back-link pattern used elsewhere. */}
-      <div className="flex items-center gap-3">
-        <span aria-hidden="true" className="grid place-items-center w-10 h-10 rounded-xl bg-emerald-600 shadow-sm shadow-emerald-600/30 shrink-0">
-          <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-        </span>
-        <div className="min-w-0">
-          <Link
-            href={`/arena/${arenaId}`}
-            className="text-[11px] text-slate-400 hover:text-emerald-600 font-semibold transition"
-          >
-            ← Back to {arenaName}
-          </Link>
-          <h1 className="font-display text-xl md:text-2xl font-extrabold tracking-tight text-slate-900 leading-none">
-            Arena Settings
-          </h1>
+    <div className="animate-fade-in">
+      {/* ── Mobile: section page (sticky chevron + just the section) ── */}
+      {validSection && (
+        <div className="md:hidden">
+          <SettingsTopBar
+            backHref={`/arena/${arenaId}/settings`}
+            backLabel="Back to Settings"
+            title={activeMeta.label}
+            subtitle={arenaName}
+            danger={activeMeta.danger}
+          />
+          <div className="mt-4">
+            <SectionBody id={validSection} {...sectionProps} />
+          </div>
+        </div>
+      )}
+
+      {/* ── Mobile: index (iOS-style sections list) ── */}
+      {!validSection && (
+        <div className="md:hidden">
+          <SettingsTopBar
+            backHref={`/arena/${arenaId}`}
+            backLabel={`Back to ${arenaName}`}
+            title="Settings"
+            subtitle={arenaName}
+          />
+          <ul className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm divide-y divide-slate-100">
+            {SECTIONS.map((s) => (
+              <li key={s.id}>
+                <Link
+                  href={`/arena/${arenaId}/settings/${s.slug}`}
+                  className={`flex items-center gap-3 px-4 py-3.5 transition active:bg-slate-50 ${s.danger ? 'text-red-600 hover:bg-red-50/40' : 'text-slate-800 hover:bg-slate-50'}`}
+                >
+                  <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ring-1 ring-inset ${s.danger ? 'bg-red-50 text-red-600 ring-red-100' : 'bg-emerald-50 text-emerald-700 ring-emerald-100'}`}>
+                    <s.Icon className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-bold leading-tight">{s.label}</span>
+                    <span className={`block text-xs leading-tight ${s.danger ? 'text-red-500/80' : 'text-slate-400'}`}>{s.hint}</span>
+                  </span>
+                  <IconChevronRight className={`h-4 w-4 shrink-0 ${s.danger ? 'text-red-300' : 'text-slate-300'}`} />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* ── Desktop: heading + side-nav grid (always rendered on md+) ── */}
+      <div className="hidden md:block">
+        <div className="flex items-center gap-3 mb-6">
+          <span aria-hidden="true" className="grid place-items-center w-10 h-10 rounded-xl bg-emerald-600 shadow-sm shadow-emerald-600/30 shrink-0">
+            <IconSettings className="w-5 h-5 text-white" />
+          </span>
+          <div className="min-w-0">
+            <Link
+              href={`/arena/${arenaId}`}
+              className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-emerald-600 font-semibold transition"
+            >
+              <IconChevronLeft className="h-3 w-3" />
+              Back to {arenaName}
+            </Link>
+            <h1 className="font-display text-xl md:text-2xl font-extrabold tracking-tight text-slate-900 leading-none">
+              Arena Settings
+            </h1>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-[200px_1fr] gap-6">
+          <nav className="flex flex-col gap-1 sticky top-24 self-start" role="tablist" aria-label="Settings sections">
+            {SECTIONS.map((s, i) => {
+              const active = desktopSection === s.id;
+              return (
+                <Link
+                  key={s.id}
+                  ref={(el) => { tabRefs.current[s.id] = el; }}
+                  href={`/arena/${arenaId}/settings/${s.slug}`}
+                  role="tab"
+                  aria-selected={active}
+                  tabIndex={active ? 0 : -1}
+                  onKeyDown={(e) => onTabKeyDown(e, i)}
+                  className={`group flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                    active
+                      ? s.danger
+                        ? 'bg-red-50 text-red-600 ring-1 ring-inset ring-red-200/70'
+                        : 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200/70'
+                      : s.danger
+                        ? 'text-red-500/80 hover:bg-red-50/50 hover:text-red-600'
+                        : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                  }`}
+                >
+                  <s.Icon className={`h-4 w-4 shrink-0 ${active ? '' : 'opacity-70 group-hover:opacity-100'}`} />
+                  <span>{s.label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div className="min-w-0" role="tabpanel" aria-label={activeMeta.label}>
+            <SectionBody id={desktopSection} {...sectionProps} />
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
 
-      <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-6">
-        <nav className="flex md:flex-col gap-1.5 md:sticky md:top-24 md:self-start" role="tablist" aria-label="Settings sections">
-          {SECTIONS.map((s, i) => {
-            const active = effectiveSection === s.id;
-            const danger = s.id === 'danger';
-            return (
-              <button
-                key={s.id}
-                id={`settings-tab-${s.id}`}
-                ref={(el) => { tabRefs.current[s.id] = el; }}
-                role="tab"
-                aria-selected={active}
-                aria-controls={active ? `settings-panel-${s.id}` : undefined}
-                tabIndex={active ? 0 : -1}
-                onClick={() => setSection(s.id)}
-                onKeyDown={(e) => onTabKeyDown(e, i)}
-                className={`text-left px-3 py-2 rounded-xl text-sm font-bold transition-colors border ${
-                  active
-                    ? danger
-                      ? 'bg-red-50 text-red-600 border-red-200/70'
-                      : 'bg-emerald-50 text-emerald-700 border-emerald-200/70'
-                    : `border-transparent hover:bg-slate-100 ${danger ? 'text-red-500 hover:text-red-600' : 'text-slate-500 hover:text-slate-800'}`
-                }`}
-              >
-                {s.label}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div
-          className="min-w-0"
-          role="tabpanel"
-          id={`settings-panel-${effectiveSection}`}
-          aria-labelledby={`settings-tab-${effectiveSection}`}
-          tabIndex={0}
-        >
-          {effectiveSection === 'general' && (
-            <GeneralSection arenaId={arenaId} initialName={arenaName} initialDescription={description} />
-          )}
-          {effectiveSection === 'schedule' && <ScheduleSection arenaId={arenaId} schedule={schedule} />}
-          {effectiveSection === 'sessions' && <SessionsSection arenaId={arenaId} sessions={sessions} />}
-          {effectiveSection === 'matchmaking' && <MatchmakingSection arenaId={arenaId} matchmaking={matchmaking} />}
-          {effectiveSection === 'matchDefaults' && <MatchDefaultsSection arenaId={arenaId} defaults={matchDefaults} />}
-          {effectiveSection === 'danger' && (
-            <DangerZone arenaId={arenaId} arenaName={arenaName} isOwner={isOwner} viewerUserId={viewerUserId} members={members} />
-          )}
-        </div>
+/**
+ * Mobile sticky top bar: 44×44 chevron tile (back), then a stacked
+ * title/subtitle. Used by both the index list and a section page; the
+ * destination it goes back to depends on which.
+ */
+function SettingsTopBar({ backHref, backLabel, title, subtitle, danger = false }) {
+  return (
+    <div className="sticky top-0 z-30 -mx-4 -mt-4 mb-1 flex items-center gap-3 border-b border-slate-200/70 bg-white/85 px-4 py-3 backdrop-blur-md">
+      <Link
+        href={backHref}
+        aria-label={backLabel}
+        className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:scale-95"
+      >
+        <IconChevronLeft className="h-5 w-5" />
+      </Link>
+      <div className="min-w-0">
+        <p className={`truncate text-base font-bold leading-tight ${danger ? 'text-red-600' : 'text-slate-900'}`}>{title}</p>
+        <p className="truncate text-xs text-slate-400 leading-tight">{subtitle}</p>
       </div>
     </div>
   );
