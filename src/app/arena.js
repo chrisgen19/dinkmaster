@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import {
   addPlayer,
   removePlayer,
-  linkPlayerToMember,
   shuffleQueue,
   fillCourt,
   endMatch,
@@ -135,6 +134,8 @@ export default function Arena({
   members,
   pendingRequests = [],
   viewerPending = false,
+  pendingLinkRequests = [],
+  viewerLinkContext = null,
 }) {
   const router = useRouter();
   const [players, setPlayers] = useState(initialState.players);
@@ -282,11 +283,6 @@ export default function Arena({
     run(() => removePlayer(arenaId, id));
   };
 
-  const handleLinkPlayer = (playerId, userId) => {
-    if (!canManage || !userId) return;
-    run(() => linkPlayerToMember(arenaId, playerId, userId));
-  };
-
   const handleTriggerScoreModal = (court) => {
     if (!canManage) return;
     setSelectedCourtForScore(court);
@@ -338,7 +334,16 @@ export default function Arena({
     { id: 'thisweek', label: 'This Week' },
     { id: 'stats', label: 'Partnership Matrix' },
     { id: 'history', label: 'Match Log' },
-    { id: 'members', label: 'Members', badge: canManage && pendingRequests.length > 0 ? pendingRequests.length : null },
+    {
+      id: 'members',
+      label: 'Members',
+      // Surface anything that needs the viewer's attention: pending join
+      // requests and pending link requests for managers, and the viewer's own
+      // pending link request for non-managers.
+      badge:
+        (canManage ? pendingRequests.length + pendingLinkRequests.length : 0) +
+          (viewerLinkContext?.pendingRequest ? 1 : 0) || null,
+    },
     ...(myPlayer ? [{ id: 'mystats', label: 'My Stats' }] : []),
   ];
   // The "My Stats" tab is conditional on myPlayer. If it disappears (e.g. after
@@ -639,6 +644,14 @@ export default function Arena({
                                 you
                               </span>
                             )}
+                            {!player.userId && (
+                              <span
+                                className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-600"
+                                title="Walk-in player — no linked account. Link them from the Members tab."
+                              >
+                                walk-in
+                              </span>
+                            )}
                             {player.waitRounds >= matchmakingProp.starveThreshold && (
                               <span
                                 className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
@@ -660,22 +673,6 @@ export default function Arena({
 
                       {canManage && (
                         <div className="flex items-center space-x-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                          {!player.userId && members.length > 0 && (
-                            <select
-                              value=""
-                              onChange={(e) => handleLinkPlayer(player.id, e.target.value)}
-                              disabled={isPending}
-                              title="Link this walk-in to a member's account"
-                              className="text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-100 rounded-lg px-1.5 py-1 outline-none cursor-pointer disabled:opacity-50"
-                            >
-                              <option value="">Link…</option>
-                              {members.map((m) => (
-                                <option key={m.userId} value={m.userId}>
-                                  {m.name}
-                                </option>
-                              ))}
-                            </select>
-                          )}
                           <button
                             onClick={() => handleRemovePlayer(player.id)}
                             className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:text-red-700 hover:bg-red-100 border border-red-100"
@@ -1015,6 +1012,8 @@ export default function Arena({
                 viewerRole={viewerRole}
                 canManage={canManage}
                 pendingRequests={pendingRequests}
+                pendingLinkRequests={pendingLinkRequests}
+                viewerLinkContext={viewerLinkContext}
               />
             </div>
           )}

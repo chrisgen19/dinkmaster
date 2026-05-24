@@ -110,6 +110,85 @@ export async function getArenaJoinRequests(arenaId) {
   }));
 }
 
+/** Walk-in display name; mirrors `formatShortName` for an empty linked user. */
+function playerDisplayName(p) {
+  return p.lastName ? `${p.firstName} ${p.lastName}` : p.firstName;
+}
+
+/**
+ * An arena's pending link requests (oldest first), with the requesting
+ * member's name and the orphan Player they want to claim. For owner/organizer
+ * use in the Members tab. Same non-PII shape as the join requests loader.
+ * @param {string} arenaId
+ * @returns {Promise<Array<{requestId:string,userId:string,memberName:string,playerId:string,playerName:string,requestedAt:string}>>}
+ */
+export async function getArenaLinkRequests(arenaId) {
+  const requests = await prisma.linkRequest.findMany({
+    where: { arenaId },
+    include: {
+      user: { select: { id: true, name: true } },
+      player: { select: { id: true, firstName: true, lastName: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+  return requests.map((r) => ({
+    requestId: r.id,
+    userId: r.userId,
+    memberName: r.user.name,
+    playerId: r.playerId,
+    playerName: playerDisplayName(r.player),
+    requestedAt: new Date(r.createdAt).toISOString(),
+  }));
+}
+
+/**
+ * Per-viewer link-request context for the Members tab. Tells the UI whether
+ * the viewer already has a linked Player here, whether they have a pending
+ * link request, and which orphan walk-ins they could request. Returns
+ * `null`-shaped fields when no viewer is signed in or no arena is given, so
+ * the Members tab can render safely without extra conditionals.
+ * @param {string} arenaId
+ * @param {string|null|undefined} userId
+ */
+export async function getViewerLinkContext(arenaId, userId) {
+  if (!userId || !arenaId) {
+    return { hasLinkedPlayer: false, pendingRequest: null, orphanPlayers: [] };
+  }
+
+  const [ownPlayer, pending, orphans] = await Promise.all([
+    prisma.player.findUnique({
+      where: { arenaId_userId: { arenaId, userId } },
+      select: { id: true, leftAt: true },
+    }),
+    prisma.linkRequest.findUnique({
+      where: { arenaId_userId: { arenaId, userId } },
+      include: {
+        player: { select: { id: true, firstName: true, lastName: true } },
+      },
+    }),
+    prisma.player.findMany({
+      where: { arenaId, userId: null, leftAt: null },
+      select: { id: true, firstName: true, lastName: true },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+    }),
+  ]);
+
+  return {
+    hasLinkedPlayer: !!(ownPlayer && !ownPlayer.leftAt),
+    pendingRequest: pending
+      ? {
+          requestId: pending.id,
+          playerId: pending.playerId,
+          playerName: playerDisplayName(pending.player),
+        }
+      : null,
+    orphanPlayers: orphans.map((p) => ({
+      id: p.id,
+      displayName: playerDisplayName(p),
+    })),
+  };
+}
+
 /**
  * The set of arena ids a user has a pending join request in — used to badge
  * the directory and arena page.

@@ -1,6 +1,13 @@
 import { notFound } from 'next/navigation';
 import { getState } from '@/lib/data';
-import { getArena, getArenaMembers, getArenaJoinRequests, hasPendingJoinRequest } from '@/lib/arenas';
+import {
+  getArena,
+  getArenaMembers,
+  getArenaJoinRequests,
+  hasPendingJoinRequest,
+  getArenaLinkRequests,
+  getViewerLinkContext,
+} from '@/lib/arenas';
 import { getCurrentUser } from '@/lib/session';
 import { canManageArena } from '@/lib/roles';
 import Arena from '../../arena';
@@ -24,13 +31,18 @@ export default async function ArenaPage({ params }) {
   const canManage = canManageArena(viewerRole);
 
   // Managers see the pending-request queue; a signed-in non-member sees whether
-  // their own request is pending.
-  const [pendingRequests, viewerPending] = await Promise.all([
-    canManage ? getArenaJoinRequests(id) : Promise.resolve([]),
-    user && !viewerRole && user.id !== arena.ownerId
-      ? hasPendingJoinRequest(id, user.id)
-      : Promise.resolve(false),
-  ]);
+  // their own request is pending. Managers also see pending link requests, and
+  // every signed-in viewer gets their per-arena link-request context so the
+  // Members tab can render the right self-link affordance.
+  const [pendingRequests, viewerPending, pendingLinkRequests, viewerLinkContext] =
+    await Promise.all([
+      canManage ? getArenaJoinRequests(id) : Promise.resolve([]),
+      user && !viewerRole && user.id !== arena.ownerId
+        ? hasPendingJoinRequest(id, user.id)
+        : Promise.resolve(false),
+      canManage ? getArenaLinkRequests(id) : Promise.resolve([]),
+      user ? getViewerLinkContext(id, user.id) : Promise.resolve(null),
+    ]);
 
   return (
     <Arena
@@ -61,6 +73,8 @@ export default async function ArenaPage({ params }) {
       members={members}
       pendingRequests={pendingRequests}
       viewerPending={viewerPending}
+      pendingLinkRequests={pendingLinkRequests}
+      viewerLinkContext={viewerLinkContext}
     />
   );
 }
