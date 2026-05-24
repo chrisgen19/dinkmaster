@@ -37,4 +37,13 @@ describe('arena-settings-sections — slug ↔ id mapping', () => {
   it('keeps slug count equal to id count (drift guard)', () => {
     expect(SETTINGS_SECTION_SLUGS.length).toBe(SETTINGS_SECTION_IDS.length);
   });
+
+  it('ids are unique (no two slugs collapse to the same id, so slugFromSectionId stays deterministic)', () => {
+    expect(new Set(SETTINGS_SECTION_IDS).size).toBe(SETTINGS_SECTION_IDS.length);
+  });
+
+  it('slugs are unique (no id has two URL forms)', () => {
+    const slugsForAllIds = SETTINGS_SECTION_IDS.map((id) => slugFromSectionId(id));
+    expect(new Set(slugsForAllIds).size).toBe(slugsForAllIds.length);
+  });
 });

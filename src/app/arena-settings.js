@@ -165,15 +165,32 @@ export function ArenaSettings({ section = null, arenaId, arenaName, description,
   const mobileTitle = isIndex ? 'Settings' : activeMeta.label;
   const mobileDanger = !isIndex && activeMeta.danger;
 
+  // Measure the SiteHeader (which is itself `sticky top-0 z-50`) so the mobile
+  // back bar can stick directly below it, regardless of whether the header
+  // wraps to a second row on narrow widths. Mirrors the pattern in arena.js
+  // for the viewer notice. SSR safe: starts at 0 (so the bar isn't pushed
+  // off-screen before the first client tick) and refines on mount.
+  const [headerHeight, setHeaderHeight] = useState(0);
+  useEffect(() => {
+    const header = document.querySelector('[data-site-header]');
+    if (!header) return undefined;
+    const measure = () => setHeaderHeight(header.getBoundingClientRect().height);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(header);
+    return () => ro.disconnect();
+  }, []);
+
   return (
     <div className="animate-fade-in">
-      {/* Mobile-only chrome — chevron back + title/subtitle. Not sticky on
-          purpose: the SiteHeader (sticky top-0 z-50) already occupies the top
-          of the viewport, so a second sticky bar would either render behind
-          it (lower z) or stack awkwardly below it without a measured offset.
-          A short scroll back is fine — matches the existing desktop "Back to"
-          link in the heading. */}
-      <div className="md:hidden -mx-4 -mt-4 mb-4 flex items-center gap-3 border-b border-slate-200/70 bg-white/85 px-4 py-3 backdrop-blur-md">
+      {/* Mobile-only chrome — chevron back + title/subtitle. Sticky directly
+          below the SiteHeader (which is itself `sticky top-0 z-50`), using a
+          measured offset so a wrapped two-row header on narrow widths doesn't
+          eat the bar. z-40 keeps it under the header but above the page. */}
+      <div
+        style={{ top: headerHeight }}
+        className="md:hidden sticky z-40 -mx-4 -mt-4 mb-4 flex items-center gap-3 border-b border-slate-200/70 bg-white/85 px-4 py-3 backdrop-blur-md"
+      >
         <Link
           href={mobileBackHref}
           aria-label={mobileBackLabel}
@@ -217,11 +234,13 @@ export function ArenaSettings({ section = null, arenaId, arenaName, description,
       <div className="md:grid md:grid-cols-[200px_1fr] md:gap-6">
         <nav className="hidden md:flex md:flex-col md:gap-1 md:sticky md:top-24 md:self-start" aria-label="Settings sections">
           {SECTIONS.map((s) => {
+            const slug = slugFromSectionId(s.id);
+            if (!slug) return null; // drift-guard: skip if SECTIONS gains an id without a slug mapping
             const active = desktopSection === s.id;
             return (
               <Link
                 key={s.id}
-                href={`/arena/${arenaId}/settings/${slugFromSectionId(s.id)}`}
+                href={`/arena/${arenaId}/settings/${slug}`}
                 aria-current={active ? 'page' : undefined}
                 className={`group flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-semibold transition ${
                   active
@@ -244,10 +263,13 @@ export function ArenaSettings({ section = null, arenaId, arenaName, description,
           {/* Mobile-only iOS-style sections list (index page only). */}
           {isIndex && (
             <ul className="md:hidden overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm divide-y divide-slate-100">
-              {SECTIONS.map((s) => (
+              {SECTIONS.map((s) => {
+                const slug = slugFromSectionId(s.id);
+                if (!slug) return null; // drift-guard: same as desktop nav above
+                return (
                 <li key={s.id}>
                   <Link
-                    href={`/arena/${arenaId}/settings/${slugFromSectionId(s.id)}`}
+                    href={`/arena/${arenaId}/settings/${slug}`}
                     className={`flex items-center gap-3 px-4 py-3.5 transition active:bg-slate-50 ${s.danger ? 'text-red-600 hover:bg-red-50/40' : 'text-slate-800 hover:bg-slate-50'}`}
                   >
                     <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ring-1 ring-inset ${s.danger ? 'bg-red-50 text-red-600 ring-red-100' : 'bg-emerald-50 text-emerald-700 ring-emerald-100'}`}>
@@ -260,7 +282,8 @@ export function ArenaSettings({ section = null, arenaId, arenaName, description,
                     <IconChevronRight className={`h-4 w-4 shrink-0 ${s.danger ? 'text-red-300' : 'text-slate-300'}`} />
                   </Link>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
 
