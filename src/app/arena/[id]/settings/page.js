@@ -56,6 +56,10 @@ export default async function ArenaSettingsPage({ params }) {
             leaderboardSize: arena.leaderboardSize,
             countOffScheduleGames: arena.countOffScheduleGames,
           }}
+          sessions={{
+            autoResetOnSession: arena.autoResetOnSession,
+            lastSessionResetAt: arena.lastSessionResetAt ? arena.lastSessionResetAt.toISOString() : null,
+          }}
           isOwner={isOwner}
           viewerUserId={user?.id ?? null}
           members={members}

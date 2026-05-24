@@ -3,7 +3,7 @@
 import { useState, useTransition, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { updateArenaGeneral, updateArenaSchedule, updateArenaMatchmaking, updateArenaMatchDefaults, resetArena, transferOwnership, deleteArena } from './actions';
+import { updateArenaGeneral, updateArenaSchedule, updateArenaMatchmaking, updateArenaMatchDefaults, updateArenaSessions, prepareNextSession, resetArena, transferOwnership, deleteArena } from './actions';
 import { ScheduleFields } from './schedule-fields';
 import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
 import {
@@ -44,6 +44,7 @@ function useSavedFlag(ms = 2500) {
 const SECTIONS = [
   { id: 'general', label: 'General' },
   { id: 'schedule', label: 'Schedule' },
+  { id: 'sessions', label: 'Sessions' },
   { id: 'matchmaking', label: 'Matchmaking' },
   { id: 'matchDefaults', label: 'Match Defaults' },
   { id: 'danger', label: 'Danger Zone' },
@@ -65,7 +66,7 @@ const SECTIONS = [
  * @param {string|null} props.viewerUserId
  * @param {Array<{userId:string, name:string, role:string}>} props.members
  */
-export function ArenaSettings({ arenaId, arenaName, description, schedule, matchmaking, matchDefaults, isOwner, viewerUserId, members }) {
+export function ArenaSettings({ arenaId, arenaName, description, schedule, matchmaking, matchDefaults, sessions, isOwner, viewerUserId, members }) {
   const [section, setSection] = useState('general');
   // Defensive: every section is shown to all managers, so this never shrinks
   // today — but guard against an unknown `section` id rendering a blank panel.
@@ -150,6 +151,7 @@ export function ArenaSettings({ arenaId, arenaName, description, schedule, match
             <GeneralSection arenaId={arenaId} initialName={arenaName} initialDescription={description} />
           )}
           {effectiveSection === 'schedule' && <ScheduleSection arenaId={arenaId} schedule={schedule} />}
+          {effectiveSection === 'sessions' && <SessionsSection arenaId={arenaId} sessions={sessions} />}
           {effectiveSection === 'matchmaking' && <MatchmakingSection arenaId={arenaId} matchmaking={matchmaking} />}
           {effectiveSection === 'matchDefaults' && <MatchDefaultsSection arenaId={arenaId} defaults={matchDefaults} />}
           {effectiveSection === 'danger' && (
@@ -288,6 +290,107 @@ function ScheduleSection({ arenaId, schedule }) {
           {isPending ? 'Saving…' : 'Save schedule'}
         </button>
       </div>
+    </Card>
+  );
+}
+
+function SessionsSection({ arenaId, sessions }) {
+  const router = useRouter();
+  const [autoReset, setAutoReset] = useState(!!sessions?.autoResetOnSession);
+  const [error, setError] = useState('');
+  const [saved, flashSaved, clearSaved] = useSavedFlag();
+  const [isPending, startTransition] = useTransition();
+  // Format-on-mount so the timestamp uses the viewer's locale without
+  // hydration mismatch (same trick the arena view uses).
+  const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount flag for hydration-safe locale formatting
+  useEffect(() => setMounted(true), []);
+
+  const saveToggle = (nextValue) => {
+    clearSaved();
+    setError('');
+    setAutoReset(nextValue); // optimistic
+    startTransition(async () => {
+      try {
+        const result = await updateArenaSessions(arenaId, { autoResetOnSession: nextValue });
+        if (result?.error) {
+          setError(result.error);
+          setAutoReset(!nextValue); // roll back the optimistic flip
+          return;
+        }
+        flashSaved();
+        router.refresh();
+      } catch {
+        setError('Failed to save. Please try again.');
+        setAutoReset(!nextValue);
+      }
+    });
+  };
+
+  const manualReset = () => {
+    if (!window.confirm(
+      'Empty the rack and reset the partnership matrix now? Lifetime stats and match history are not touched.',
+    )) {
+      return;
+    }
+    clearSaved();
+    setError('');
+    startTransition(async () => {
+      try {
+        const result = await prepareNextSession(arenaId, { mode: 'fresh' });
+        if (result?.error) return setError(result.error);
+        flashSaved();
+        router.refresh();
+      } catch {
+        setError('Failed to reset the session. Please try again.');
+      }
+    });
+  };
+
+  const lastResetLabel = sessions?.lastSessionResetAt
+    ? mounted
+      ? new Date(sessions.lastSessionResetAt).toLocaleString()
+      : sessions.lastSessionResetAt.replace('T', ' ').slice(0, 16)
+    : 'Never';
+
+  return (
+    <Card
+      title="Sessions"
+      hint="Mark the boundary between play days. Each new session clears the rack and the partnership matrix while keeping lifetime stats, ratings, and match history."
+    >
+      <div className="space-y-5 max-w-xl">
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={autoReset}
+            onChange={(e) => saveToggle(e.target.checked)}
+            disabled={isPending}
+            className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4"
+          />
+          <span>
+            <span className="block text-sm font-bold text-slate-800">Auto-empty rack at session start</span>
+            <span className="block text-xs text-slate-400 mt-0.5">
+              When on, the manager prep banner offers a one-tap reset for each upcoming session. Existing arenas start with this off; new arenas start with it on.
+            </span>
+          </span>
+        </label>
+
+        <div className="bg-slate-50 border border-slate-200/70 rounded-xl px-4 py-3 flex items-center justify-between">
+          <div className="min-w-0">
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Last session reset</span>
+            <span className="block text-sm font-bold text-slate-800 mt-0.5">{lastResetLabel}</span>
+          </div>
+          <button
+            type="button"
+            onClick={manualReset}
+            disabled={isPending}
+            className="shrink-0 text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 px-3 py-2 rounded-lg transition disabled:opacity-50"
+          >
+            Reset session now
+          </button>
+        </div>
+      </div>
+      <Status error={error} saved={saved} />
     </Card>
   );
 }
