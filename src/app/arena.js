@@ -551,6 +551,7 @@ export default function Arena({
         canManage={canManage}
         schedule={schedule}
         lastSessionResetAt={lastSessionResetAt}
+        autoResetOnSession={sessionPrep.autoResetOnSession}
         headerHeight={headerHeight}
         checkedInCount={queue.length}
         isPending={isPending}

@@ -339,6 +339,127 @@ describe('arena server actions — authorization', () => {
         await actions.prepareNextSession(ARENA);
         expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       });
+
+      it('wipes partnerships, empties the rack, and stamps lastSessionResetAt', async () => {
+        const tx = {
+          $executeRaw: vi.fn(),
+          partnership: { deleteMany: vi.fn() },
+          player: { updateMany: vi.fn() },
+          arena: { update: vi.fn() },
+        };
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.prepareNextSession(ARENA);
+
+        // Partnership matrix wiped for this arena only.
+        expect(tx.partnership.deleteMany).toHaveBeenCalledWith({ where: { arenaId: ARENA } });
+        // Every active player pulled off the rack with waitRounds reset.
+        expect(tx.player.updateMany).toHaveBeenCalledWith({
+          where: { arenaId: ARENA, leftAt: null },
+          data: { queueOrder: null, waitRounds: 0 },
+        });
+        // Reset is stamped so the banner can show "last reset" and dismissal keys stay stable.
+        expect(tx.arena.update).toHaveBeenCalledWith({
+          where: { id: ARENA },
+          data: { lastSessionResetAt: expect.any(Date) },
+        });
+      });
+
+      it('does not touch lifetime stats, ratings, or match history', async () => {
+        const tx = {
+          $executeRaw: vi.fn(),
+          partnership: { deleteMany: vi.fn() },
+          player: { updateMany: vi.fn() },
+          arena: { update: vi.fn() },
+          // Presence asserts the action never reaches for these.
+          match: { deleteMany: vi.fn() },
+          courtSlot: { deleteMany: vi.fn() },
+        };
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.prepareNextSession(ARENA);
+
+        expect(tx.match.deleteMany).not.toHaveBeenCalled();
+        expect(tx.courtSlot.deleteMany).not.toHaveBeenCalled();
+        // The player update sets only queue/wait fields — never wins/losses/rating/gamesPlayed.
+        const data = tx.player.updateMany.mock.calls[0][0].data;
+        expect(data).toEqual({ queueOrder: null, waitRounds: 0 });
+      });
+    });
+
+    describe('checkInPlayer()', () => {
+      // gamesPlayed 4 with a single active peer averaging 10 → gamesOffset
+      // re-anchors to 10 - 4 = 6 so the returner sorts as a peer, not catch-up.
+      const baseTx = () => ({
+        $executeRaw: vi.fn(),
+        player: {
+          findFirst: vi.fn(),
+          findMany: vi.fn().mockResolvedValue([{ gamesPlayed: 10, gamesOffset: 0 }]),
+          aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 3 } }),
+          update: vi.fn(),
+        },
+        courtSlot: { findFirst: vi.fn().mockResolvedValue(null) },
+      });
+
+      it('appends to the queue tail and re-anchors gamesOffset to the group average', async () => {
+        const tx = baseTx();
+        tx.player.findFirst.mockResolvedValue({ id: 'p1', queueOrder: null, gamesPlayed: 4 });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.checkInPlayer(ARENA, 'p1');
+
+        expect(tx.player.update).toHaveBeenCalledWith({
+          where: { id: 'p1' },
+          data: { queueOrder: 4, waitRounds: 0, gamesOffset: 6 },
+        });
+      });
+
+      it('is a no-op when the player is already on the rack', async () => {
+        const tx = baseTx();
+        tx.player.findFirst.mockResolvedValue({ id: 'p1', queueOrder: 2, gamesPlayed: 4 });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.checkInPlayer(ARENA, 'p1');
+
+        expect(tx.player.update).not.toHaveBeenCalled();
+      });
+
+      it('is a no-op when the player is on a court mid-match', async () => {
+        const tx = baseTx();
+        tx.player.findFirst.mockResolvedValue({ id: 'p1', queueOrder: null, gamesPlayed: 4 });
+        tx.courtSlot.findFirst.mockResolvedValue({ id: 'slot1' });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.checkInPlayer(ARENA, 'p1');
+
+        expect(tx.player.update).not.toHaveBeenCalled();
+      });
+
+      it('is a no-op when the player does not exist (or left the arena)', async () => {
+        const tx = baseTx();
+        tx.player.findFirst.mockResolvedValue(null);
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.checkInPlayer(ARENA, 'ghost');
+
+        expect(tx.player.update).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('checkOutPlayer()', () => {
+      it('clears the queue only for an active, currently-queued player', async () => {
+        const tx = { $executeRaw: vi.fn(), player: { updateMany: vi.fn() } };
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.checkOutPlayer(ARENA, 'p1');
+
+        // The `queueOrder: { not: null }` filter means a player already off
+        // the rack (or on a court) matches zero rows — a safe no-op.
+        expect(tx.player.updateMany).toHaveBeenCalledWith({
+          where: { id: 'p1', arenaId: ARENA, leftAt: null, queueOrder: { not: null } },
+          data: { queueOrder: null, waitRounds: 0 },
+        });
+      });
     });
 
     describe('deleteArena()', () => {

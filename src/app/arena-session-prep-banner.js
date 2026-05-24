@@ -73,6 +73,11 @@ function deriveState({ schedule, lastSessionResetAt, now }) {
  * @param {boolean} props.canManage
  * @param {{days?:number[], start?:string|null, end?:string|null, timezone?:string}} props.schedule
  * @param {string|null} props.lastSessionResetAt - ISO string from the server
+ * @param {boolean} props.autoResetOnSession - per-arena setting. When false the
+ *   banner won't offer the auto-reset CTA; it stays purely informational
+ *   with an Edit roster opener. The arena keeps last session's queue and
+ *   partnership matrix (the perpetual-rack model) until a manager hits
+ *   Settings → Sessions → Reset session now.
  * @param {number} props.headerHeight - sticky offset so the banner sits flush below the header
  * @param {number} props.checkedInCount - rack length, surfaced in the `live` state
  * @param {boolean} props.isPending - disable action buttons while a server action is in flight
@@ -84,6 +89,7 @@ export function ArenaSessionPrepBanner({
   canManage,
   schedule,
   lastSessionResetAt = null,
+  autoResetOnSession = true,
   headerHeight = 96,
   checkedInCount = 0,
   isPending = false,
@@ -133,26 +139,30 @@ export function ArenaSessionPrepBanner({
   const tz = schedule.timezone || 'Asia/Manila';
   const sessionStartLabel = state.session ? formatSessionStart(state.session.start, tz) : null;
 
-  // Single CTA per state. `needsReset` distinguishes "the manager hasn't
-  // prepped the upcoming session yet" (Prepare next session — does the
-  // reset AND opens the modal) from the already-prepared and live cases
-  // (Edit/Manage roster — just opens the modal).
-  const needsReset = (state.kind === 'between' || state.kind === 'imminent') && !state.prepared;
+  // Single CTA per state. `needsReset` is the only case that does the
+  // rack/matrix wipe on tap (Prepare next session) — every other case just
+  // opens the modal (Edit/Manage roster). Two gates:
+  //   1. The session isn't already prepped (a reset since the prior session).
+  //   2. `autoResetOnSession` is on — when off the arena keeps the perpetual
+  //      rack, so the banner never auto-wipes; the manager opens the roster
+  //      to adjust by hand, or resets explicitly from Settings → Sessions.
+  const needsReset =
+    autoResetOnSession && (state.kind === 'between' || state.kind === 'imminent') && !state.prepared;
   let title;
   let label;
   if (state.kind === 'live') {
     title = `Session live · ${checkedInCount} checked in`;
     label = 'Manage roster';
   } else if (state.kind === 'imminent') {
-    title = state.prepared
-      ? `Roster prepared · ${checkedInCount} checked in · Session starts ${formatCountdown(state.msToStart)}`
-      : `Session starts ${formatCountdown(state.msToStart)} · ${sessionStartLabel}`;
-    label = state.prepared ? 'Edit roster' : 'Prepare next session';
+    title = needsReset
+      ? `Session starts ${formatCountdown(state.msToStart)} · ${sessionStartLabel}`
+      : `${checkedInCount} on the rack · Session starts ${formatCountdown(state.msToStart)}`;
+    label = needsReset ? 'Prepare next session' : 'Edit roster';
   } else {
-    title = state.prepared
-      ? `Roster prepared · ${checkedInCount} checked in · Next session ${sessionStartLabel}`
-      : `Next session ${sessionStartLabel}`;
-    label = state.prepared ? 'Edit roster' : 'Prepare next session';
+    title = needsReset
+      ? `Next session ${sessionStartLabel}`
+      : `${checkedInCount} on the rack · Next session ${sessionStartLabel}`;
+    label = needsReset ? 'Prepare next session' : 'Edit roster';
   }
 
   return (
