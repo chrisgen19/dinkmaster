@@ -1,7 +1,17 @@
 'use client';
 
 import { useEffect, useMemo, useState, useTransition } from 'react';
-import { addPlayer, checkInPlayer, checkOutPlayer } from './actions';
+import { useRouter } from 'next/navigation';
+import {
+  addPlayer,
+  checkInPlayer,
+  checkOutPlayer,
+  approveJoinRequest,
+  rejectJoinRequest,
+  approveLinkRequest,
+  rejectLinkRequest,
+} from './actions';
+import { ArenaRequestsList } from './arena-requests-list';
 
 /** First name primary, last name secondary, both case-insensitive. */
 function byPlayerName(a, b) {
@@ -16,19 +26,37 @@ function byPlayerName(a, b) {
 
 /**
  * Manager-only roster prep modal. Lists every active member with a check-in
- * toggle, plus an inline walk-in add form. Closing the modal does NOT undo
- * any toggles — each toggle hits a server action immediately so the rack
- * reflects state as soon as it changes.
+ * toggle, walk-ins with the same toggle, an inline walk-in add form, and
+ * any pending join/link requests at the top (shared `ArenaRequestsList`
+ * with the Members tab so the two surfaces never drift). Closing the modal
+ * does NOT undo any toggles — each toggle hits a server action immediately
+ * so the rack reflects state as soon as it changes.
+ *
+ * Request approvals create/modify `ArenaMembership` rows which live on
+ * server-side props, not in the modal's local state. Those handlers call
+ * `router.refresh()` so the members + requests lists come back fresh.
  *
  * @param {object} props
  * @param {string} props.arenaId
  * @param {Array<{userId:string,name:string,role:string,hasLinkedPlayer:boolean}>} props.members
  * @param {Array<{id:string,userId:string|null,firstName:string,lastName?:string|null}>} props.players
  * @param {string[]} props.queue - ordered list of playerIds currently on the rack
+ * @param {Array<{requestId:string,userId:string,name:string}>} props.pendingRequests
+ * @param {Array<{requestId:string,memberName:string,playerName:string}>} props.pendingLinkRequests
  * @param {(state: object) => void} props.onApplyResult - parent's state-reconcile callback (same shape as run())
  * @param {() => void} props.onClose
  */
-export function ArenaPrepRosterModal({ arenaId, members, players, queue, onApplyResult, onClose }) {
+export function ArenaPrepRosterModal({
+  arenaId,
+  members,
+  players,
+  queue,
+  pendingRequests = [],
+  pendingLinkRequests = [],
+  onApplyResult,
+  onClose,
+}) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [newFirst, setNewFirst] = useState('');
   const [newLast, setNewLast] = useState('');
@@ -101,6 +129,31 @@ export function ArenaPrepRosterModal({ arenaId, members, players, queue, onApply
     );
   };
 
+  // Request actions don't return a fresh state envelope — they create or
+  // delete ArenaMembership / JoinRequest / LinkRequest rows, which arrive
+  // via the parent's server-rendered props. Router.refresh() pulls them.
+  const handleRequest = (fn) => {
+    setError('');
+    startTransition(async () => {
+      try {
+        const result = await fn();
+        if (result?.error) {
+          setError(result.error);
+          return;
+        }
+        router.refresh();
+      } catch {
+        setError('Something went wrong. Please try again.');
+      }
+    });
+  };
+  const onApproveJoin = (r) => handleRequest(() => approveJoinRequest(arenaId, r.userId));
+  const onRejectJoin = (r) => handleRequest(() => rejectJoinRequest(arenaId, r.userId));
+  const onApproveLink = (r) => handleRequest(() => approveLinkRequest(arenaId, r.requestId));
+  const onRejectLink = (r) => handleRequest(() => rejectLinkRequest(arenaId, r.requestId));
+
+  const hasRequests = pendingRequests.length > 0 || pendingLinkRequests.length > 0;
+
   const handleAddWalkIn = (e) => {
     e.preventDefault();
     if (!newFirst.trim()) return;
@@ -153,6 +206,25 @@ export function ArenaPrepRosterModal({ arenaId, members, players, queue, onApply
         )}
 
         <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+          {hasRequests && (
+            <section>
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400">
+                  Pending requests ({pendingRequests.length + pendingLinkRequests.length})
+                </h4>
+              </div>
+              <ArenaRequestsList
+                pendingLinkRequests={pendingLinkRequests}
+                pendingRequests={pendingRequests}
+                isPending={isPending}
+                onApproveLink={onApproveLink}
+                onRejectLink={onRejectLink}
+                onApproveJoin={onApproveJoin}
+                onRejectJoin={onRejectJoin}
+              />
+            </section>
+          )}
+
           <section>
             <div className="flex items-center justify-between mb-3">
               <h4 className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400">

@@ -1251,6 +1251,8 @@ export default function Arena({
           members={members}
           players={players}
           queue={queue}
+          pendingRequests={pendingRequests}
+          pendingLinkRequests={pendingLinkRequests}
           onApplyResult={applyResult}
           onClose={() => setRosterModalOpen(false)}
         />
