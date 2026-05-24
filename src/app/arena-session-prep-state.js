@@ -34,7 +34,10 @@ export function deriveState({ schedule, lastSessionResetAt, autoResetOnSession =
 
   const prev = lastSession(schedule, now);
   const last = lastSessionResetAt ? new Date(lastSessionResetAt) : null;
-  const prepared = last !== null && (!prev || last > prev.end);
+  // >= not >: prev.end is the exclusive session boundary (a session is over
+  // at exactly end), so a reset stamped at that instant is already prepping
+  // the next session, not closing the prior one.
+  const prepared = last !== null && (!prev || last >= prev.end);
 
   const msToStart = next.start.getTime() - now.getTime();
   const kind = msToStart < IMMINENT_WINDOW_MS ? 'imminent' : 'between';

@@ -109,9 +109,13 @@ export function ArenaPrepRosterModal({
   // converge once arena.js re-syncs from the next server read.
   const run = (fn) => {
     startTransition(async () => {
-      const result = await fn();
-      setError(result?.error || '');
-      if (result?.state) onApplyResult(result);
+      try {
+        const result = await fn();
+        setError(result?.error || '');
+        if (result?.state) onApplyResult(result);
+      } catch {
+        setError('Something went wrong. Please try again.');
+      }
     });
   };
 

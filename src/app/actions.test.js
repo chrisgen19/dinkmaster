@@ -345,11 +345,12 @@ describe('arena server actions — authorization', () => {
           $executeRaw: vi.fn(),
           partnership: { deleteMany: vi.fn() },
           player: { updateMany: vi.fn() },
-          arena: { update: vi.fn() },
+          arena: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
         };
         prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
-        await actions.prepareNextSession(ARENA);
+        const result = await actions.prepareNextSession(ARENA);
+        expect(result.error).toBeUndefined();
 
         // Partnership matrix wiped for this arena only.
         expect(tx.partnership.deleteMany).toHaveBeenCalledWith({ where: { arenaId: ARENA } });
@@ -358,11 +359,25 @@ describe('arena server actions — authorization', () => {
           where: { arenaId: ARENA, leftAt: null },
           data: { queueOrder: null, waitRounds: 0 },
         });
-        // Reset is stamped so the banner can show "last reset" and dismissal keys stay stable.
-        expect(tx.arena.update).toHaveBeenCalledWith({
+        // Reset stamped via updateMany (count-guarded) so a concurrent delete
+        // is a clean error, not an uncaught P2025.
+        expect(tx.arena.updateMany).toHaveBeenCalledWith({
           where: { id: ARENA },
           data: { lastSessionResetAt: expect.any(Date) },
         });
+      });
+
+      it('reports a clean error when the arena was deleted mid-transaction', async () => {
+        const tx = {
+          $executeRaw: vi.fn(),
+          partnership: { deleteMany: vi.fn() },
+          player: { updateMany: vi.fn() },
+          arena: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        };
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.prepareNextSession(ARENA);
+        expect(result.error).toMatch(/no longer exists/i);
       });
 
       it('does not touch lifetime stats, ratings, or match history', async () => {
@@ -370,7 +385,7 @@ describe('arena server actions — authorization', () => {
           $executeRaw: vi.fn(),
           partnership: { deleteMany: vi.fn() },
           player: { updateMany: vi.fn() },
-          arena: { update: vi.fn() },
+          arena: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
           // Presence asserts the action never reaches for these.
           match: { deleteMany: vi.fn() },
           courtSlot: { deleteMany: vi.fn() },

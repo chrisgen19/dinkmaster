@@ -80,6 +80,19 @@ describe('deriveState', () => {
       expect(s.needsReset).toBe(true);
     });
 
+    it('counts a reset stamped at the exact prior session end as prepped', () => {
+      // The prior Tue session ends at 22:00; prev.end is the exclusive
+      // boundary, so a reset at that instant is prepping the next session.
+      const s = deriveState({
+        schedule: sched(),
+        lastSessionResetAt: '2026-05-19T22:00:00Z',
+        autoResetOnSession: true,
+        now,
+      });
+      expect(s.prepared).toBe(true);
+      expect(s.needsReset).toBe(false);
+    });
+
     it('defaults autoResetOnSession to true when omitted', () => {
       const s = deriveState({ schedule: sched(), lastSessionResetAt: null, now });
       expect(s.needsReset).toBe(true);

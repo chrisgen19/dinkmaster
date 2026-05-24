@@ -381,14 +381,18 @@ export default function Arena({
       'Start a new session? This empties the rack and resets the partnership matrix so tonight\'s mix is unbiased. Lifetime stats and match history are not touched.',
     )) return;
     startTransition(async () => {
-      const result = await prepareNextSession(arenaId);
-      applyResult(result);
-      if (!result?.error) {
-        // Stamp locally so the banner re-renders as "prepared" right away,
-        // without waiting for the next server read. The next router.refresh
-        // (e.g. on tab switch) will replace this with the server value.
-        setLastSessionResetAt(new Date().toISOString());
-        setRosterModalOpen(true);
+      try {
+        const result = await prepareNextSession(arenaId);
+        applyResult(result);
+        if (!result?.error) {
+          // Stamp locally so the banner re-renders as "prepared" right away,
+          // without waiting for the next server read. The next router.refresh
+          // (e.g. on tab switch) will replace this with the server value.
+          setLastSessionResetAt(new Date().toISOString());
+          setRosterModalOpen(true);
+        }
+      } catch {
+        setErrorMsg('Something went wrong preparing the session. Please try again.');
       }
     });
   };

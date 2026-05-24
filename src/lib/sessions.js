@@ -20,6 +20,22 @@ export const DEFAULT_TIMEZONE = 'Asia/Manila';
  */
 export const IMMINENT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
+/**
+ * Resolve a usable IANA zone, falling back to the default when the input is
+ * empty or invalid. App writes validate the timezone (`updateArenaSchedule`)
+ * and Prisma defaults it, so this mainly shields the pure module from
+ * legacy/corrupted data or non-DB callers — it must return null/values, not
+ * throw a RangeError out of `new Intl.DateTimeFormat`.
+ */
+function safeTimeZone(tz) {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return tz;
+  } catch {
+    return DEFAULT_TIMEZONE;
+  }
+}
+
 /** Local wall-clock parts of an instant in a given IANA timezone. */
 function zonedParts(instant, timeZone) {
   const dtf = new Intl.DateTimeFormat('en-US', {
@@ -104,7 +120,7 @@ function buildWindow(year, month, day, scheduleStart, scheduleEnd, timeZone) {
 export function sessionWindow(schedule = {}, instant = new Date()) {
   const days = Array.isArray(schedule.days) ? schedule.days : [];
   if (days.length === 0) return null;
-  const timeZone = schedule.timezone || DEFAULT_TIMEZONE;
+  const timeZone = safeTimeZone(schedule.timezone || DEFAULT_TIMEZONE);
   const p = zonedParts(instant, timeZone);
   const weekday = new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay();
   if (!days.includes(weekday)) return null;
@@ -136,7 +152,7 @@ export function currentSession(schedule = {}, now = new Date()) {
 export function nextSession(schedule = {}, now = new Date()) {
   const days = Array.isArray(schedule.days) ? schedule.days : [];
   if (days.length === 0) return null;
-  const timeZone = schedule.timezone || DEFAULT_TIMEZONE;
+  const timeZone = safeTimeZone(schedule.timezone || DEFAULT_TIMEZONE);
   for (let offset = 0; offset <= 14; offset++) {
     const probe = new Date(now.getTime() + offset * 86_400_000);
     const p = zonedParts(probe, timeZone);
@@ -161,7 +177,7 @@ export function nextSession(schedule = {}, now = new Date()) {
 export function lastSession(schedule = {}, now = new Date()) {
   const days = Array.isArray(schedule.days) ? schedule.days : [];
   if (days.length === 0) return null;
-  const timeZone = schedule.timezone || DEFAULT_TIMEZONE;
+  const timeZone = safeTimeZone(schedule.timezone || DEFAULT_TIMEZONE);
   for (let offset = 0; offset <= 14; offset++) {
     const probe = new Date(now.getTime() - offset * 86_400_000);
     const p = zonedParts(probe, timeZone);

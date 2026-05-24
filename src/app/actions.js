@@ -975,6 +975,12 @@ export async function prepareNextSession(arenaId) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
+  // updateMany (not update) on the arena row so a delete that races in after
+  // requireArenaManager passes is a clean count===0, not an uncaught P2025 —
+  // same pattern as the other manager-gated arena writes. The partnership /
+  // player writes already no-op on zero matched rows (a cascade-deleted arena
+  // leaves nothing to match), so the whole transaction is a safe no-op then.
+  let arenaGone = false;
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
     await tx.partnership.deleteMany({ where: { arenaId } });
@@ -982,12 +988,14 @@ export async function prepareNextSession(arenaId) {
       where: { arenaId, leftAt: null },
       data: { queueOrder: null, waitRounds: 0 },
     });
-    await tx.arena.update({
+    const updated = await tx.arena.updateMany({
       where: { id: arenaId },
       data: { lastSessionResetAt: new Date() },
     });
+    if (updated.count === 0) arenaGone = true;
   });
 
+  if (arenaGone) return { error: 'This arena no longer exists.', state: await getState(arenaId) };
   return { state: await getState(arenaId) };
 }
 
