@@ -103,16 +103,23 @@ export function ArenaSessionPrepBanner({
     [schedule, lastSessionResetAt, now],
   );
 
-  // Dismissal: scoped per (arena, upcoming session). A dismiss for tonight
-  // doesn't suppress next Tuesday's banner. `live` shares its key with the
-  // imminent/between key for the same session so a dismiss carries through.
-  const sessionKey = state.session
+  // Dismissal is only offered on actual play days (imminent or live) — on
+  // between days the banner is the only entry to the Prep Roster modal,
+  // and an accidental ✕ would strand the manager. On play days the banner
+  // is mostly contextual ("starts in 45 min" / "live · N in") so a
+  // manager can stash it to focus on the live UI. Scoped per (arena,
+  // upcoming session): a dismiss for tonight doesn't suppress next week's.
+  const isPlayDay = state.kind === 'imminent' || state.kind === 'live';
+  const sessionKey = state.session && isPlayDay
     ? `arena:${arenaId}:sessionPrepDismissed:${state.session.start.toISOString()}`
     : null;
   const [dismissed, setDismissed] = useState(false);
   useEffect(() => {
-    if (!sessionKey) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring dismissal from sessionStorage (a client-only external store) on mount or when the session window changes
+    if (!sessionKey) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset dismissed when we cross from a play day back to a between day
+      setDismissed(false);
+      return;
+    }
     setDismissed(sessionStorage.getItem(sessionKey) === '1');
   }, [sessionKey]);
   const dismiss = () => {
@@ -155,19 +162,21 @@ export function ArenaSessionPrepBanner({
     >
       <div
         role="status"
-        className="relative p-4 pr-10 bg-amber-50/95 backdrop-blur border border-amber-200 text-amber-900 rounded-2xl shadow-lg shadow-amber-900/10 flex flex-col items-center text-center gap-3 animate-fade-in"
+        className={`relative p-4 ${isPlayDay ? 'pr-10' : ''} bg-amber-50/95 backdrop-blur border border-amber-200 text-amber-900 rounded-2xl shadow-lg shadow-amber-900/10 flex flex-col items-center text-center gap-3 animate-fade-in`}
       >
-        <button
-          type="button"
-          onClick={dismiss}
-          aria-label="Dismiss session prep notice"
-          className="absolute top-3 right-3 grid place-items-center h-7 w-7 rounded-lg text-amber-700/70 hover:text-amber-900 hover:bg-amber-100 transition"
-        >
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M18 6 6 18" />
-            <path d="m6 6 12 12" />
-          </svg>
-        </button>
+        {isPlayDay && (
+          <button
+            type="button"
+            onClick={dismiss}
+            aria-label="Dismiss session prep notice"
+            className="absolute top-3 right-3 grid place-items-center h-7 w-7 rounded-lg text-amber-700/70 hover:text-amber-900 hover:bg-amber-100 transition"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+          </button>
+        )}
         <div className="flex items-center gap-2.5">
           <svg className="w-5 h-5 shrink-0 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <rect width="18" height="18" x="3" y="4" rx="2" />
