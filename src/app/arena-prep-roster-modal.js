@@ -1,7 +1,18 @@
 'use client';
 
 import { useEffect, useMemo, useState, useTransition } from 'react';
-import { addPlayer, checkInMember, checkOutMember, removePlayer } from './actions';
+import { addPlayer, checkInPlayer, checkOutPlayer } from './actions';
+
+/** First name primary, last name secondary, both case-insensitive. */
+function byPlayerName(a, b) {
+  const af = (a.firstName ?? a.name ?? '').trim();
+  const bf = (b.firstName ?? b.name ?? '').trim();
+  const first = af.localeCompare(bf, undefined, { sensitivity: 'base' });
+  if (first !== 0) return first;
+  const al = (a.lastName ?? '').trim();
+  const bl = (b.lastName ?? '').trim();
+  return al.localeCompare(bl, undefined, { sensitivity: 'base' });
+}
 
 /**
  * Manager-only roster prep modal. Lists every active member with a check-in
@@ -33,25 +44,34 @@ export function ArenaPrepRosterModal({ arenaId, members, players, queue, onApply
   }, [onClose]);
 
   // Member rows derived from {members, players, queue}: each member's linked
-  // active Player tells us whether they're currently in the rack.
+  // active Player tells us whether they're currently in the rack. Sorted
+  // alphabetically by display name so finding someone in a long list is
+  // predictable; the rack position is shown inline for already-checked-in
+  // members, so sort order doesn't need to mirror queue order.
   const memberRows = useMemo(() => {
     const playerByUser = new Map();
     for (const p of players) {
       if (p.userId) playerByUser.set(p.userId, p);
     }
     const queueSet = new Set(queue);
-    return members.map((m) => {
-      const player = playerByUser.get(m.userId) ?? null;
-      const checkedIn = !!player && queueSet.has(player.id);
-      return { ...m, player, checkedIn };
-    });
+    return members
+      .map((m) => {
+        const player = playerByUser.get(m.userId) ?? null;
+        const checkedIn = !!player && queueSet.has(player.id);
+        return { ...m, player, checkedIn };
+      })
+      .sort(byPlayerName);
   }, [members, players, queue]);
 
-  // Walk-ins = active Player rows with no userId.
-  const walkIns = useMemo(
-    () => players.filter((p) => !p.userId),
-    [players],
-  );
+  // Walk-ins = active Player rows with no userId. Also alphabetized; the
+  // Prep Roster modal is a discovery surface, not a play surface.
+  const walkInRows = useMemo(() => {
+    const queueSet = new Set(queue);
+    return players
+      .filter((p) => !p.userId)
+      .map((p) => ({ ...p, checkedIn: queueSet.has(p.id) }))
+      .sort(byPlayerName);
+  }, [players, queue]);
 
   const run = (fn) => {
     startTransition(async () => {
@@ -70,8 +90,14 @@ export function ArenaPrepRosterModal({ arenaId, members, players, queue, onApply
     }
     run(() =>
       row.checkedIn
-        ? checkOutMember(arenaId, row.player.id)
-        : checkInMember(arenaId, row.player.id),
+        ? checkOutPlayer(arenaId, row.player.id)
+        : checkInPlayer(arenaId, row.player.id),
+    );
+  };
+
+  const handleToggleWalkIn = (row) => {
+    run(() =>
+      row.checkedIn ? checkOutPlayer(arenaId, row.id) : checkInPlayer(arenaId, row.id),
     );
   };
 
@@ -83,10 +109,6 @@ export function ArenaPrepRosterModal({ arenaId, members, players, queue, onApply
     setNewFirst('');
     setNewLast('');
     run(() => addPlayer(arenaId, first, last));
-  };
-
-  const handleRemoveWalkIn = (id) => {
-    run(() => removePlayer(arenaId, id));
   };
 
   return (
@@ -107,8 +129,8 @@ export function ArenaPrepRosterModal({ arenaId, members, players, queue, onApply
               Prep roster
             </h3>
             <p className="text-xs text-slate-400 mt-1 leading-snug">
-              Toggle members in or out of the rack and add walk-ins for the next session.
-              Changes apply immediately.
+              Toggle members and walk-ins in or out of the rack and add new walk-ins for the next session.
+              Changes apply immediately. To permanently delete a walk-in, go to Members → Walk-ins.
             </p>
           </div>
           <button
@@ -179,9 +201,14 @@ export function ArenaPrepRosterModal({ arenaId, members, players, queue, onApply
           </section>
 
           <section>
-            <h4 className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400 mb-3">
-              Walk-ins ({walkIns.length})
-            </h4>
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400">
+                Walk-ins ({walkInRows.length})
+              </h4>
+              <span className="text-[10px] text-slate-400">
+                {walkInRows.filter((w) => w.checkedIn).length} checked in
+              </span>
+            </div>
             <form onSubmit={handleAddWalkIn} className="flex gap-2 mb-3">
               <input
                 type="text"
@@ -205,26 +232,39 @@ export function ArenaPrepRosterModal({ arenaId, members, players, queue, onApply
                 Add
               </button>
             </form>
-            {walkIns.length === 0 ? (
+            {walkInRows.length === 0 ? (
               <p className="text-xs text-slate-400 italic">No walk-ins yet.</p>
             ) : (
               <ul className="space-y-1.5">
-                {walkIns.map((w) => (
+                {walkInRows.map((row) => (
                   <li
-                    key={w.id}
-                    className="flex items-center justify-between gap-3 p-2.5 rounded-lg border border-slate-200 bg-slate-50/60"
+                    key={row.id}
+                    className={`flex items-center justify-between gap-3 p-3 rounded-xl border transition ${
+                      row.checkedIn
+                        ? 'border-emerald-200 bg-emerald-50/60'
+                        : 'border-slate-200 bg-white hover:bg-slate-50'
+                    }`}
                   >
-                    <p className="text-sm font-bold text-slate-800 truncate">
-                      {w.lastName ? `${w.firstName} ${w.lastName}` : w.firstName}
-                    </p>
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-slate-800 truncate">
+                        {row.lastName ? `${row.firstName} ${row.lastName}` : row.firstName}
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        walk-in
+                        {row.checkedIn ? ` · #${queue.indexOf(row.id) + 1} on rack` : ''}
+                      </p>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => handleRemoveWalkIn(w.id)}
+                      onClick={() => handleToggleWalkIn(row)}
                       disabled={isPending}
-                      className="shrink-0 p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50 transition"
-                      aria-label={`Remove ${w.firstName}`}
+                      className={`shrink-0 text-xs font-extrabold uppercase tracking-wider px-3 py-1.5 rounded-lg transition disabled:opacity-50 ${
+                        row.checkedIn
+                          ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                          : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                      }`}
                     >
-                      ✕
+                      {row.checkedIn ? '✓ In' : 'Out'}
                     </button>
                   </li>
                 ))}

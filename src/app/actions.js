@@ -992,13 +992,14 @@ export async function prepareNextSession(arenaId) {
 }
 
 /**
- * Check a member into the rack — bottom-of-queue placement, like a walk-in
- * being added or a left member rejoining. Manager-gated. Re-anchors
- * `gamesOffset` so the returning player sorts as a peer (same pattern as
- * `activateArenaPlayer`). Idempotent: a player already on the rack (or on a
- * court mid-match) is a clean no-op.
+ * Check a player into the rack — bottom-of-queue placement. Works for both
+ * registered members and walk-ins; the Prep Roster modal uses this for
+ * either kind of player. Manager-gated. Re-anchors `gamesOffset` so the
+ * returning player sorts as a peer (same pattern as `activateArenaPlayer`).
+ * Idempotent: a player already on the rack (or on a court mid-match) is a
+ * clean no-op.
  */
-export async function checkInMember(arenaId, playerId) {
+export async function checkInPlayer(arenaId, playerId) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
@@ -1032,7 +1033,7 @@ export async function checkInMember(arenaId, playerId) {
  * stacked onto the next court. Manager-gated. A player currently mid-match
  * is left alone (their `queueOrder` is already null while playing).
  */
-export async function checkOutMember(arenaId, playerId) {
+export async function checkOutPlayer(arenaId, playerId) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
