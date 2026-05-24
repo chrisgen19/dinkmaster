@@ -49,10 +49,12 @@ function formatCountdown(ms) {
  * @param {{days?:number[], start?:string|null, end?:string|null, timezone?:string}} props.schedule
  * @param {string|null} props.lastSessionResetAt - ISO string from the server
  * @param {boolean} props.autoResetOnSession - per-arena setting. When false the
- *   banner won't offer the auto-reset CTA; it stays purely informational
- *   with an Edit roster opener. The arena keeps last session's queue and
- *   partnership matrix (the perpetual-rack model) until a manager hits
- *   Settings → Sessions → Reset session now.
+ *   banner won't auto-offer the wipe as its primary CTA; the primary stays an
+ *   Edit roster opener (the perpetual-rack model keeps last session's queue and
+ *   partnership matrix). It DOES surface a low-emphasis "Reset session now"
+ *   secondary action so a manager can clear the rack + matrix on demand without
+ *   the Settings → Sessions detour — it runs the same `prepareNextSession`
+ *   transaction behind a confirm prompt.
  * @param {number} props.headerHeight - sticky offset so the banner sits flush below the header
  * @param {number} props.checkedInCount - rack length, surfaced in the `live` state
  * @param {boolean} props.isPending - disable action buttons while a server action is in flight
@@ -179,14 +181,31 @@ export function ArenaSessionPrepBanner({
           </svg>
           <p className="text-sm font-semibold leading-snug">{title}</p>
         </div>
-        <button
-          type="button"
-          onClick={needsReset ? onPrepareAndOpen : onOpenRoster}
-          className="text-sm bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg transition"
-          disabled={isPending}
-        >
-          {label}
-        </button>
+        <div className="flex flex-col items-center gap-2">
+          <button
+            type="button"
+            onClick={needsReset ? onPrepareAndOpen : onOpenRoster}
+            className="text-sm bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg transition"
+            disabled={isPending}
+          >
+            {label}
+          </button>
+          {/* Perpetual-rack mode: the primary CTA only opens the roster (no
+              wipe), so without this the only way to clear the carried-over rack
+              + partnership matrix is buried in Settings → Sessions. Surface it
+              here as a secondary action. onPrepareAndOpen carries its own
+              confirm prompt before the destructive reset. */}
+          {!autoResetOnSession && (
+            <button
+              type="button"
+              onClick={onPrepareAndOpen}
+              className="text-xs font-semibold text-amber-700 hover:text-amber-900 underline underline-offset-2 disabled:opacity-50 transition"
+              disabled={isPending}
+            >
+              Reset session now
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
