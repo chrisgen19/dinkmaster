@@ -53,6 +53,18 @@ model Arena {
   leaderboardSize       Int     @default(5)
   countOffScheduleGames Boolean @default(true)
 
+  // Per-arena session prep state (Phase 10a). `lastSessionResetAt` records
+  // when the rack/partnerships were last cleared via `prepareNextSession`,
+  // so the manager prep banner can surface "last reset N days ago" and the
+  // dismissal key is stable per session. `autoResetOnSession` controls
+  // whether the session boundary auto-empties the rack; the column default
+  // is `true` for NEW arenas but the migration backfills existing rows to
+  // `false`, making this opt-in for arenas already in use so the perpetual-
+  // rack behaviour they rely on doesn't change without a manager flipping
+  // it on.
+  lastSessionResetAt DateTime?
+  autoResetOnSession Boolean   @default(true)
+
   owner        User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   players      Player[]
   courts       Court[]
