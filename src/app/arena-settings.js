@@ -337,7 +337,7 @@ function SessionsSection({ arenaId, sessions }) {
     setError('');
     startTransition(async () => {
       try {
-        const result = await prepareNextSession(arenaId, { mode: 'fresh' });
+        const result = await prepareNextSession(arenaId);
         if (result?.error) return setError(result.error);
         flashSaved();
         router.refresh();

@@ -61,6 +61,13 @@ function deriveState({ schedule, lastSessionResetAt, now }) {
  * key includes the upcoming session's start instant, so dismissing one
  * session's banner doesn't suppress next session's.
  *
+ * Single CTA per state — *Prepare next session* when the rack hasn't been
+ * reset yet for the upcoming play day, *Edit roster* once it has, and
+ * *Manage roster* during a live session. The first variant resets the
+ * rack + partnership matrix + waitRounds AND opens the roster modal in
+ * one tap, so the manager can't accidentally check players in against a
+ * still-polluted matrix.
+ *
  * @param {object} props
  * @param {string} props.arenaId
  * @param {boolean} props.canManage
@@ -69,9 +76,8 @@ function deriveState({ schedule, lastSessionResetAt, now }) {
  * @param {number} props.headerHeight - sticky offset so the banner sits flush below the header
  * @param {number} props.checkedInCount - rack length, surfaced in the `live` state
  * @param {boolean} props.isPending - disable action buttons while a server action is in flight
- * @param {() => void} props.onStartFresh
- * @param {() => void} props.onCarryOver
- * @param {() => void} props.onOpenRoster
+ * @param {() => void} props.onPrepareAndOpen - reset rack/matrix then open the roster modal
+ * @param {() => void} props.onOpenRoster - just open the modal (no reset)
  */
 export function ArenaSessionPrepBanner({
   arenaId,
@@ -81,8 +87,7 @@ export function ArenaSessionPrepBanner({
   headerHeight = 96,
   checkedInCount = 0,
   isPending = false,
-  onStartFresh,
-  onCarryOver,
+  onPrepareAndOpen,
   onOpenRoster,
 }) {
   // Re-evaluate every minute so a between→imminent→live transition doesn't
@@ -121,75 +126,26 @@ export function ArenaSessionPrepBanner({
   const tz = schedule.timezone || 'Asia/Manila';
   const sessionStartLabel = state.session ? formatSessionStart(state.session.start, tz) : null;
 
-  // Per-state copy + actions. Kept inline so the visual diff per state is
-  // easy to scan; refactor to a config object if a fourth state appears.
+  // Single CTA per state. `needsReset` distinguishes "the manager hasn't
+  // prepped the upcoming session yet" (Prepare next session — does the
+  // reset AND opens the modal) from the already-prepared and live cases
+  // (Edit/Manage roster — just opens the modal).
+  const needsReset = (state.kind === 'between' || state.kind === 'imminent') && !state.prepared;
   let title;
-  let actions;
+  let label;
   if (state.kind === 'live') {
     title = `Session live · ${checkedInCount} checked in`;
-    actions = (
-      <button
-        type="button"
-        onClick={onOpenRoster}
-        className="text-sm bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg transition"
-        disabled={isPending}
-      >
-        Manage roster
-      </button>
-    );
+    label = 'Manage roster';
   } else if (state.kind === 'imminent') {
-    title = `Session starts ${formatCountdown(state.msToStart)} · ${sessionStartLabel}`;
-    actions = (
-      <button
-        type="button"
-        onClick={onOpenRoster}
-        className="text-sm bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg transition"
-        disabled={isPending}
-      >
-        Prep roster
-      </button>
-    );
+    title = state.prepared
+      ? `Roster prepared · ${checkedInCount} checked in · Session starts ${formatCountdown(state.msToStart)}`
+      : `Session starts ${formatCountdown(state.msToStart)} · ${sessionStartLabel}`;
+    label = state.prepared ? 'Edit roster' : 'Prepare next session';
   } else {
     title = state.prepared
       ? `Roster prepared · ${checkedInCount} checked in · Next session ${sessionStartLabel}`
       : `Next session ${sessionStartLabel}`;
-    actions = state.prepared ? (
-      <button
-        type="button"
-        onClick={onOpenRoster}
-        className="text-sm bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg transition"
-        disabled={isPending}
-      >
-        Edit roster
-      </button>
-    ) : (
-      <div className="flex flex-wrap items-center justify-center gap-2">
-        <button
-          type="button"
-          onClick={onOpenRoster}
-          className="text-sm bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg transition"
-          disabled={isPending}
-        >
-          Prep roster
-        </button>
-        <button
-          type="button"
-          onClick={onStartFresh}
-          className="text-sm bg-white hover:bg-amber-50 disabled:opacity-50 text-amber-800 border border-amber-300 font-bold px-4 py-2 rounded-lg transition"
-          disabled={isPending}
-        >
-          Start fresh
-        </button>
-        <button
-          type="button"
-          onClick={onCarryOver}
-          className="text-sm bg-white hover:bg-amber-50 disabled:opacity-50 text-amber-800 border border-amber-300 font-bold px-4 py-2 rounded-lg transition"
-          disabled={isPending}
-        >
-          Carry over
-        </button>
-      </div>
-    );
+    label = state.prepared ? 'Edit roster' : 'Prepare next session';
   }
 
   return (
@@ -222,7 +178,14 @@ export function ArenaSessionPrepBanner({
           </svg>
           <p className="text-sm font-semibold leading-snug">{title}</p>
         </div>
-        {actions}
+        <button
+          type="button"
+          onClick={needsReset ? onPrepareAndOpen : onOpenRoster}
+          className="text-sm bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg transition"
+          disabled={isPending}
+        >
+          {label}
+        </button>
       </div>
     </div>
   );

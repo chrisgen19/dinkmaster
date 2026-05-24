@@ -64,7 +64,7 @@ const PLAY = [
   ['updateArenaMatchmaking', () => actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4 })],
   ['updateArenaMatchDefaults', () => actions.updateArenaMatchDefaults(ARENA, { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true })],
   ['updateArenaSessions', () => actions.updateArenaSessions(ARENA, { autoResetOnSession: true })],
-  ['prepareNextSession', () => actions.prepareNextSession(ARENA, { mode: 'fresh' })],
+  ['prepareNextSession', () => actions.prepareNextSession(ARENA)],
   ['checkInMember', () => actions.checkInMember(ARENA, 'p1')],
   ['checkOutMember', () => actions.checkOutMember(ARENA, 'p1')],
   ['approveJoinRequest', () => actions.approveJoinRequest(ARENA, 'u2')],
@@ -335,18 +335,8 @@ describe('arena server actions — authorization', () => {
     });
 
     describe('prepareNextSession()', () => {
-      it('rejects an unknown mode without entering the transaction', async () => {
-        const result = await actions.prepareNextSession(ARENA, { mode: 'nuke' });
-        expect(result.error).toMatch(/mode/i);
-        expect(prisma.$transaction).not.toHaveBeenCalled();
-      });
-
-      it.each([
-        ['fresh', { mode: 'fresh' }],
-        ['carry', { mode: 'carry' }],
-        ['default (no args)', undefined],
-      ])('enters the transaction for mode %s', async (_label, input) => {
-        await actions.prepareNextSession(ARENA, input);
+      it('enters the transaction once when the caller is authorized', async () => {
+        await actions.prepareNextSession(ARENA);
         expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       });
     });

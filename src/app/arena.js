@@ -388,21 +388,20 @@ export default function Arena({
     run(() => removeCourt(arenaId, id));
   };
 
-  const handlePrepareSession = (mode) => {
+  const handlePrepareAndOpen = () => {
     if (!canManage) return;
-    const confirmMsg =
-      mode === 'fresh'
-        ? 'Empty the rack and reset the partnership matrix for the next session? Lifetime stats and match history are not touched.'
-        : 'Keep the current rack but reset the partnership matrix for the next session? Lifetime stats and match history are not touched.';
-    if (!window.confirm(confirmMsg)) return;
+    if (!window.confirm(
+      'Start a new session? This empties the rack and resets the partnership matrix so tonight\'s mix is unbiased. Lifetime stats and match history are not touched.',
+    )) return;
     startTransition(async () => {
-      const result = await prepareNextSession(arenaId, { mode });
+      const result = await prepareNextSession(arenaId);
       applyResult(result);
       if (!result?.error) {
         // Stamp locally so the banner re-renders as "prepared" right away,
         // without waiting for the next server read. The next router.refresh
         // (e.g. on tab switch) will replace this with the server value.
         setLastSessionResetAt(new Date().toISOString());
+        setRosterModalOpen(true);
       }
     });
   };
@@ -568,8 +567,7 @@ export default function Arena({
         headerHeight={headerHeight}
         checkedInCount={queue.length}
         isPending={isPending}
-        onStartFresh={() => handlePrepareSession('fresh')}
-        onCarryOver={() => handlePrepareSession('carry')}
+        onPrepareAndOpen={handlePrepareAndOpen}
         onOpenRoster={() => setRosterModalOpen(true)}
       />
 
