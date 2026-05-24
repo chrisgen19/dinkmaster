@@ -63,6 +63,10 @@ const PLAY = [
   ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
   ['updateArenaMatchmaking', () => actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4 })],
   ['updateArenaMatchDefaults', () => actions.updateArenaMatchDefaults(ARENA, { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true })],
+  ['updateArenaSessions', () => actions.updateArenaSessions(ARENA, { autoResetOnSession: true })],
+  ['prepareNextSession', () => actions.prepareNextSession(ARENA, { mode: 'fresh' })],
+  ['checkInMember', () => actions.checkInMember(ARENA, 'p1')],
+  ['checkOutMember', () => actions.checkOutMember(ARENA, 'p1')],
   ['approveJoinRequest', () => actions.approveJoinRequest(ARENA, 'u2')],
   ['rejectJoinRequest', () => actions.rejectJoinRequest(ARENA, 'u2')],
   ['linkPlayerToMember', () => actions.linkPlayerToMember(ARENA, 'p1', 'u2')],
@@ -294,6 +298,56 @@ describe('arena server actions — authorization', () => {
         const result = await actions.updateArenaMatchDefaults(ARENA, input);
         expect(result.error).toBeTruthy();
         expect(prisma.arena.updateMany).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('updateArenaSessions()', () => {
+      beforeEach(() => {
+        prisma.arena.updateMany.mockResolvedValue({ count: 1 });
+      });
+
+      it('persists a valid boolean and returns the new setting', async () => {
+        const result = await actions.updateArenaSessions(ARENA, { autoResetOnSession: true });
+        expect(result.error).toBeUndefined();
+        expect(prisma.arena.updateMany).toHaveBeenCalledWith({
+          where: { id: ARENA },
+          data: { autoResetOnSession: true },
+        });
+        expect(result.sessions.autoResetOnSession).toBe(true);
+      });
+
+      it('reports a clean error when the arena no longer exists', async () => {
+        prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
+        const result = await actions.updateArenaSessions(ARENA, { autoResetOnSession: false });
+        expect(result.error).toMatch(/no longer exists/i);
+      });
+
+      it.each([
+        ['undefined', undefined],
+        ['null', null],
+        ['a string', 'true'],
+        ['a number', 1],
+      ])('rejects %s for autoResetOnSession and writes nothing', async (_label, value) => {
+        const result = await actions.updateArenaSessions(ARENA, { autoResetOnSession: value });
+        expect(result.error).toBeTruthy();
+        expect(prisma.arena.updateMany).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('prepareNextSession()', () => {
+      it('rejects an unknown mode without entering the transaction', async () => {
+        const result = await actions.prepareNextSession(ARENA, { mode: 'nuke' });
+        expect(result.error).toMatch(/mode/i);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['fresh', { mode: 'fresh' }],
+        ['carry', { mode: 'carry' }],
+        ['default (no args)', undefined],
+      ])('enters the transaction for mode %s', async (_label, input) => {
+        await actions.prepareNextSession(ARENA, input);
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       });
     });
 
