@@ -1065,15 +1065,13 @@ export async function requestLinkPlayer(arenaId, playerId) {
         }
       }
 
-      // The requester cannot already have an active linked Player here.
-      const ownPlayer = await tx.player.findUnique({
-        where: { arenaId_userId: { arenaId, userId: guard.user.id } },
-        select: { id: true, leftAt: true },
-      });
-      if (ownPlayer && !ownPlayer.leftAt) {
-        errorMessage = 'You already have a linked player in this arena.';
-        return;
-      }
+      // NOTE: we intentionally do NOT block when the requester already has
+      // a linked Player here. `approveJoinRequest` auto-creates a fresh
+      // Player on join (`activateArenaPlayer`), so every member arrives
+      // with one — gating on that would make the canonical "claim my
+      // historical walk-in" flow unreachable. `applyLinkPlayerToMember`
+      // handles the merge: it folds the existing Player's stats into the
+      // walk-in row, preserving everything.
 
       // The target must be a walk-in (orphan) Player in this arena.
       const target = await tx.player.findFirst({
