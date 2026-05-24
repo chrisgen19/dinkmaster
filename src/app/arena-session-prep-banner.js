@@ -60,7 +60,6 @@ function formatCountdown(ms) {
  *   secondary action so a manager can clear the rack + matrix on demand without
  *   the Settings → Sessions detour — it runs the same `prepareNextSession`
  *   transaction behind a confirm prompt.
- * @param {number} props.headerHeight - sticky offset so the banner sits flush below the header
  * @param {number} props.checkedInCount - rack length, surfaced in the `live` state
  * @param {boolean} props.isPending - disable action buttons while a server action is in flight
  * @param {() => void} props.onPrepareAndOpen - reset rack/matrix then open the roster modal
@@ -72,7 +71,6 @@ export function ArenaSessionPrepBanner({
   schedule,
   lastSessionResetAt = null,
   autoResetOnSession = true,
-  headerHeight = 96,
   checkedInCount = 0,
   isPending = false,
   onPrepareAndOpen,
@@ -157,10 +155,7 @@ export function ArenaSessionPrepBanner({
   }
 
   return (
-    <div
-      style={{ top: headerHeight + 12 }}
-      className="sticky z-40 mt-3 w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8"
-    >
+    <div className="mt-3 w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8">
       <div
         role="status"
         className={`group relative overflow-hidden rounded-2xl border border-amber-200/80 bg-gradient-to-br from-amber-50/95 to-orange-50/90 px-4 py-3.5 text-amber-900 shadow-lg shadow-amber-900/[0.07] ring-1 ring-amber-900/5 backdrop-blur-md animate-fade-in flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 ${canDismiss ? 'sm:pr-12' : ''}`}

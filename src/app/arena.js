@@ -556,7 +556,6 @@ export default function Arena({
         schedule={schedule}
         lastSessionResetAt={lastSessionResetAt}
         autoResetOnSession={sessionPrep.autoResetOnSession}
-        headerHeight={headerHeight}
         checkedInCount={queue.length}
         isPending={isPending}
         onPrepareAndOpen={handlePrepareAndOpen}
