@@ -41,7 +41,9 @@ export default async function ArenaPage({ params }) {
         ? hasPendingJoinRequest(id, user.id)
         : Promise.resolve(false),
       canManage ? getArenaLinkRequests(id) : Promise.resolve([]),
-      user ? getViewerLinkContext(id, user.id) : Promise.resolve(null),
+      // Only arena members (incl. managers) ever interact with the link UI,
+      // so spectators skip the three DB queries `getViewerLinkContext` runs.
+      user && viewerRole ? getViewerLinkContext(id, user.id) : Promise.resolve(null),
     ]);
 
   return (

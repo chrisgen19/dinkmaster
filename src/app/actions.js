@@ -1027,10 +1027,10 @@ export async function rejectJoinRequest(arenaId, userId) {
 /**
  * Request to be linked to an existing walk-in (orphan) Player in this arena.
  * Available to any member who does not already have a linked Player in this
- * arena; the request is queued for owner/organizer approval. Idempotent for
- * the same orphan — upserting reuses the row. Picking a different orphan
- * after one is pending requires cancelling first (the `[arenaId, userId]`
- * unique key enforces one open request per member).
+ * arena; the request is queued for owner/organizer approval. The
+ * `[arenaId, userId]` unique key enforces one open request per member —
+ * resubmitting with a different `playerId` updates the existing row in place
+ * so a member can switch their pick without cancelling first.
  */
 export async function requestLinkPlayer(arenaId, playerId) {
   const guard = await requireUser();
@@ -1145,6 +1145,14 @@ export async function approveLinkRequest(arenaId, requestId) {
     const result = await applyLinkPlayerToMember(tx, arenaId, request.playerId, request.userId);
     if (result.reason) {
       reason = result.reason;
+      // Terminal reasons can never become approvable later (the orphan is
+      // gone, already linked, or the requester has since left the arena),
+      // so consume the row to clear the queue. `MEMBER_PLAYING` is
+      // retriable once the match ends — keep the row so the manager can
+      // try again from the same place in the list.
+      if (reason !== 'MEMBER_PLAYING') {
+        await tx.linkRequest.deleteMany({ where: { id: request.id } });
+      }
       return;
     }
     await tx.linkRequest.deleteMany({ where: { id: request.id } });

@@ -249,7 +249,13 @@ export function ArenaMembers({
           title={`Link ${managerLinkFor.displayName} to a member`}
           description="Pick the member who's actually this walk-in. Their stats here will merge into the rack row."
           submitLabel="Link now"
-          options={members.map((m) => ({ value: m.userId, label: m.name }))}
+          // Hide members who already have an active linked player here —
+          // picking one would trigger an irreversible stat merge into the
+          // wrong row. Such members can no longer be the "true identity" of
+          // a walk-in by definition.
+          options={members
+            .filter((m) => !m.hasLinkedPlayer)
+            .map((m) => ({ value: m.userId, label: m.name }))}
           onCancel={() => setManagerLinkFor(null)}
           onSubmit={(userId) => submitManagerLink(managerLinkFor.id, userId)}
           disabled={isPending}

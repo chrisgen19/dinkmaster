@@ -59,14 +59,30 @@ export async function getArena(id) {
 /**
  * List an arena's members (oldest first) with role. Returns only
  * non-sensitive fields: `/arena/[id]` is publicly viewable, so email and
- * other account identifiers must not be in this payload.
+ * other account identifiers must not be in this payload. `hasLinkedPlayer`
+ * flags members who already have an active `Player` row in this arena, so
+ * the manager direct-link modal can hide them — picking them would trigger
+ * an irreversible stat merge against the wrong walk-in.
  * @param {string} arenaId
- * @returns {Promise<Array<{membershipId:string,userId:string,name:string,role:string}>>}
+ * @returns {Promise<Array<{membershipId:string,userId:string,name:string,role:string,hasLinkedPlayer:boolean}>>}
  */
 export async function getArenaMembers(arenaId) {
   const members = await prisma.arenaMembership.findMany({
     where: { arenaId },
-    include: { user: { select: { id: true, name: true } } },
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          // One linked Player per (arena, user) — active rows have leftAt null.
+          players: {
+            where: { arenaId, leftAt: null },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
+    },
     orderBy: { createdAt: 'asc' },
   });
 
@@ -75,6 +91,7 @@ export async function getArenaMembers(arenaId) {
     userId: m.userId,
     name: m.user.name,
     role: m.role,
+    hasLinkedPlayer: m.user.players.length > 0,
   }));
 }
 
