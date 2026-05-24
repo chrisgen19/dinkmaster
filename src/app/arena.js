@@ -208,6 +208,39 @@ export default function Arena({
   const [mounted, setMounted] = useState(false);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount flag for hydration-safe locale formatting
   useEffect(() => setMounted(true), []);
+
+  // Viewer notice can be dismissed for the session.
+  const [viewerNoticeDismissed, setViewerNoticeDismissed] = useState(false);
+  // Height of the sticky site header, so the floating viewer notice can sit
+  // flush beneath it. Measured because the header grows when the arena name
+  // wraps or the stat chips reflow on narrow viewports. Seeded with a typical
+  // height so the notice is positioned correctly on the first paint, before
+  // the ResizeObserver refines it.
+  const [headerHeight, setHeaderHeight] = useState(96);
+
+  // Persist the dismissal for the browser session, per arena, so a router
+  // refresh (e.g. after requesting to join) or reload keeps it hidden.
+  const noticeDismissKey = `arena:${arenaId}:viewerNoticeDismissed`;
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring dismissal from sessionStorage (a client-only external store) on mount
+    if (sessionStorage.getItem(noticeDismissKey) === '1') setViewerNoticeDismissed(true);
+  }, [noticeDismissKey]);
+
+  const dismissViewerNotice = () => {
+    setViewerNoticeDismissed(true);
+    sessionStorage.setItem(noticeDismissKey, '1');
+  };
+
+  useEffect(() => {
+    if (canManage || viewerNoticeDismissed) return undefined;
+    const header = document.querySelector('[data-site-header]');
+    if (!header) return undefined;
+    const measure = () => setHeaderHeight(header.getBoundingClientRect().height);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(header);
+    return () => ro.disconnect();
+  }, [canManage, viewerNoticeDismissed]);
   const formatTimestamp = (iso) =>
     mounted ? new Date(iso).toLocaleString() : iso.replace('T', ' ').slice(0, 16);
 
@@ -494,35 +527,56 @@ export default function Arena({
         <AuthStatus />
       </SiteHeader>
 
-      {!canManage && (
-        <div className="mx-4 md:mx-8 mt-4 p-3 bg-slate-100 border border-slate-200 text-slate-600 rounded-xl text-xs font-medium flex flex-wrap items-center justify-between gap-2">
-          <span className="flex items-center gap-2">
-            <span>👁️</span>
-            <span>
-              {viewerRole
-                ? "You're a member of this arena. An owner can promote you to organizer to manage it."
-                : "You're viewing this arena. Only its owner and organizers can manage it."}
-            </span>
-          </span>
-          {isAuthenticated && !viewerRole && viewerPending && (
-            <span className="text-xs bg-amber-50 text-amber-700 border border-amber-200 font-bold px-3 py-1.5 rounded-lg shrink-0">
-              Request pending approval
-            </span>
-          )}
-          {isAuthenticated && !viewerRole && !viewerPending && (
+      {!canManage && !viewerNoticeDismissed && (
+        <div
+          style={{ top: headerHeight + 12 }}
+          className="sticky z-40 mt-3 w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8"
+        >
+          <div
+            role="status"
+            className="relative p-4 pr-10 bg-emerald-50/95 backdrop-blur border border-emerald-200 text-emerald-900 rounded-2xl shadow-lg shadow-emerald-900/10 flex flex-col items-center text-center gap-3 animate-fade-in"
+          >
             <button
-              onClick={handleRequestJoin}
-              disabled={isPending}
-              className="text-xs bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold px-3 py-1.5 rounded-lg transition shrink-0"
+              onClick={dismissViewerNotice}
+              aria-label="Dismiss notice"
+              className="absolute top-3 right-3 grid place-items-center h-7 w-7 rounded-lg text-emerald-700/70 hover:text-emerald-900 hover:bg-emerald-100 transition"
             >
-              Request to join
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
             </button>
-          )}
-          {!isAuthenticated && (
-            <Link href="/login" className="text-xs text-emerald-700 font-bold hover:underline shrink-0">
-              Sign in to join
-            </Link>
-          )}
+            <div className="flex items-center gap-2.5">
+              <svg className="w-5 h-5 shrink-0 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              <p className="text-sm font-semibold leading-snug">
+                {viewerRole
+                  ? "You're a member of this arena. An owner can promote you to organizer to manage it."
+                  : "You're viewing this arena. Only its owner and organizers can manage it."}
+              </p>
+            </div>
+            {isAuthenticated && !viewerRole && viewerPending && (
+              <span className="text-xs bg-amber-50 text-amber-700 border border-amber-200 font-bold px-3 py-1.5 rounded-lg">
+                Request pending approval
+              </span>
+            )}
+            {isAuthenticated && !viewerRole && !viewerPending && (
+              <button
+                onClick={handleRequestJoin}
+                disabled={isPending}
+                className="text-sm bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg transition"
+              >
+                Request to join
+              </button>
+            )}
+            {!isAuthenticated && (
+              <Link href="/login" className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg transition">
+                Sign in to join
+              </Link>
+            )}
+          </div>
         </div>
       )}
 
@@ -545,50 +599,50 @@ export default function Arena({
         {/* Left Column: Player Administration & Paddle Queue */}
         <div className="lg:col-span-5 space-y-6">
 
-          {/* Quick Add Section */}
-          <section className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-400">
-                Register Players
-              </h3>
-              <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-2 py-0.5 rounded-md">
-                One player at a time
-              </span>
-            </div>
-
-            <form onSubmit={handleAddPlayer} className="flex gap-2">
-              <input
-                type="text"
-                placeholder={canManage ? 'First name' : 'Sign in as the owner to add players'}
-                value={newFirstName}
-                onChange={(e) => setNewFirstName(e.target.value)}
-                disabled={!canManage}
-                className="flex-1 min-w-0 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400 disabled:opacity-60 disabled:cursor-not-allowed"
-              />
-              <input
-                type="text"
-                placeholder={canManage ? 'Last name (optional)' : ''}
-                value={newLastName}
-                onChange={(e) => setNewLastName(e.target.value)}
-                disabled={!canManage}
-                className="flex-1 min-w-0 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400 disabled:opacity-60 disabled:cursor-not-allowed"
-              />
-              <button
-                type="submit"
-                disabled={isPending || !canManage}
-                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold px-5 py-2.5 rounded-xl transition duration-150 flex items-center justify-center shadow-sm shrink-0"
-              >
-                Add
-              </button>
-            </form>
-
-            {errorMsg && (
-              <div className="mt-3 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-start gap-2">
-                <span className="font-bold">⚠️</span>
-                <span>{errorMsg}</span>
+          {/* Quick Add Section — owners/organizers only */}
+          {canManage && (
+            <section className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-400">
+                  Register Players
+                </h3>
+                <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-2 py-0.5 rounded-md">
+                  One player at a time
+                </span>
               </div>
-            )}
-          </section>
+
+              <form onSubmit={handleAddPlayer} className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="First name"
+                  value={newFirstName}
+                  onChange={(e) => setNewFirstName(e.target.value)}
+                  className="flex-1 min-w-0 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Last name (optional)"
+                  value={newLastName}
+                  onChange={(e) => setNewLastName(e.target.value)}
+                  className="flex-1 min-w-0 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400"
+                />
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold px-5 py-2.5 rounded-xl transition duration-150 flex items-center justify-center shadow-sm shrink-0"
+                >
+                  Add
+                </button>
+              </form>
+
+              {errorMsg && (
+                <div className="mt-3 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-start gap-2">
+                  <span className="font-bold">⚠️</span>
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+            </section>
+          )}
 
           {/* Visual Paddle Stack Section */}
           <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">

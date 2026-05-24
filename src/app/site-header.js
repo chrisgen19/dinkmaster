@@ -54,7 +54,7 @@ function Wordmark({ className = 'text-xl' }) {
  */
 export function SiteHeader({ variant = 'home', arenaName, arenaSubtitle, children }) {
   return (
-    <header className="sticky top-0 z-50">
+    <header data-site-header className="sticky top-0 z-50">
       {/* Brand accent hairline along the very top edge. */}
       <div
         aria-hidden="true"
