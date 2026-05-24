@@ -36,12 +36,17 @@ function formatCountdown(ms) {
  * key includes the upcoming session's start instant, so dismissing one
  * session's banner doesn't suppress next session's.
  *
- * Single CTA per state — *Prepare next session* when the rack hasn't been
- * reset yet for the upcoming play day, *Edit roster* once it has, and
- * *Manage roster* during a live session. The first variant resets the
- * rack + partnership matrix + waitRounds AND opens the roster modal in
- * one tap, so the manager can't accidentally check players in against a
- * still-polluted matrix.
+ * Primary CTA per state — *Prepare next session* when the rack hasn't been
+ * reset yet for the upcoming play day, *Edit roster* once it has. The first
+ * variant resets the rack + partnership matrix + waitRounds AND opens the
+ * roster modal in one tap, so the manager can't accidentally check players in
+ * against a still-polluted matrix. (The live session has no banner — see the
+ * early return below.)
+ *
+ * Perpetual-rack mode (`autoResetOnSession` off) is the one state with two
+ * actions: the primary stays a non-destructive *Edit roster* opener, plus a
+ * low-emphasis *Reset session now* secondary that runs the same wipe on
+ * demand. Every other state keeps a single CTA.
  *
  * @param {object} props
  * @param {string} props.arenaId

@@ -370,7 +370,7 @@ function SessionsSection({ arenaId, sessions }) {
           <span>
             <span className="block text-sm font-bold text-slate-800">Auto-empty rack at session start</span>
             <span className="block text-xs text-slate-400 mt-0.5">
-              When on, the prep banner offers a one-tap “Prepare next session” that empties the rack and resets the partnership matrix. When off, the banner only opens the roster to adjust by hand and the rack carries over — use “Reset session now” below to wipe manually. Existing arenas start off; new arenas start on.
+              When on, the prep banner offers a one-tap “Prepare next session” that empties the rack and resets the partnership matrix. When off, the banner opens the roster to adjust by hand and the rack carries over — wipe manually with “Reset session now” on the banner or below. Existing arenas start off; new arenas start on.
             </span>
           </span>
         </label>
