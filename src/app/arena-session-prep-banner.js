@@ -30,7 +30,7 @@ function formatCountdown(ms) {
 }
 
 /**
- * Manager-only floating banner that prompts the organizer to prep the next
+ * Manager-only in-flow banner that prompts the organizer to prep the next
  * session's roster. Hidden for non-managers (the viewer notice covers that
  * case) and for arenas without a schedule. Dismissal is per-session: the
  * key includes the upcoming session's start instant, so dismissing one
@@ -125,7 +125,7 @@ export function ArenaSessionPrepBanner({
   };
 
   // Suppressed during a live session: the rack, courts, and the always-on
-  // "+ Players" button already cover mid-game roster changes, so a sticky
+  // "+ Players" button already cover mid-game roster changes, so a prep
   // banner here is just wasted space. Also hidden for spectators, arenas
   // with no schedule, and a dismissed imminent nudge.
   if (!canManage || state.kind === 'none' || state.kind === 'live' || dismissed) return null;
@@ -218,7 +218,7 @@ export function ArenaSessionPrepBanner({
           <button
             type="button"
             onClick={needsReset ? onPrepareAndOpen : onOpenRoster}
-            className="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-amber-900/20 transition hover:bg-amber-500 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
+            className="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-amber-900/20 transition hover:bg-amber-700 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
             disabled={isPending}
           >
             {label}

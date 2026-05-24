@@ -221,7 +221,7 @@ export default function Arena({
   const [headerHeight, setHeaderHeight] = useState(96);
   // Prep Roster modal — managers tap a banner button to open it. State lives
   // here (rather than inside the banner) so the modal renders at the page
-  // root, outside the sticky banner container.
+  // root, outside the banner.
   const [rosterModalOpen, setRosterModalOpen] = useState(false);
   // Local copy of the session-prep server state so the banner reflects a
   // just-fired `prepareNextSession` without waiting for a server refetch.
@@ -241,9 +241,9 @@ export default function Arena({
   };
 
   useEffect(() => {
-    // Both the viewer notice and the manager prep banner pin themselves
-    // `headerHeight + 12px` below the sticky site header, so run the
-    // observer unconditionally — managers also need a measured offset.
+    // The viewer notice pins itself `headerHeight + 12px` below the sticky
+    // site header; this observer keeps that offset fresh as the header
+    // resizes. (The manager prep banner is in-flow now, so it doesn't use this.)
     const header = document.querySelector('[data-site-header]');
     if (!header) return undefined;
     const measure = () => setHeaderHeight(header.getBoundingClientRect().height);
