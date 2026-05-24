@@ -396,6 +396,29 @@ export default function Arena({
   const tabRefs = useRef({});
   // Pending scroll-to-content timer, so a rapid re-select can cancel a stale one.
   const scrollTimerRef = useRef(null);
+  // Mobile viewer banner — its height drives a CSS var the nav drawer reads to
+  // sit above it instead of overlapping. Measured because the banner can wrap
+  // to multiple lines on narrow viewports.
+  const viewerBannerRef = useRef(null);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const el = viewerBannerRef.current;
+    if (canManage || !el) {
+      root.style.setProperty('--viewer-banner-h', '0px');
+      return;
+    }
+    const update = () => {
+      root.style.setProperty('--viewer-banner-h', `${el.offsetHeight}px`);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      root.style.setProperty('--viewer-banner-h', '0px');
+    };
+  }, [canManage, viewerRole, viewerPending, isAuthenticated]);
 
   // Switch tab, then scroll the page down to the freshly rendered content. The
   // delay lets the mobile drawer finish collapsing and the new tab content
@@ -496,12 +519,16 @@ export default function Arena({
 
       {!canManage && (
         <div
+          ref={viewerBannerRef}
           role="status"
           aria-live="polite"
-          className="fixed z-40 inset-x-0 bottom-[72px] md:inset-x-auto md:bottom-6 md:left-6 md:max-w-md bg-emerald-600 text-white shadow-2xl shadow-emerald-900/30 ring-1 ring-emerald-700/40 md:rounded-2xl px-4 py-3 md:px-5 md:py-4 flex flex-wrap items-center justify-between gap-3 animate-fade-in"
+          className="fixed z-40 inset-x-0 bottom-0 md:inset-x-auto md:left-auto md:right-6 md:bottom-6 md:max-w-md bg-emerald-600 text-white shadow-2xl shadow-emerald-900/30 ring-1 ring-emerald-700/40 md:rounded-2xl px-4 py-3 md:px-5 md:py-4 flex flex-wrap items-center justify-between gap-3 animate-fade-in"
         >
           <div className="flex items-start gap-3 flex-1 min-w-0">
-            <span className="text-xl md:text-2xl shrink-0" aria-hidden="true">👁️</span>
+            <svg className="w-6 h-6 md:w-7 md:h-7 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
             <p className="text-sm md:text-base font-semibold leading-snug">
               {viewerRole
                 ? "You're a member of this arena. An owner can promote you to organizer to manage it."
@@ -547,7 +574,7 @@ export default function Arena({
       )}
 
       {/* Main Grid Workspace */}
-      <main className={`flex-1 p-4 md:p-6 lg:p-8 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start ${!canManage ? 'pb-44 md:pb-32 lg:pb-32' : 'pb-28 md:pb-6 lg:pb-8'}`}>
+      <main className={`flex-1 p-4 md:p-6 lg:p-8 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start ${!canManage ? 'pb-48 md:pb-32 lg:pb-32' : 'pb-28 md:pb-6 lg:pb-8'}`}>
 
         {/* Left Column: Player Administration & Paddle Queue */}
         <div className="lg:col-span-5 space-y-6">

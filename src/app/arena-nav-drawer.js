@@ -157,11 +157,11 @@ export function ArenaNavDrawer({
           the tip remains visible above the viewport edge. */}
       <div
         ref={drawerRef}
-        style={{ '--tip': `${TIP_HEIGHT}px` }}
-        className={`md:hidden fixed bottom-0 inset-x-0 z-[60] max-h-[82vh] flex flex-col
+        style={{ '--tip': `${TIP_HEIGHT}px`, bottom: 'var(--viewer-banner-h, 0px)' }}
+        className={`md:hidden fixed inset-x-0 z-[60] max-h-[82vh] flex flex-col
           bg-white rounded-t-[28px] ring-1 ring-slate-900/5
           shadow-[0_-12px_48px_-12px_rgba(15,23,42,0.38)]
-          transition-transform duration-[360ms] [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]
+          transition-[transform,bottom] duration-[360ms] [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]
           ${open ? 'translate-y-0' : 'translate-y-[calc(100%-var(--tip))]'}`}
       >
         {/* Tip — fixed height, always visible; tap or swipe to toggle */}
