@@ -102,14 +102,17 @@ export function ArenaMembers({
     act(() => linkPlayerToMember(arenaId, playerId, userId));
   };
 
-  // Self-link is offered when: a signed-in member has no linked Player here,
-  // and there's at least one *claimable* orphan (i.e. one without an open
-  // request from someone else). Members with a pending request still see the
-  // panel (in its "pending" state) so they can cancel.
+  // Self-link is offered to any signed-in member as long as there's a
+  // claimable orphan (one without an open request from someone else) or
+  // they already have a pending request to cancel. We deliberately do NOT
+  // gate on `!hasLinkedPlayer`: `approveJoinRequest` auto-creates a fresh
+  // Player on join, so every member arrives with `hasLinkedPlayer = true`.
+  // Gating on that would make the canonical "claim my historical walk-in"
+  // flow unreachable — the backend's merge path in
+  // `applyLinkPlayerToMember` handles it correctly.
   const showSelfLink =
     isMember &&
     !!viewerLinkContext &&
-    !viewerLinkContext.hasLinkedPlayer &&
     (viewerLinkContext.pendingRequest || claimableOrphans.length > 0);
 
   // Pill nav. The Requests pill is manager-only — non-managers have nothing
@@ -249,13 +252,16 @@ export function ArenaMembers({
           title={`Link ${managerLinkFor.displayName} to a member`}
           description="Pick the member who's actually this walk-in. Their stats here will merge into the rack row."
           submitLabel="Link now"
-          // Hide members who already have an active linked player here —
-          // picking one would trigger an irreversible stat merge into the
-          // wrong row. Such members can no longer be the "true identity" of
-          // a walk-in by definition.
-          options={members
-            .filter((m) => !m.hasLinkedPlayer)
-            .map((m) => ({ value: m.userId, label: m.name }))}
+          // Show every member, including those with an existing linked
+          // Player — that's the canonical "merge historical walk-in into
+          // the member's account" case. A `· existing player` suffix
+          // makes the merge intent visible so an accidental pick is hard
+          // to miss, while the blank default still forces an explicit
+          // selection.
+          options={members.map((m) => ({
+            value: m.userId,
+            label: m.hasLinkedPlayer ? `${m.name} · existing player` : m.name,
+          }))}
           onCancel={() => setManagerLinkFor(null)}
           onSubmit={(userId) => submitManagerLink(managerLinkFor.id, userId)}
           disabled={isPending}
