@@ -208,6 +208,9 @@ export default function Arena({
   const [mounted, setMounted] = useState(false);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount flag for hydration-safe locale formatting
   useEffect(() => setMounted(true), []);
+
+  // Viewer notice can be dismissed for the session.
+  const [viewerNoticeDismissed, setViewerNoticeDismissed] = useState(false);
   const formatTimestamp = (iso) =>
     mounted ? new Date(iso).toLocaleString() : iso.replace('T', ' ').slice(0, 16);
 
@@ -396,29 +399,6 @@ export default function Arena({
   const tabRefs = useRef({});
   // Pending scroll-to-content timer, so a rapid re-select can cancel a stale one.
   const scrollTimerRef = useRef(null);
-  // Mobile viewer banner — its height drives a CSS var the nav drawer reads to
-  // sit above it instead of overlapping. Measured because the banner can wrap
-  // to multiple lines on narrow viewports.
-  const viewerBannerRef = useRef(null);
-
-  useEffect(() => {
-    const root = document.documentElement;
-    const el = viewerBannerRef.current;
-    if (canManage || !el) {
-      root.style.setProperty('--viewer-banner-h', '0px');
-      return;
-    }
-    const update = () => {
-      root.style.setProperty('--viewer-banner-h', `${el.offsetHeight}px`);
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => {
-      ro.disconnect();
-      root.style.setProperty('--viewer-banner-h', '0px');
-    };
-  }, [canManage, viewerRole, viewerPending, isAuthenticated]);
 
   // Switch tab, then scroll the page down to the freshly rendered content. The
   // delay lets the mobile drawer finish collapsing and the new tab content
@@ -517,26 +497,35 @@ export default function Arena({
         <AuthStatus />
       </SiteHeader>
 
-      {!canManage && (
+      {!canManage && !viewerNoticeDismissed && (
         <div
-          ref={viewerBannerRef}
           role="status"
           aria-live="polite"
-          className="fixed z-40 inset-x-0 bottom-0 md:inset-x-auto md:left-auto md:right-6 md:bottom-6 md:max-w-md bg-emerald-600 text-white shadow-2xl shadow-emerald-900/30 ring-1 ring-emerald-700/40 md:rounded-2xl px-4 py-3 md:px-5 md:py-4 flex flex-wrap items-center justify-between gap-3 animate-fade-in"
+          className="relative mx-4 md:mx-8 mt-4 max-w-2xl md:mx-auto p-4 pr-10 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl shadow-sm flex flex-col items-center text-center gap-3 animate-fade-in"
         >
-          <div className="flex items-start gap-3 flex-1 min-w-0">
-            <svg className="w-6 h-6 md:w-7 md:h-7 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <button
+            onClick={() => setViewerNoticeDismissed(true)}
+            aria-label="Dismiss notice"
+            className="absolute top-3 right-3 grid place-items-center h-7 w-7 rounded-lg text-emerald-700/70 hover:text-emerald-900 hover:bg-emerald-100 transition"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+          </button>
+          <div className="flex items-center gap-2.5">
+            <svg className="w-5 h-5 shrink-0 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
               <circle cx="12" cy="12" r="3" />
             </svg>
-            <p className="text-sm md:text-base font-semibold leading-snug">
+            <p className="text-sm font-semibold leading-snug">
               {viewerRole
                 ? "You're a member of this arena. An owner can promote you to organizer to manage it."
                 : "You're viewing this arena. Only its owner and organizers can manage it."}
             </p>
           </div>
           {isAuthenticated && !viewerRole && viewerPending && (
-            <span className="text-xs md:text-sm bg-emerald-50 text-emerald-800 border border-emerald-100 font-bold px-3 py-1.5 md:px-4 md:py-2 rounded-lg shrink-0">
+            <span className="text-xs bg-amber-50 text-amber-700 border border-amber-200 font-bold px-3 py-1.5 rounded-lg">
               Request pending approval
             </span>
           )}
@@ -544,16 +533,13 @@ export default function Arena({
             <button
               onClick={handleRequestJoin}
               disabled={isPending}
-              className="text-sm md:text-base bg-white hover:bg-emerald-50 disabled:opacity-50 text-emerald-700 font-extrabold px-4 py-2 md:px-5 md:py-2.5 rounded-lg transition shadow-sm shrink-0"
+              className="text-sm bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg transition"
             >
               Request to join
             </button>
           )}
           {!isAuthenticated && (
-            <Link
-              href="/login"
-              className="text-sm md:text-base bg-white hover:bg-emerald-50 text-emerald-700 font-extrabold px-4 py-2 md:px-5 md:py-2.5 rounded-lg shadow-sm shrink-0"
-            >
+            <Link href="/login" className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg transition">
               Sign in to join
             </Link>
           )}
@@ -574,7 +560,7 @@ export default function Arena({
       )}
 
       {/* Main Grid Workspace */}
-      <main className={`flex-1 p-4 md:p-6 lg:p-8 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start ${!canManage ? 'pb-48 md:pb-32 lg:pb-32' : 'pb-28 md:pb-6 lg:pb-8'}`}>
+      <main className="flex-1 p-4 pb-28 md:p-6 md:pb-6 lg:p-8 lg:pb-8 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
         {/* Left Column: Player Administration & Paddle Queue */}
         <div className="lg:col-span-5 space-y-6">
