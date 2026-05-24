@@ -20,25 +20,38 @@ export const initials = (p) => `${p?.firstName?.[0] ?? ''}${p?.lastName?.[0] ?? 
  * `starveThreshold`, else 'none'. `emergencyWait >= starveThreshold` in
  * practice, so emergency is checked first.
  *
+ * `canSkip` gates the "skip to back of rack" action: only on-deck paddles can
+ * skip (that's the urgent case), only when someone is actually waiting behind
+ * the on-deck group (`queueLength > ON_DECK_SIZE`), and only for a manager or
+ * the viewer's own paddle (self-service). The server re-authorizes regardless.
+ *
  * @param {{userId?:string|null, firstName?:string, lastName?:string|null, waitRounds?:number}} player
  * @param {number} index - 0-based position in the queue (0 = front of rack)
- * @param {{viewerUserId:string|null, starveThreshold:number, emergencyWait:number}} opts
- * @returns {{rank:number, isOnDeck:boolean, isYou:boolean, isWalkIn:boolean, badge:'none'|'warn'|'emergency', waitRounds:number, name:string, initials:string}}
+ * @param {{viewerUserId:string|null, starveThreshold:number, emergencyWait:number, canManage?:boolean, queueLength?:number}} opts
+ * @returns {{rank:number, isOnDeck:boolean, isYou:boolean, isWalkIn:boolean, badge:'none'|'warn'|'emergency', waitRounds:number, name:string, initials:string, canSkip:boolean}}
  */
-export function deriveRackRow(player, index, { viewerUserId, starveThreshold, emergencyWait }) {
+export function deriveRackRow(
+  player,
+  index,
+  { viewerUserId, starveThreshold, emergencyWait, canManage = false, queueLength = 0 },
+) {
   const waitRounds = player?.waitRounds ?? 0;
   let badge = 'none';
   if (waitRounds >= emergencyWait) badge = 'emergency';
   else if (waitRounds >= starveThreshold) badge = 'warn';
 
+  const isOnDeck = index < ON_DECK_SIZE;
+  const isYou = Boolean(player?.userId && player.userId === viewerUserId);
+
   return {
     rank: index + 1,
-    isOnDeck: index < ON_DECK_SIZE,
-    isYou: Boolean(player?.userId && player.userId === viewerUserId),
+    isOnDeck,
+    isYou,
     isWalkIn: !player?.userId,
     badge,
     waitRounds,
     name: fullName(player),
     initials: initials(player),
+    canSkip: isOnDeck && queueLength > ON_DECK_SIZE && (canManage || isYou),
   };
 }

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   removePlayer,
+  skipPlayer,
   shuffleQueue,
   fillCourt,
   endMatch,
@@ -352,6 +353,13 @@ export default function Arena({
     run(() => removePlayer(arenaId, id));
   };
 
+  // No canManage gate: skip is self-service (a member can rest their own
+  // paddle). The server re-authorizes (own paddle or manager), and the Skip
+  // button only renders for authorized rows (deriveRackRow `canSkip`).
+  const handleSkipPlayer = (id) => {
+    run(() => skipPlayer(arenaId, id));
+  };
+
   const handleTriggerScoreModal = (court) => {
     if (!canManage) return;
     setSelectedCourtForScore(court);
@@ -663,6 +671,7 @@ export default function Arena({
             onAddPlayers={() => setRosterModalOpen(true)}
             onShuffle={handleShuffleQueue}
             onRemovePlayer={handleRemovePlayer}
+            onSkipPlayer={handleSkipPlayer}
             isPending={isPending}
             starveThreshold={matchmakingProp.starveThreshold}
             emergencyWait={matchmakingProp.emergencyWait}

@@ -67,6 +67,13 @@ const IconUsers = ({ className }) => (
     <path d="M16 3.13a4 4 0 0 1 0 7.75" />
   </svg>
 );
+const IconArrowDownToLine = ({ className }) => (
+  <svg className={className} {...stroke}>
+    <path d="M12 17V3" />
+    <path d="m6 11 6 6 6-6" />
+    <path d="M19 21H5" />
+  </svg>
+);
 
 /** Subtle labeled divider between the on-deck and waiting groups. */
 function GroupLabel({ children, accent = false, className = '' }) {
@@ -95,6 +102,7 @@ function GroupLabel({ children, accent = false, className = '' }) {
  * @param {() => void} props.onAddPlayers - open the Prep Roster modal
  * @param {() => void} props.onShuffle - shuffle the waiting queue
  * @param {(id:string) => void} props.onRemovePlayer
+ * @param {(id:string) => void} props.onSkipPlayer - send an on-deck paddle to the back of the rack
  * @param {boolean} props.isPending - disable actions during a server write
  * @param {number} props.starveThreshold - wait rounds before the amber wait badge
  * @param {number} props.emergencyWait - wait rounds before the red wait badge
@@ -110,6 +118,7 @@ export function PaddleRackStack({
   onAddPlayers,
   onShuffle,
   onRemovePlayer,
+  onSkipPlayer,
   isPending,
   starveThreshold,
   emergencyWait,
@@ -205,10 +214,10 @@ export function PaddleRackStack({
             const player = players.find((p) => p.id === playerId);
             if (!player) return null;
 
-            const { rank, isOnDeck, isYou, isWalkIn, badge, waitRounds, name, initials } = deriveRackRow(
+            const { rank, isOnDeck, isYou, isWalkIn, badge, waitRounds, name, initials, canSkip } = deriveRackRow(
               player,
               index,
-              { viewerUserId, starveThreshold, emergencyWait },
+              { viewerUserId, starveThreshold, emergencyWait, canManage, queueLength: queue.length },
             );
             const starving = badge !== 'none';
             const emergency = badge === 'emergency';
@@ -282,18 +291,32 @@ export function PaddleRackStack({
                     </p>
                   </div>
 
-                  {/* Remove */}
-                  {canManage && (
-                    <button
-                      type="button"
-                      onClick={() => onRemovePlayer(player.id)}
-                      className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 opacity-100 transition hover:bg-red-50 hover:text-red-600 active:scale-95 lg:opacity-0 lg:group-hover:opacity-100"
-                      title="Remove player from the rack"
-                      aria-label={`Remove ${name} from the rack`}
-                    >
-                      <IconX className="h-4 w-4" />
-                    </button>
-                  )}
+                  {/* Actions */}
+                  <div className="flex shrink-0 items-center gap-1">
+                    {canSkip && (
+                      <button
+                        type="button"
+                        onClick={() => onSkipPlayer(player.id)}
+                        disabled={isPending}
+                        className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-700 active:scale-95 disabled:opacity-40"
+                        title={isYou ? 'Take a rest — send your paddle to the back of the rack' : 'Skip — send to the back of the rack'}
+                        aria-label={`Skip ${name} to the back of the rack`}
+                      >
+                        <IconArrowDownToLine className="h-4 w-4" />
+                      </button>
+                    )}
+                    {canManage && (
+                      <button
+                        type="button"
+                        onClick={() => onRemovePlayer(player.id)}
+                        className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 opacity-100 transition hover:bg-red-50 hover:text-red-600 active:scale-95 lg:opacity-0 lg:group-hover:opacity-100"
+                        title="Remove player from the rack"
+                        aria-label={`Remove ${name} from the rack`}
+                      >
+                        <IconX className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </Fragment>
             );
