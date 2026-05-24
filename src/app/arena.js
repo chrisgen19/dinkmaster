@@ -28,6 +28,7 @@ import { ArenaScheduleModal } from './arena-schedule-modal';
 import { ArenaCourtsPanel } from './arena-courts-panel';
 import { ArenaSessionPrepBanner } from './arena-session-prep-banner';
 import { ArenaPrepRosterModal } from './arena-prep-roster-modal';
+import { PaddleRackStack } from './paddle-rack-stack';
 
 /** Display name: "First Last", or just "First" when no last name is set. */
 const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
@@ -615,16 +616,33 @@ export default function Arena({
         </div>
       )}
 
-      {/* Dynamic Mixing Notification Toast Banner */}
+      {/* Success notification — emerald success variant of the session-prep banner. */}
       {notification && (
-        <div className="mx-4 md:mx-8 mt-4 p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl text-xs font-medium flex items-center justify-between shadow-sm animate-fade-in">
-          <div className="flex items-center space-x-2">
-            <span>✨</span>
-            <span>{notification}</span>
+        <div className="mt-4 w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8">
+          <div
+            role="status"
+            className="relative overflow-hidden flex items-center gap-3 rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50/95 to-teal-50/90 px-4 py-3 text-emerald-900 shadow-lg shadow-emerald-900/[0.07] ring-1 ring-emerald-900/5 backdrop-blur-md animate-fade-in"
+          >
+            <span aria-hidden="true" className="pointer-events-none absolute -right-10 -top-12 h-28 w-28 rounded-full bg-emerald-300/20 blur-2xl" />
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500/15 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
+            </span>
+            <p className="min-w-0 flex-1 text-sm font-semibold leading-snug">{notification}</p>
+            <button
+              type="button"
+              onClick={() => setNotification('')}
+              aria-label="Dismiss notification"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-emerald-700/60 transition hover:bg-emerald-500/10 hover:text-emerald-900"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </button>
           </div>
-          <button onClick={() => setNotification('')} className="text-emerald-700 hover:text-emerald-900 font-bold ml-4">
-            ✕
-          </button>
         </div>
       )}
 
@@ -635,162 +653,21 @@ export default function Arena({
         <div className="lg:col-span-5 space-y-6">
 
           {/* Visual Paddle Stack Section */}
-          <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-            <div className="p-5 border-b border-slate-100 bg-slate-50/50 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-400">
-                    Paddle Rack Stack
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-0.5">Top 4 paddles will stack into the next available court.</p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="bg-emerald-50 text-emerald-800 border border-emerald-100/50 text-[10px] font-black tracking-wider uppercase px-2.5 py-1 rounded-full">
-                    {queue.length} Stacked
-                  </span>
-                  {canManage && (
-                    <button
-                      type="button"
-                      onClick={() => setRosterModalOpen(true)}
-                      className="text-[11px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition"
-                      title="Open the Prep Roster modal to check in members and add walk-ins"
-                    >
-                      + Players
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {errorMsg && (
-                <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-start gap-2">
-                  <span className="font-bold">⚠️</span>
-                  <span>{errorMsg}</span>
-                </div>
-              )}
-
-              {/* Silo Buster Controls */}
-              <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-200/60 items-center justify-between">
-                <label className="flex items-center space-x-2 text-xs font-semibold text-slate-600 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={autoMix}
-                    onChange={(e) => setAutoMix(e.target.checked)}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4"
-                  />
-                  <span>Auto-Mix Rack After Each Finish</span>
-                </label>
-
-                <button
-                  onClick={handleShuffleQueue}
-                  disabled={queue.length < 2 || isPending || !canManage}
-                  className="bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-40 text-slate-700 border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1"
-                  title="Shuffle everyone currently waiting to break court locking"
-                >
-                  🔀 Mix Queue
-                </button>
-              </div>
-            </div>
-
-            <div className="p-4 space-y-2.5 max-h-[500px] overflow-y-auto custom-scrollbar bg-slate-50/20">
-              {queue.length === 0 ? (
-                <div className="py-16 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-xl bg-white">
-                  <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mx-auto mb-3">
-
-                  </div>
-                  <p className="text-sm font-semibold text-slate-600">The rack is empty</p>
-                  <p className="text-xs mt-1 text-slate-400">Register and add players to stack their paddles!</p>
-                </div>
-              ) : (
-                queue.map((playerId, index) => {
-                  const player = players.find(p => p.id === playerId);
-                  if (!player) return null;
-
-                  const isNextUp = index < 4;
-
-                  return (
-                    <div
-                      key={playerId}
-                      className={`flex items-center justify-between p-3.5 rounded-xl transition-all relative group ${
-                        isNextUp
-                          ? 'bg-emerald-50/40 border-2 border-emerald-500 shadow-sm'
-                          : 'bg-white hover:bg-slate-50 border border-slate-200/80'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-3.5">
-                        <div className={`w-6 h-6 rounded-lg flex items-center justify-center font-bold text-xs ${
-                          isNextUp ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500'
-                        }`}>
-                          {index + 1}
-                        </div>
-
-                        <div className={`w-9 h-9 rounded-full flex items-center justify-center border ${
-                          isNextUp
-                            ? 'border-emerald-200 bg-emerald-100/40 text-emerald-700'
-                            : 'border-slate-200 bg-slate-50 text-slate-400'
-                        }`}>
-                          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 2a4 4 0 00-4 4v4.5A5.5 5.5 0 0011.5 16v5a1 1 0 102 0v-5A5.5 5.5 0 0016 10.5V6a4 4 0 00-4-4zm-2 4a2 2 0 114 0v2h-4V6z"/>
-                          </svg>
-                        </div>
-
-                        <div>
-                          <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-                            {fullName(player)}
-                            {player.userId && player.userId === viewerUserId && (
-                              <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
-                                you
-                              </span>
-                            )}
-                            {!player.userId && (
-                              <span
-                                className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-600"
-                                title="Walk-in player — no linked account. Link them from the Members tab."
-                              >
-                                walk-in
-                              </span>
-                            )}
-                            {player.waitRounds >= matchmakingProp.starveThreshold && (
-                              <span
-                                className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
-                                  player.waitRounds >= matchmakingProp.emergencyWait
-                                    ? 'bg-red-100 text-red-700'
-                                    : 'bg-amber-100 text-amber-700'
-                                }`}
-                                title={`Waiting ${player.waitRounds} rounds`}
-                              >
-                                ⏳ {player.waitRounds}
-                              </span>
-                            )}
-                          </p>
-                          <p className="text-[10px] text-slate-400 font-medium">
-                            Played: {player.gamesPlayed} (W: {player.wins || 0} - L: {player.losses || 0})
-                          </p>
-                        </div>
-                      </div>
-
-                      {canManage && (
-                        <div className="flex items-center space-x-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => handleRemovePlayer(player.id)}
-                            className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:text-red-700 hover:bg-red-100 border border-red-100"
-                            title="Remove Player"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      )}
-
-                      {isNextUp && (
-                        <span className="absolute -top-2 right-4 text-[8px] tracking-widest uppercase font-black bg-emerald-600 text-white px-2 py-0.5 rounded-full shadow-sm">
-                          ON DECK
-                        </span>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </section>
+          <PaddleRackStack
+            queue={queue}
+            players={players}
+            canManage={canManage}
+            viewerUserId={viewerUserId}
+            autoMix={autoMix}
+            onToggleAutoMix={setAutoMix}
+            onAddPlayers={() => setRosterModalOpen(true)}
+            onShuffle={handleShuffleQueue}
+            onRemovePlayer={handleRemovePlayer}
+            isPending={isPending}
+            starveThreshold={matchmakingProp.starveThreshold}
+            emergencyWait={matchmakingProp.emergencyWait}
+            errorMsg={errorMsg}
+          />
 
         </div>
 
