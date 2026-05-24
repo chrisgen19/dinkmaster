@@ -589,7 +589,7 @@ export async function shuffleQueue(arenaId) {
 
   return {
     notification: shuffledAny
-      ? '🔀 Manual Queue Shuffle: All waiting players mixed successfully!'
+      ? 'Queue shuffled — all waiting players mixed.'
       : '',
     state: await getState(arenaId),
   };

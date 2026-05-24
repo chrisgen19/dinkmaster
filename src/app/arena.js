@@ -616,16 +616,33 @@ export default function Arena({
         </div>
       )}
 
-      {/* Dynamic Mixing Notification Toast Banner */}
+      {/* Success notification — emerald success variant of the session-prep banner. */}
       {notification && (
-        <div className="mx-4 md:mx-8 mt-4 p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl text-xs font-medium flex items-center justify-between shadow-sm animate-fade-in">
-          <div className="flex items-center space-x-2">
-            <span>✨</span>
-            <span>{notification}</span>
+        <div className="mt-4 w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8">
+          <div
+            role="status"
+            className="relative overflow-hidden flex items-center gap-3 rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50/95 to-teal-50/90 px-4 py-3 text-emerald-900 shadow-lg shadow-emerald-900/[0.07] ring-1 ring-emerald-900/5 backdrop-blur-md animate-fade-in"
+          >
+            <span aria-hidden="true" className="pointer-events-none absolute -right-10 -top-12 h-28 w-28 rounded-full bg-emerald-300/20 blur-2xl" />
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500/15 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
+            </span>
+            <p className="min-w-0 flex-1 text-sm font-semibold leading-snug">{notification}</p>
+            <button
+              type="button"
+              onClick={() => setNotification('')}
+              aria-label="Dismiss notification"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-emerald-700/60 transition hover:bg-emerald-500/10 hover:text-emerald-900"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </button>
           </div>
-          <button onClick={() => setNotification('')} className="text-emerald-700 hover:text-emerald-900 font-bold ml-4">
-            ✕
-          </button>
         </div>
       )}
 
