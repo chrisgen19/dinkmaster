@@ -86,3 +86,38 @@ describe('deriveRackRow — wait badge severity', () => {
     expect(deriveRackRow({ userId: 'u-1' }, 0, opts).badge).toBe('none');
   });
 });
+
+describe('deriveRackRow — canSkip gating', () => {
+  const skipOpts = { ...opts, canManage: false, queueLength: 8 };
+
+  it('managers can skip any on-deck paddle', () => {
+    const row = deriveRackRow(player({ userId: 'u-other' }), 1, { ...skipOpts, canManage: true });
+    expect(row.canSkip).toBe(true);
+  });
+
+  it('a member can skip their own on-deck paddle (self-service)', () => {
+    const row = deriveRackRow(player({ userId: 'u-me' }), 1, { ...skipOpts, canManage: false });
+    expect(row.isYou).toBe(true);
+    expect(row.canSkip).toBe(true);
+  });
+
+  it('a non-manager cannot skip someone else\'s paddle', () => {
+    const row = deriveRackRow(player({ userId: 'u-other' }), 1, { ...skipOpts, canManage: false });
+    expect(row.canSkip).toBe(false);
+  });
+
+  it('waiting (off-deck) paddles cannot skip, even for a manager', () => {
+    const row = deriveRackRow(player({ userId: 'u-me' }), ON_DECK_SIZE, { ...skipOpts, canManage: true });
+    expect(row.isOnDeck).toBe(false);
+    expect(row.canSkip).toBe(false);
+  });
+
+  it('no skip when nobody waits behind the on-deck group (queueLength <= ON_DECK_SIZE)', () => {
+    const row = deriveRackRow(player({ userId: 'u-me' }), 0, { ...skipOpts, canManage: true, queueLength: ON_DECK_SIZE });
+    expect(row.canSkip).toBe(false);
+  });
+
+  it('defaults (no canManage/queueLength) yield canSkip false', () => {
+    expect(deriveRackRow(player({ userId: 'u-me' }), 0, opts).canSkip).toBe(false);
+  });
+});

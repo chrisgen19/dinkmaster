@@ -2,9 +2,9 @@
 
 import { prisma } from '@/lib/prisma';
 import { getState } from '@/lib/data';
-import { requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
+import { getCurrentUser, requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
 import { ROLES } from '@/lib/roles';
-import { MAX_WAIT_THRESHOLD, bandOf } from '@/lib/matchmaking';
+import { MAX_WAIT_THRESHOLD, ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
 import {
   DEFAULT_TARGET_SCORE,
   MIN_TARGET_SCORE,
@@ -1054,6 +1054,71 @@ export async function checkOutPlayer(arenaId, playerId) {
   });
 
   return { state: await getState(arenaId) };
+}
+
+/**
+ * "Skip" a waiting paddle to the back of the rack — the player keeps their
+ * place in the rotation but yields this turn, so the next paddle takes their
+ * on-deck spot. Used for "I'll sit this one out" without leaving the rack.
+ *
+ * Authorization is hybrid: a signed-in member may skip THEIR OWN paddle
+ * (self-service), and a manager (owner/organizer) may skip anyone — including
+ * walk-ins, who have no account to self-serve. `waitRounds` resets to 0: a
+ * voluntary skip isn't starvation, so it must not earn a priority badge.
+ * `gamesPlayed` is untouched (they didn't play); the player slots in at the
+ * back as a peer on their existing count.
+ *
+ * No-op (clean) if the paddle is no longer on the rack — it left, was checked
+ * out, or got pulled onto a court between the tap and this write.
+ */
+export async function skipPlayer(arenaId, playerId) {
+  const user = await getCurrentUser();
+  if (!user) return { error: 'Please sign in.', state: await getState(arenaId) };
+
+  // Self-service check before the lock: ownership (player.userId === user.id)
+  // is stable, so reading it outside the tx is safe. Anyone else must be a
+  // manager. Walk-ins (userId null) can never be self-skipped.
+  const target = await prisma.player.findFirst({
+    where: { id: playerId, arenaId },
+    select: { userId: true },
+  });
+  const isSelf = Boolean(target?.userId && target.userId === user.id);
+  if (!isSelf) {
+    const guard = await requireArenaManager(arenaId);
+    if (guard.error) {
+      return { error: 'You can only rest your own paddle.', state: await getState(arenaId) };
+    }
+  }
+
+  let moved = false;
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+    // Enforce the same eligibility the UI gates on (deriveRackRow.canSkip),
+    // server-authoritatively: skip is only valid for an ON-DECK paddle (top
+    // ON_DECK_SIZE of the rack) AND only when someone is waiting behind to
+    // take the freed spot. Re-checked under the lock so a direct POST can't
+    // skip an off-deck paddle to reset waitRounds and dodge the fairness rules.
+    const queued = await tx.player.findMany({
+      where: { arenaId, leftAt: null, queueOrder: { not: null } },
+      orderBy: { queueOrder: 'asc' },
+      select: { id: true },
+    });
+    const index = queued.findIndex((p) => p.id === playerId);
+    if (index === -1 || index >= ON_DECK_SIZE || queued.length <= ON_DECK_SIZE) return;
+    const order = (await maxQueueOrder(tx, arenaId)) + 1;
+    await tx.player.update({
+      where: { id: playerId },
+      data: { queueOrder: order, waitRounds: 0 },
+    });
+    moved = true;
+  });
+
+  // Only confirm when something actually moved — a no-op (the paddle already
+  // left the rack mid-race) must not show a false-positive success toast.
+  return {
+    notification: moved ? 'Paddle sent to the back of the rack.' : '',
+    state: await getState(arenaId),
+  };
 }
 
 /**

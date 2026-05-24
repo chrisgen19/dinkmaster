@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   removePlayer,
+  skipPlayer,
   shuffleQueue,
   fillCourt,
   endMatch,
@@ -352,6 +353,13 @@ export default function Arena({
     run(() => removePlayer(arenaId, id));
   };
 
+  // No canManage gate: skip is self-service (a member can rest their own
+  // paddle). The server re-authorizes (own paddle or manager), and the Skip
+  // button only renders for authorized rows (deriveRackRow `canSkip`).
+  const handleSkipPlayer = (id) => {
+    run(() => skipPlayer(arenaId, id));
+  };
+
   const handleTriggerScoreModal = (court) => {
     if (!canManage) return;
     setSelectedCourtForScore(court);
@@ -616,12 +624,14 @@ export default function Arena({
         </div>
       )}
 
-      {/* Success notification — emerald success variant of the session-prep banner. */}
+      {/* Success notification — floating toast, bottom-right. Fixed (not in
+          flow) so it overlays instead of shoving the layout down. Sits below
+          modals (z-[100]). Auto-dismisses after 5s; also dismissible. */}
       {notification && (
-        <div className="mt-4 w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8">
+        <div className="fixed bottom-4 right-4 z-50 w-[calc(100%-2rem)] max-w-sm">
           <div
             role="status"
-            className="relative overflow-hidden flex items-center gap-3 rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50/95 to-teal-50/90 px-4 py-3 text-emerald-900 shadow-lg shadow-emerald-900/[0.07] ring-1 ring-emerald-900/5 backdrop-blur-md animate-fade-in"
+            className="relative overflow-hidden flex items-center gap-3 rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50/95 to-teal-50/90 px-4 py-3 text-emerald-900 shadow-xl shadow-emerald-900/10 ring-1 ring-emerald-900/5 backdrop-blur-md animate-fade-in"
           >
             <span aria-hidden="true" className="pointer-events-none absolute -right-10 -top-12 h-28 w-28 rounded-full bg-emerald-300/20 blur-2xl" />
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500/15 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
@@ -663,6 +673,7 @@ export default function Arena({
             onAddPlayers={() => setRosterModalOpen(true)}
             onShuffle={handleShuffleQueue}
             onRemovePlayer={handleRemovePlayer}
+            onSkipPlayer={handleSkipPlayer}
             isPending={isPending}
             starveThreshold={matchmakingProp.starveThreshold}
             emergencyWait={matchmakingProp.emergencyWait}
