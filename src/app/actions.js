@@ -503,6 +503,19 @@ async function applyLinkPlayerToMember(tx, arenaId, playerId, userId) {
               totalGames,
           )
         : temp.rating;
+    // Order matters: the `(arenaId, userId)` unique constraint forbids two
+    // Players with the same userId in the same arena, so we MUST delete
+    // `ownPlayer` before we set `userId` on the walk-in. `MatchPlayer` is
+    // a snapshot (no FK), so re-pointing it before the delete is safe;
+    // `Partnership` likewise has no FK to Player.
+    await tx.matchPlayer.updateMany({
+      where: { playerId: ownPlayer.id },
+      data: { playerId: temp.id },
+    });
+    await tx.partnership.deleteMany({
+      where: { arenaId, OR: [{ playerA: ownPlayer.id }, { playerB: ownPlayer.id }] },
+    });
+    await tx.player.deleteMany({ where: { id: ownPlayer.id, arenaId } });
     await tx.player.update({
       where: { id: temp.id },
       data: {
@@ -513,14 +526,6 @@ async function applyLinkPlayerToMember(tx, arenaId, playerId, userId) {
         rating: mergedRating,
       },
     });
-    await tx.matchPlayer.updateMany({
-      where: { playerId: ownPlayer.id },
-      data: { playerId: temp.id },
-    });
-    await tx.partnership.deleteMany({
-      where: { arenaId, OR: [{ playerA: ownPlayer.id }, { playerB: ownPlayer.id }] },
-    });
-    await tx.player.deleteMany({ where: { id: ownPlayer.id, arenaId } });
   } else {
     await tx.player.update({ where: { id: temp.id }, data: { userId } });
   }
