@@ -624,11 +624,11 @@ export default function Arena({
         </div>
       )}
 
-      {/* Success notification — floating toast, bottom-left. Fixed (not in
+      {/* Success notification — floating toast, bottom-right. Fixed (not in
           flow) so it overlays instead of shoving the layout down. Sits below
           modals (z-[100]). Auto-dismisses after 5s; also dismissible. */}
       {notification && (
-        <div className="fixed bottom-4 left-4 z-50 w-[calc(100%-2rem)] max-w-sm">
+        <div className="fixed bottom-4 right-4 z-50 w-[calc(100%-2rem)] max-w-sm">
           <div
             role="status"
             className="relative overflow-hidden flex items-center gap-3 rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50/95 to-teal-50/90 px-4 py-3 text-emerald-900 shadow-xl shadow-emerald-900/10 ring-1 ring-emerald-900/5 backdrop-blur-md animate-fade-in"
