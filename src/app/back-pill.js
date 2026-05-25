@@ -3,27 +3,28 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { NAV_BASELINE_KEY } from './nav-tracker';
 
 /**
  * Shared back-navigation pill — the small chevron + uppercase-label affordance
  * that lives at the top of arena pages, profile, auth pages, and so on. One
  * component so the design can't drift across surfaces.
  *
- * Navigation behavior: prefer `router.back()` when there is real in-app
- * history, otherwise navigate to `fallbackHref`. "Real in-app history" means
- * either:
+ * Navigation behavior: prefer `router.back()` when going back provably stays
+ * inside the app, otherwise navigate to `fallbackHref`. "Stays inside the app"
+ * means either:
  *
- *   - The page was reached from a same-origin referrer (a click within the
- *     app), OR
- *   - The user has done at least one client-side navigation in this tab since
- *     entering the app (so `history.length > 1`).
+ *   - The page was reached from a same-origin referrer (a full-page click
+ *     within the app), OR
+ *   - We've pushed history entries since entering the app this tab — i.e.
+ *     `history.length` has grown past the baseline `NavTracker` captured at
+ *     entry. This catches SPA navigations (whose `document.referrer` stays
+ *     stale at the original entry page).
  *
- * Why both conditions? A direct entry (deep link, bookmark, search result)
- * gives an empty/external referrer AND `history.length === 1`, so we fall
- * through to `fallbackHref`. A SPA-internal navigation keeps the original
- * referrer but increments history; that's still "in-app" and worth using
- * `back()` for. Same-origin referrer alone covers the standard "clicked a
- * link inside the app" case where history may not yet be > 1.
+ * Why not `history.length > 1`? That's true even when the previous entry is an
+ * external site (search result, shared link), so `router.back()` would leave
+ * the app. Comparing against the entry-time baseline only returns true when the
+ * back target is one of *our* pushed entries.
  *
  * @param {object} props
  * @param {string} props.fallbackHref - Where to go when there's no in-app history.
@@ -45,9 +46,13 @@ export function BackPill({ fallbackHref, label, className = '', forceFallback = 
       typeof document.referrer === 'string' &&
       document.referrer.length > 0 &&
       document.referrer.startsWith(origin);
-    const hasClientHistory = window.history.length > 1;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reading document.referrer / window.history (client-only) on mount; unknowable during SSR
-    setCanGoBack(sameOriginReferrer || hasClientHistory);
+    // history.length at app entry, recorded by NavTracker. If we've pushed
+    // entries since (current > baseline), back() lands on one of our pages.
+    const rawBaseline = sessionStorage.getItem(NAV_BASELINE_KEY);
+    const baseline = rawBaseline === null ? window.history.length : Number(rawBaseline);
+    const grewInApp = window.history.length > baseline;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reading document.referrer / window.history / sessionStorage (client-only) on mount; unknowable during SSR
+    setCanGoBack(sameOriginReferrer || grewInApp);
   }, [forceFallback]);
 
   const handleClick = (e) => {

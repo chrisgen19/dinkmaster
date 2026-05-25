@@ -256,6 +256,22 @@ export default function Arena({
     ro.observe(header);
     return () => ro.disconnect();
   }, []);
+
+  // Measure the desktop tab bar so the sticky PaddleRack can sit exactly below
+  // it instead of relying on a hardcoded height guess (which drifts whenever
+  // the tab bar's padding / type size changes). Stays 0 on mobile where the
+  // bar isn't rendered.
+  const tabBarRef = useRef(null);
+  const [tabBarHeight, setTabBarHeight] = useState(0);
+  useEffect(() => {
+    const bar = tabBarRef.current;
+    if (!bar) return undefined;
+    const measure = () => setTabBarHeight(bar.getBoundingClientRect().height);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
   const formatTimestamp = (iso) =>
     mounted ? new Date(iso).toLocaleString() : iso.replace('T', ' ').slice(0, 16);
 
@@ -521,7 +537,11 @@ export default function Arena({
         arenaId={arenaId}
         arenaName={arenaName}
         description={description}
-        scheduleLabel={describeSchedule(schedule)}
+        scheduleLabel={
+          schedule?.days?.length || schedule?.start || schedule?.end
+            ? describeSchedule(schedule)
+            : null
+        }
         playerCount={players.length}
         queueLength={queue.length}
         liveCourtCount={liveCourtCount}
@@ -628,6 +648,7 @@ export default function Arena({
           ResizeObserver above) so the bar tucks right beneath it on any
           header size. Hidden on mobile (the bottom sheet handles that). */}
       <div
+        ref={tabBarRef}
         style={{ top: headerHeight }}
         className="hidden md:block sticky z-30 bg-slate-50/85 backdrop-blur-md border-y border-slate-200/70"
       >
@@ -684,7 +705,7 @@ export default function Arena({
         {/* Left Column: PaddleRack — sticks on lg+ so it stays visible while
             users scroll through Match Log, Stats, etc. on the right. */}
         <div
-          style={{ top: headerHeight + 64 }}
+          style={{ top: headerHeight + tabBarHeight }}
           className="lg:col-span-5 lg:sticky lg:self-start space-y-6"
         >
           <PaddleRackStack
