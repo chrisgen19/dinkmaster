@@ -19,7 +19,6 @@ export default async function ProfilePage() {
 
   const { totals, arenas, recentMatches, insights } = await getUserPlayerStats(user.id);
   const hasGames = totals.gamesPlayed > 0;
-  const decided = totals.wins + totals.losses;
   // Normalise on the server so the client component never branches on shape.
   const matches = recentMatches.map((m) => toMatch({ ...m, id: m.matchId }));
 
@@ -56,28 +55,6 @@ export default async function ProfilePage() {
 
           <RatingDisplay rating={totals.rating} />
         </header>
-
-        {/* HERO STAT RAMP ── three oversized numbers with editorial separators. */}
-        <section className="animate-fade-in [animation-delay:120ms]">
-          <div className="grid grid-cols-3 gap-px bg-slate-200 rounded-2xl overflow-hidden border border-slate-200 shadow-sm">
-            <RampStat label="Games" value={totals.gamesPlayed} />
-            <RampStat
-              label="Record"
-              value={
-                <>
-                  <span className="text-emerald-600">{totals.wins}</span>
-                  <span className="text-slate-300 font-normal mx-1.5">–</span>
-                  <span className="text-slate-500">{totals.losses}</span>
-                </>
-              }
-            />
-            <RampStat
-              label="Win rate"
-              value={decided > 0 ? `${totals.winPct}%` : '—'}
-              accent={decided > 0 && totals.winPct >= 50 ? 'emerald' : 'slate'}
-            />
-          </div>
-        </section>
 
         {/* THIS WEEK ── small accent strip; hidden if nothing happened. */}
         {(totals.weeklyWins > 0 || totals.weeklyArenasLed > 0) && (
@@ -151,10 +128,9 @@ export default async function ProfilePage() {
               matches={matches}
               perspective="player"
               maxHeight="640px"
-              // The hero ramp above already shows Played/Wins/Losses/Win rate
-              // and the Insights card carries the streak — turning off the
-              // MatchHistory summary avoids two streak displays on one page.
-              summary={false}
+              // SummaryRow is the page's primary stats display now that the
+              // hero ramp is gone. Streak helpers across the codebase agree on
+              // tie semantics, so its streak slot matches the Insights card.
               emptyState={{
                 icon: '🎾',
                 title: 'No matches yet',
@@ -202,23 +178,6 @@ function RatingDisplay({ rating }) {
         {dupr ?? '—'}
       </p>
       <p className="text-xs text-slate-400 mt-1">{dupr ? 'DUPR-style' : 'Play a match to seed your rating'}</p>
-    </div>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────────────────── */
-/* Hero stat ramp */
-
-function RampStat({ label, value, accent = 'slate' }) {
-  const valueClass = accent === 'emerald' ? 'text-emerald-600' : 'text-slate-900';
-  return (
-    <div className="bg-white px-4 py-4 md:px-6 md:py-5">
-      <p className="text-[10px] md:text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
-        {label}
-      </p>
-      <p className={`font-display font-extrabold tracking-tight tabular-nums leading-none mt-1.5 text-2xl md:text-3xl lg:text-[34px] ${valueClass}`}>
-        {value}
-      </p>
     </div>
   );
 }
