@@ -95,8 +95,9 @@ export function winnerSide(m) {
 }
 
 /**
- * Did the viewer win? Only meaningful when `m.youOn` is set; returns `null` in
- * neutral mode so callers can branch without a falsy-trap.
+ * Did the viewer win? Returns `null` in neutral mode AND for the rare tie
+ * record — so ties are treated as undecided (skipped in win/loss tallies and
+ * filter buckets) rather than silently counted as losses.
  *
  * @param {Match} m
  * @returns {boolean | null}
@@ -104,7 +105,7 @@ export function winnerSide(m) {
 export function viewerWon(m) {
   if (!m.youOn) return null;
   const w = winnerSide(m);
-  if (w === 'tie') return false;
+  if (w === 'tie') return null;
   return w === m.youOn;
 }
 

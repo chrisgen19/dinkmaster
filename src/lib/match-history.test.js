@@ -91,6 +91,11 @@ describe('winnerSide() / viewerWon() / differential()', () => {
     expect(viewerWon(onB)).toBe(false);
   });
 
+  it('viewerWon returns null for a tie (treated as undecided, not a loss)', () => {
+    const tie = toMatch({ ...NEUTRAL, score1: 7, score2: 7 }, { viewerPlayerId: 'p-ace' });
+    expect(viewerWon(tie)).toBeNull();
+  });
+
   it('differential signs from viewer perspective when set, else from A', () => {
     expect(differential(toMatch(NEUTRAL))).toBe(5);
     expect(differential(toMatch(NEUTRAL, { viewerPlayerId: 'p-joe' }))).toBe(-5);

@@ -41,14 +41,18 @@ export function MatchHistory({
     if (!filters || activeFilter === 'all') return matches;
     return matches.filter((m) => {
       const w = viewerWon(m);
-      if (w === null) return true;
+      // Undecided (neutral or tie) matches are excluded from win/loss buckets
+      // so they only appear under "All".
+      if (w === null) return false;
       return activeFilter === 'wins' ? w : !w;
     });
   }, [matches, activeFilter, filters]);
 
+  // Compute stats once when either the summary header or the filter pills need
+  // them — FilterPills uses the counts inside its labels.
   const stats = useMemo(
-    () => (summary ? summarise(matches) : null),
-    [matches, summary],
+    () => (summary || filters ? summarise(matches) : null),
+    [matches, summary, filters],
   );
 
   const groups = useMemo(
@@ -80,11 +84,11 @@ export function MatchHistory({
         <SummaryRow stats={stats} />
       )}
 
-      {filters && matches.length > 0 && (
+      {filters && matches.length > 0 && stats && (
         <FilterPills
           active={activeFilter}
           onChange={setActiveFilter}
-          stats={stats ?? summarise(matches)}
+          stats={stats}
         />
       )}
 
@@ -409,16 +413,12 @@ function EmptyState({ icon, title, hint, filtered }) {
   );
 }
 
-/** Falls back to a short ISO-ish render. Callers normally inject a real
- *  hydration-safe formatter (see `arena.js`'s `formatTimestamp`). */
+/** Pure string-slice fallback so server and client agree on first paint.
+ *  Callers that want localized time should inject a mount-gated formatter
+ *  (see `arena.js`'s `formatTimestamp`) — `toLocaleString()` here would
+ *  diverge between SSR and the client and trigger hydration warnings. */
 function defaultTimeFormatter(iso) {
-  if (!iso) return '';
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-  } catch {
-    return iso.slice(0, 16).replace('T', ' ');
-  }
+  if (!iso || typeof iso !== 'string') return '';
+  // "2026-05-25T19:42:00.000Z" → "2026-05-25 19:42"
+  return iso.slice(0, 16).replace('T', ' ');
 }
