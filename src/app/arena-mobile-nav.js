@@ -110,7 +110,7 @@ function ArenaMobileTabStrip({ navTabs, activeTab, onSelectTab }) {
                 key={tab.id}
                 type="button"
                 onClick={() => onSelectTab(tab.id)}
-                aria-current={isActive ? 'page' : undefined}
+                aria-pressed={isActive}
                 className={`relative shrink-0 inline-flex items-center gap-2 rounded-full
                   px-3.5 py-2 text-[13px] font-bold tracking-tight transition
                   ${isActive
@@ -221,7 +221,7 @@ function ArenaMobileSheet({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
                       key={tab.id}
                       type="button"
                       onClick={() => handleSelect(tab.id)}
-                      aria-current={isActive ? 'page' : undefined}
+                      aria-pressed={isActive}
                       className={`w-full flex items-center gap-3 px-3 py-3.5 rounded-2xl
                         text-left transition
                         ${isActive
@@ -302,19 +302,40 @@ function useMatchMedia(query) {
 }
 
 /**
- * Walk up from `start` to (but not past) `boundary`, returning true if any
- * ancestor is an actually-scrollable horizontal container. Used to bail out
- * of the tab swipe when the touch lands inside something like the Partnership
- * Matrix table, so users can scroll the table without accidentally changing
- * tabs.
+ * Decide whether a swipe gesture starting at `start` should be ignored —
+ * i.e., let the browser handle the touch natively instead of treating it as
+ * a tab-change drag. Walks up from `start` to (but not past) `boundary` and
+ * returns true if:
+ *
+ * - The touch lands inside a form control or `contenteditable` (typing or
+ *   pointer-selecting text should never flip tabs).
+ * - The touch lands inside a dialog (in-tab modals own their own gestures).
+ * - The author opted out explicitly via `data-swipe-ignore`.
+ * - An ancestor is an actually-scrollable container (horizontal OR vertical).
+ *   The Partnership Matrix table scrolls horizontally; the Match Log and My
+ *   Stats lists scroll vertically — in both cases the user's intent is to
+ *   scroll that region, not change tabs.
  */
-function isInsideHorizontalScroller(start, boundary) {
+function shouldIgnoreSwipeStart(start, boundary) {
+  if (!(start instanceof Element)) return false;
+  if (
+    start.closest(
+      'input, textarea, select, [contenteditable="true"], dialog, [role="dialog"], [data-swipe-ignore]'
+    )
+  ) {
+    return true;
+  }
+
   let el = start;
   while (el && el !== boundary && el.nodeType === 1) {
-    const overflowX = window.getComputedStyle(el).overflowX;
-    if ((overflowX === 'auto' || overflowX === 'scroll') && el.scrollWidth > el.clientWidth) {
-      return true;
-    }
+    const style = window.getComputedStyle(el);
+    const canScrollX =
+      (style.overflowX === 'auto' || style.overflowX === 'scroll') &&
+      el.scrollWidth > el.clientWidth;
+    const canScrollY =
+      (style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+      el.scrollHeight > el.clientHeight;
+    if (canScrollX || canScrollY) return true;
     el = el.parentElement;
   }
   return false;
@@ -327,12 +348,11 @@ function isInsideHorizontalScroller(start, boundary) {
  * component and pass the same `navTabs` and `activeTab` you give the nav.
  *
  * Drag is started manually in `onPointerDown` (via `useDragControls`) so we
- * can opt out when the touch lands inside a horizontally-scrollable child.
- * `touch-action: pan-y` cascades to descendants and would otherwise break
- * native horizontal scrolling on tables / carousels nested inside this tree.
+ * can opt out per-touch — see `shouldIgnoreSwipeStart` for the full list of
+ * exclusions (form controls, dialogs, scrollers, `data-swipe-ignore`).
  *
- * Drag is also disabled on fine-pointer devices (mice) so a desktop drag
- * never changes tabs by accident.
+ * Drag is also disabled outside the mobile viewport / on fine-pointer devices,
+ * so a desktop mouse drag or a tablet at desktop width never flips tabs.
  */
 export function ArenaContentSwipe({ navTabs, activeTab, onSelectTab, children }) {
   const idx = navTabs.findIndex((t) => t.id === activeTab);
@@ -346,9 +366,7 @@ export function ArenaContentSwipe({ navTabs, activeTab, onSelectTab, children })
 
   const handlePointerDown = (e) => {
     if (!swipeEnabled) return;
-    // If the gesture starts inside a horizontal scroller, let the browser
-    // handle it — never start the tab-swipe drag.
-    if (isInsideHorizontalScroller(e.target, e.currentTarget)) return;
+    if (shouldIgnoreSwipeStart(e.target, e.currentTarget)) return;
     dragControls.start(e);
   };
 
