@@ -29,9 +29,10 @@ export function BrandMark({ className = 'h-11 w-11' }) {
 }
 
 /**
- * The two-tone DinkMaster wordmark in the display face.
+ * The two-tone DinkMaster wordmark in the display face. Exported so the
+ * landing page can reuse it without redefining the brand typography.
  */
-function Wordmark({ className = 'text-xl' }) {
+export function Wordmark({ className = 'text-xl' }) {
   return (
     <span className={`font-display font-extrabold tracking-tight leading-none ${className}`}>
       <span className="text-slate-900">Dink</span>

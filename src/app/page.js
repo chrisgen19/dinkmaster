@@ -1,18 +1,9 @@
 import Link from 'next/link';
 import { getCurrentUser } from '@/lib/session';
-import { BrandMark } from './site-header';
+import { BrandMark, Wordmark } from './site-header';
 import { AuthStatus } from './auth-status';
 
 export const dynamic = 'force-dynamic';
-
-function Wordmark() {
-  return (
-    <span className="font-display font-extrabold tracking-tight leading-none text-xl">
-      <span className="text-slate-900">Dink</span>
-      <span className="text-emerald-600">master</span>
-    </span>
-  );
-}
 
 function FeatureCard({ icon, title, children }) {
   return (
