@@ -135,7 +135,7 @@ export function ArenaMyStats({
                 ? `${insights.bestPartner.games} together · ${insights.bestPartner.winPct}% win rate`
                 : 'No partners yet'
             }
-            accent={insights.bestPartner && insights.bestPartner.winPct >= 50 ? 'emerald' : 'slate'}
+            accent={insights.bestPartner && insights.bestPartner.winPct > 50 ? 'emerald' : 'slate'}
           />
           <InsightCard
             eyebrow="Favorite court"
