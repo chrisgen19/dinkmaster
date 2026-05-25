@@ -1,9 +1,10 @@
 import Link from 'next/link';
+import Image from 'next/image';
 
 /**
- * The DinkMaster brand tile — a gradient paddle-court mark with a soft glow and
- * inner sheen. Presentational only; wrap it in a link where navigation is
- * wanted. Lives in `.group` so the parent can drive the hover lift.
+ * The DinkMaster brand tile — the pickleball logo in a rounded badge with a soft
+ * glow. Presentational only; wrap it in a link where navigation is wanted. Lives
+ * in `.group` so the parent can drive the hover lift.
  *
  * @param {object} props
  * @param {string} [props.className] - Sizing/extra classes for the tile.
@@ -12,31 +13,20 @@ export function BrandMark({ className = 'h-11 w-11' }) {
   return (
     <span
       aria-hidden="true"
-      className={`relative grid place-items-center shrink-0 rounded-2xl
-        bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-600
-        shadow-lg shadow-emerald-500/30 ring-1 ring-inset ring-white/30
+      className={`relative block shrink-0 overflow-hidden rounded-2xl
+        ring-1 ring-inset ring-slate-200/80 shadow-lg shadow-emerald-500/20
         transition-[transform,box-shadow] duration-300
-        group-hover:scale-105 group-hover:shadow-emerald-500/45
-        before:absolute before:inset-0 before:rounded-2xl
-        before:bg-gradient-to-b before:from-white/35 before:to-transparent before:opacity-80
+        group-hover:scale-105 group-hover:shadow-emerald-500/35
         ${className}`}
     >
-      {/* Paddle + ball mark, drawn to echo the brand logo. White on the tile
-          gradient; the ball's holes are cut out (evenodd) so the gradient shows
-          through. Scales crisply at any badge size. */}
-      <svg className="relative w-[62%] h-[62%] text-white drop-shadow-sm" viewBox="0 0 24 24" fill="currentColor">
-        <g transform="rotate(-24 10 9)">
-          {/* paddle head (elongated oval) + handle as one shape */}
-          <rect x="5.6" y="1.4" width="7.6" height="13" rx="3.8" />
-          <rect x="7.6" y="12.6" width="3.6" height="7.4" rx="1.6" />
-        </g>
-        {/* ball body, set apart at lower-right, with punched holes (evenodd) */}
-        <path
-          fillRule="evenodd"
-          clipRule="evenodd"
-          d="M18 12.9a3.75 3.75 0 1 1 0 7.5 3.75 3.75 0 0 1 0-7.5Zm-1.4 1.9a.68.68 0 1 0 0 1.36.68.68 0 0 0 0-1.36Zm2.8 0a.68.68 0 1 0 0 1.36.68.68 0 0 0 0-1.36ZM18 16.4a.68.68 0 1 0 0 1.36.68.68 0 0 0 0-1.36Zm-1.3 1.8a.62.62 0 1 0 0 1.24.62.62 0 0 0 0-1.24Zm2.6 0a.62.62 0 1 0 0 1.24.62.62 0 0 0 0-1.24Z"
-        />
-      </svg>
+      <Image
+        src="/icons/icon-192.png"
+        alt="DinkMaster logo"
+        fill
+        sizes="48px"
+        className="object-cover"
+        priority
+      />
     </span>
   );
 }
