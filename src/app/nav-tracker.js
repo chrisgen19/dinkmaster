@@ -20,7 +20,15 @@ export const NAV_BASELINE_KEY = 'app:navBaseline';
  */
 export function NavTracker() {
   useEffect(() => {
-    if (sessionStorage.getItem(NAV_BASELINE_KEY) === null) {
+    // A fresh navigation (typed URL, or a click from another site) is a true
+    // app re-entry: recapture the baseline so a stale value left in
+    // sessionStorage by an earlier in-app session in this tab can't make
+    // history.length look "grown" and send back() to an external page.
+    // Reloads and back/forward keep the existing baseline so in-app back
+    // history survives a refresh.
+    const navType = performance.getEntriesByType('navigation')[0]?.type;
+    const isFreshEntry = navType === 'navigate' || navType === undefined;
+    if (isFreshEntry || sessionStorage.getItem(NAV_BASELINE_KEY) === null) {
       sessionStorage.setItem(NAV_BASELINE_KEY, String(window.history.length));
     }
   }, []);

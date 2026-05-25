@@ -44,10 +44,16 @@ export function BackPill({ fallbackHref, label, className = '', forceFallback = 
   useEffect(() => {
     if (forceFallback || typeof window === 'undefined') return;
     const origin = window.location.origin;
-    const sameOriginReferrer =
-      typeof document.referrer === 'string' &&
-      document.referrer.length > 0 &&
-      document.referrer.startsWith(origin);
+    let sameOriginReferrer = false;
+    if (typeof document.referrer === 'string' && document.referrer.length > 0) {
+      try {
+        // Compare parsed origins, not a prefix: startsWith() would treat a
+        // lookalike host like https://example.com.evil.tld as same-origin.
+        sameOriginReferrer = new URL(document.referrer).origin === origin;
+      } catch {
+        sameOriginReferrer = false;
+      }
+    }
     // history.length at app entry, recorded by NavTracker. If we've pushed
     // entries since (current > baseline), back() lands on one of our pages.
     const rawBaseline = sessionStorage.getItem(NAV_BASELINE_KEY);
