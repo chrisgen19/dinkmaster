@@ -99,7 +99,7 @@ export function MatchHistory({
         </div>
       )}
 
-      {summary && summaryRowStats && summaryRowStats.total > 0 && (
+      {summary && summaryRowStats && (
         <SummaryRow stats={summaryRowStats} />
       )}
 
@@ -142,28 +142,33 @@ export function MatchHistory({
   );
 }
 
-/** Player-perspective W–L–% strip. Renders as an edge-bordered ribbon (no
- *  inner card fill) so it reads as a confident scoreboard band sitting on
- *  top of the parent card — instead of a card-in-a-card. Streak surfaces
- *  with its kind prefix ("W3" / "L2") so the value carries its own context
- *  and stays visible on mobile. */
+/** Player-perspective stats strip. Edge-bordered ribbon (no inner card fill)
+ *  so it reads as a scoreboard band on top of the parent card. Always four
+ *  cells — Played / Wins / Losses / Win rate — so the cumulative win-rate
+ *  stays visible at all times. Active streaks surface as a small inline chip
+ *  on the corresponding outcome cell ("W3" on Wins, "L2" on Losses). */
 function SummaryRow({ stats }) {
-  const streakTone =
-    stats.streak?.kind === 'W' ? 'emerald' : stats.streak?.kind === 'L' ? 'slate-dim' : 'slate';
-  const streakValue = stats.streak
-    ? `${stats.streak.kind}${stats.streak.count}`
-    : stats.winPct !== null
-      ? `${stats.winPct}%`
-      : '—';
+  const winStreak = stats.streak?.kind === 'W' ? stats.streak : null;
+  const lossStreak = stats.streak?.kind === 'L' ? stats.streak : null;
   return (
     <div className="mx-5 md:mx-6 mb-5 grid grid-cols-4 divide-x divide-slate-200/70 border-y border-slate-200/70">
       <Stat label="Played" value={stats.total} tone="slate" />
-      <Stat label="Wins" value={stats.wins} tone="emerald" />
-      <Stat label="Losses" value={stats.losses} tone="slate-dim" />
       <Stat
-        label={stats.streak ? 'Streak' : 'Win rate'}
-        value={streakValue}
-        tone={streakTone}
+        label="Wins"
+        value={stats.wins}
+        tone="emerald"
+        chip={winStreak ? { text: `W${winStreak.count}`, tone: 'emerald' } : null}
+      />
+      <Stat
+        label="Losses"
+        value={stats.losses}
+        tone="slate-dim"
+        chip={lossStreak ? { text: `L${lossStreak.count}`, tone: 'slate-dim' } : null}
+      />
+      <Stat
+        label="Win rate"
+        value={stats.winPct !== null ? `${stats.winPct}%` : '—'}
+        tone="slate"
       />
     </div>
   );
@@ -175,16 +180,29 @@ const STAT_TONE = {
   emerald: 'text-emerald-600',
 };
 
-function Stat({ label, value, tone = 'slate' }) {
+const CHIP_TONE = {
+  emerald: 'text-emerald-700 bg-emerald-50 ring-emerald-100',
+  'slate-dim': 'text-slate-600 bg-slate-100 ring-slate-200',
+  slate: 'text-slate-600 bg-slate-100 ring-slate-200',
+};
+
+function Stat({ label, value, tone = 'slate', chip = null }) {
   return (
     <div className="px-3 py-3.5 md:px-4 md:py-4 min-w-0">
       <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400 truncate">
         {label}
       </p>
       <p
-        className={`font-display font-extrabold tracking-tight tabular-nums leading-none mt-1.5 text-2xl md:text-[28px] ${STAT_TONE[tone]}`}
+        className={`font-display font-extrabold tracking-tight tabular-nums leading-none mt-1.5 text-2xl md:text-[28px] flex items-baseline gap-1.5 ${STAT_TONE[tone]}`}
       >
-        {value}
+        <span>{value}</span>
+        {chip && (
+          <span
+            className={`text-[9px] font-extrabold uppercase tracking-widest tabular-nums rounded ring-1 px-1.5 py-0.5 ${CHIP_TONE[chip.tone]}`}
+          >
+            {chip.text}
+          </span>
+        )}
       </p>
     </div>
   );

@@ -17,7 +17,6 @@ import {
 } from './actions';
 import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE } from '@/lib/match-defaults';
-import { eloToDupr } from '@/lib/rating';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
 import { formatShortName } from '@/lib/player-display';
@@ -25,6 +24,7 @@ import { AuthStatus } from './auth-status';
 import { SiteHeader } from './site-header';
 import { ArenaMembers } from './arena-members';
 import { ArenaHistory } from './arena-history';
+import { ArenaMyStats } from './arena-mystats';
 import { ArenaMobileNav, ArenaContentSwipe } from './arena-mobile-nav';
 import { ArenaHero } from './arena-hero';
 import { TabIcon, TabBadge } from './arena-tab-icons';
@@ -307,22 +307,9 @@ export default function Arena({
   const myPlayer = viewerUserId
     ? players.find((p) => p.userId === viewerUserId) ?? null
     : null;
-  const myQueueIndex = myPlayer ? queue.indexOf(myPlayer.id) : -1;
   // Courts with a match in progress — surfaced in the header stats and the
   // tab badge, so compute it once.
   const liveCourtCount = courts.filter((c) => c.status === 'playing').length;
-  // The viewer's finished matches, with their team's score and the outcome.
-  const myMatches = myPlayer
-    ? matchHistory.flatMap((m) => {
-        const inTeam1 = m.team1.some((p) => p.id === myPlayer.id);
-        const inTeam2 = m.team2.some((p) => p.id === myPlayer.id);
-        if (!inTeam1 && !inTeam2) return [];
-        const scoreFor = inTeam1 ? m.score1 : m.score2;
-        const scoreAgainst = inTeam1 ? m.score2 : m.score1;
-        const partners = (inTeam1 ? m.team1 : m.team2).filter((p) => p.id !== myPlayer.id);
-        return [{ ...m, scoreFor, scoreAgainst, won: scoreFor > scoreAgainst, partners }];
-      })
-    : [];
 
   // Player of the Week — recomputed from match history (refreshed after every
   // finish), the schedule, and the arena's match defaults, so the board updates
@@ -941,118 +928,13 @@ export default function Arena({
           )}
 
           {activeTab === 'mystats' && myPlayer && (
-            <div
-              role="tabpanel"
-              id="arena-panel-mystats"
-              aria-labelledby="arena-tab-mystats"
-              className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in"
-            >
-              <div>
-                <h3 className="font-display text-base md:text-lg font-extrabold tracking-tight text-slate-900">
-                  My Stats — {fullName(myPlayer)}
-                </h3>
-                <p className="text-xs text-slate-500 mt-1.5">
-                  Your record in this arena. Stats update as you finish matches.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {[
-                  { label: 'Games', value: myPlayer.gamesPlayed },
-                  { label: 'Wins', value: myPlayer.wins },
-                  { label: 'Losses', value: myPlayer.losses },
-                  {
-                    label: 'Win %',
-                    value:
-                      myPlayer.wins + myPlayer.losses > 0
-                        ? `${Math.round((myPlayer.wins / (myPlayer.wins + myPlayer.losses)) * 100)}%`
-                        : '—',
-                  },
-                ].map((s) => (
-                  <div key={s.label} className="bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-3 text-center">
-                    <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                      {s.label}
-                    </span>
-                    <span className="block text-xl font-extrabold text-slate-800 mt-0.5">{s.value}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-3">
-                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    Queue status
-                  </span>
-                  <span className="block text-sm font-bold text-slate-800 mt-0.5">
-                    {myQueueIndex >= 0
-                      ? `In the rack — position #${myQueueIndex + 1}`
-                      : courts.some(
-                            (c) => c.team1.includes(myPlayer.id) || c.team2.includes(myPlayer.id),
-                          )
-                        ? 'On a court'
-                        : 'Not in the rack'}
-                  </span>
-                </div>
-                <div className="bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-3">
-                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    Rating
-                  </span>
-                  <span className="block text-sm font-bold text-slate-800 mt-0.5">
-                    {myPlayer.gamesPlayed > 0 ? (
-                      <>
-                        {eloToDupr(myPlayer.rating).toFixed(3)}
-                        <span className="text-slate-400 font-normal"> DUPR</span>
-                      </>
-                    ) : (
-                      '—'
-                    )}
-                  </span>
-                </div>
-              </div>
-
-              <div>
-                <h4 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 mb-3">
-                  My matches ({myMatches.length})
-                </h4>
-                {myMatches.length === 0 ? (
-                  <div className="py-10 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/20 text-xs">
-                    No finished matches yet.
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar pr-1">
-                    {myMatches.map((m) => (
-                      <div
-                        key={m.id}
-                        className="flex items-center justify-between gap-3 border border-slate-100 rounded-xl bg-slate-50/50 p-3"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold text-slate-700 flex items-center gap-2">
-                            <span
-                              className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
-                                m.won ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
-                              }`}
-                            >
-                              {m.won ? 'Win' : 'Loss'}
-                            </span>
-                            <span className="truncate">
-                              with {m.partners.map((p) => p.firstName).join(' & ') || '—'}
-                            </span>
-                          </p>
-                          <p className="text-[10px] text-slate-400 mt-0.5">
-                            {m.courtName} · {formatTimestamp(m.timestamp)}
-                          </p>
-                        </div>
-                        <span className="text-sm font-extrabold text-slate-800 shrink-0">
-                          {m.scoreFor}
-                          <span className="text-slate-300 font-normal"> : </span>
-                          {m.scoreAgainst}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+            <ArenaMyStats
+              myPlayer={myPlayer}
+              matchHistory={matchHistory}
+              queue={queue}
+              courts={courts}
+              formatTimestamp={formatTimestamp}
+            />
           )}
 
           </ArenaContentSwipe>
