@@ -32,10 +32,10 @@ export default function OfflinePage() {
         </p>
       </div>
       <Link
-        href="/"
+        href="/arenas"
         className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
       >
-        Back to home
+        Back to arenas
       </Link>
     </main>
   );

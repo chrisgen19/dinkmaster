@@ -1,11 +1,19 @@
 import { spawnSync } from "node:child_process";
 import { createSerwistRoute } from "@serwist/turbopack";
 
-// Revision string that busts the precached offline page on each deploy. Use the
-// git SHA when available (local + most CI), otherwise fall back to a per-build
-// random id — both change whenever a new build ships, which is all we need.
+// Revision string that busts the precached offline page on each deploy. This
+// route is statically generated, so the value is baked in once at build time.
+// Prefer the git SHA, then a deploy env var (so all build replicas agree),
+// falling back to a random id only if nothing identifies the build.
+const gitSha = spawnSync("git", ["rev-parse", "HEAD"], {
+  encoding: "utf-8",
+})?.stdout?.trim();
+
 const revision =
-  spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf-8" })?.stdout?.trim() ||
+  gitSha ||
+  process.env.SOURCE_COMMIT || // Coolify / Nixpacks
+  process.env.VERCEL_GIT_COMMIT_SHA ||
+  process.env.GIT_COMMIT_SHA ||
   crypto.randomUUID();
 
 // Generates the service worker on demand and serves it at /serwist/sw.js.

@@ -12,10 +12,11 @@ export default function manifest() {
     short_name: "DinkMaster",
     description:
       "Run your pickleball open play: stack the rack, mix partnerships fairly, and track matches in real time.",
-    start_url: "/",
+    // Launch installed users straight into the app home (/arenas), matching the
+    // in-app "back to arenas" convention — not the public marketing page.
+    start_url: "/arenas",
     scope: "/",
     display: "standalone",
-    orientation: "portrait",
     background_color: "#ffffff",
     theme_color: "#059669",
     icons: [

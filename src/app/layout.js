@@ -57,8 +57,12 @@ export default function RootLayout({ children }) {
         <SerwistProvider swUrl="/serwist/sw.js" disable={swDisabled}>
           <NavTracker />
           {children}
-          <PwaInstallPrompt />
-          <SwUpdatePrompt />
+          {/* Shared stack so the install and update prompts never overlap when
+              both are visible — they sit in a column, bottom-anchored. */}
+          <div className="fixed inset-x-4 bottom-4 z-50 mx-auto flex max-w-sm flex-col gap-2">
+            <PwaInstallPrompt />
+            <SwUpdatePrompt />
+          </div>
         </SerwistProvider>
       </body>
     </html>

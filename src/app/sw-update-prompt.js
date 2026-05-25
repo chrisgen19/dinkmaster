@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSerwist } from '@serwist/turbopack/react';
 
 /**
@@ -11,16 +11,25 @@ import { useSerwist } from '@serwist/turbopack/react';
  * let the user choose when to reload: clicking tells the waiting worker to
  * activate (messageSkipWaiting), and once it starts controlling the page we
  * reload so the new assets are served.
+ *
+ * The reload is gated on a user-initiated update (reloadingRef). The worker uses
+ * `clientsClaim: true`, so the `controlling` event also fires on a visitor's
+ * first load when the brand-new worker claims the page — reloading there would
+ * be a spurious refresh, so we only reload when the user actually accepted an
+ * update.
  */
 export function SwUpdatePrompt() {
   const { serwist } = useSerwist();
   const [updateReady, setUpdateReady] = useState(false);
+  const reloadingRef = useRef(false);
 
   useEffect(() => {
     if (!serwist) return;
 
     const onWaiting = () => setUpdateReady(true);
-    const onControlling = () => window.location.reload();
+    const onControlling = () => {
+      if (reloadingRef.current) window.location.reload();
+    };
 
     serwist.addEventListener('waiting', onWaiting);
     serwist.addEventListener('controlling', onControlling);
@@ -34,12 +43,14 @@ export function SwUpdatePrompt() {
   if (!updateReady) return null;
 
   function handleReload() {
-    // Activate the waiting worker; the `controlling` listener reloads the page.
+    // Mark this as a user-initiated update, then activate the waiting worker;
+    // the `controlling` listener reloads the page once it takes over.
+    reloadingRef.current = true;
     serwist?.messageSkipWaiting();
   }
 
   return (
-    <div className="fixed inset-x-4 bottom-4 z-50 mx-auto flex max-w-sm items-center gap-3 rounded-2xl border border-slate-200 bg-slate-900 p-3.5 pl-4 text-white shadow-lg animate-fade-in">
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-900 p-3.5 pl-4 text-white shadow-lg animate-fade-in">
       <p className="min-w-0 flex-1 text-sm font-medium">
         A new version is available.
       </p>
