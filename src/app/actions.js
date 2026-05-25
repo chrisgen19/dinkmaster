@@ -161,18 +161,59 @@ async function removeArenaMember(tx, arenaId, userId) {
 
 // --- Arena management -----------------------------------------------------
 
-/** Create a new arena owned by the current user, seeded with two courts. */
-export async function createArena(nameInput) {
+/**
+ * Create a new arena owned by the current user, seeded with two courts.
+ * Accepts either a string (legacy: just a name) or an object with optional
+ * description + recurring schedule fields. Schedule + description validation
+ * mirrors `updateArenaGeneral` / `updateArenaSchedule` so the create page can
+ * collect them in one shot.
+ */
+export async function createArena(input) {
   const guard = await requireUser();
   if (guard.error) return { error: guard.error };
 
-  const name = (nameInput ?? '').trim();
+  const payload = typeof input === 'string' ? { name: input } : (input ?? {});
+  const name = (payload.name ?? '').trim();
   if (name.length === 0) return { error: 'Please enter an arena name.' };
   if (name.length > 80) return { error: 'Arena name is too long (max 80 characters).' };
+
+  const description = (payload.description ?? '').trim() || null;
+  if (description && description.length > 280) {
+    return { error: 'Description is too long (max 280 characters).' };
+  }
+
+  // Schedule fields — all optional. Validation matches updateArenaSchedule.
+  const dayList = Array.isArray(payload.scheduleDays) ? payload.scheduleDays : [];
+  const parsedDays = dayList.map((d) => {
+    if (typeof d === 'number') return d;
+    if (typeof d !== 'string') return NaN;
+    const token = d.trim();
+    return /^\d+$/.test(token) ? Number(token) : NaN;
+  });
+  if (parsedDays.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) {
+    return { error: 'Schedule days must be between Sunday (0) and Saturday (6).' };
+  }
+  const scheduleDays = [...new Set(parsedDays)].sort((a, b) => a - b);
+
+  const scheduleStart = (payload.scheduleStart ?? '').trim() || null;
+  const scheduleEnd = (payload.scheduleEnd ?? '').trim() || null;
+  if (scheduleStart && !TIME_RE.test(scheduleStart)) return { error: 'Start time must be in HH:MM format.' };
+  if (scheduleEnd && !TIME_RE.test(scheduleEnd)) return { error: 'End time must be in HH:MM format.' };
+  if (scheduleStart && scheduleEnd && scheduleEnd <= scheduleStart) {
+    return { error: 'End time must be after start time.' };
+  }
+
+  const timezone = (payload.timezone ?? '').trim() || 'Asia/Manila';
+  if (!isValidTimeZone(timezone)) return { error: 'Unrecognized timezone.' };
 
   const arena = await prisma.arena.create({
     data: {
       name,
+      description,
+      scheduleDays,
+      scheduleStart,
+      scheduleEnd,
+      timezone,
       ownerId: guard.user.id,
       courts: {
         create: [

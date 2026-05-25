@@ -1,12 +1,26 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { signIn } from '@/lib/auth-client';
+import { safeNext } from '@/lib/safe-next';
 
 export default function LoginPage() {
+  // `useSearchParams` (inside `LoginForm`) requires a Suspense boundary so the
+  // rest of the route can still prerender. The fallback is intentionally blank
+  // — the form renders almost instantly once hydrated.
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = safeNext(searchParams.get('next'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -22,8 +36,10 @@ export default function LoginPage() {
       setError(signInError.message || 'Invalid email or password.');
       return;
     }
-    router.push('/');
+    router.push(next);
   };
+
+  const registerHref = next !== '/arenas' ? `/register?next=${encodeURIComponent(next)}` : '/register';
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 font-sans">
@@ -77,12 +93,12 @@ export default function LoginPage() {
 
         <p className="text-xs text-slate-400 text-center mt-4">
           No account?{' '}
-          <Link href="/register" className="text-emerald-600 font-semibold hover:text-emerald-700">
+          <Link href={registerHref} className="text-emerald-600 font-semibold hover:text-emerald-700">
             Create one
           </Link>
         </p>
         <p className="text-xs text-slate-400 text-center mt-2">
-          <Link href="/" className="hover:text-slate-600">← Back to arena</Link>
+          <Link href="/arenas" className="hover:text-slate-600">← Back to arenas</Link>
         </p>
       </div>
     </div>

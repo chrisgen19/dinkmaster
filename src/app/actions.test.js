@@ -478,6 +478,73 @@ describe('arena server actions — authorization', () => {
       });
     });
 
+    describe('createArena()', () => {
+      beforeEach(() => {
+        requireUser.mockResolvedValue({
+          user: { id: 'u1', firstName: 'Alice', lastName: 'Anders' },
+        });
+        prisma.arena.create.mockResolvedValue({ id: 'a-new', name: 'My Arena' });
+      });
+
+      it('accepts a plain name string (legacy signature) and creates the arena', async () => {
+        const result = await actions.createArena('My Arena');
+        expect(result.error).toBeUndefined();
+        expect(result.arena).toEqual({ id: 'a-new', name: 'My Arena' });
+        const call = prisma.arena.create.mock.calls[0][0];
+        expect(call.data.name).toBe('My Arena');
+        expect(call.data.description).toBeNull();
+        expect(call.data.scheduleDays).toEqual([]);
+        expect(call.data.scheduleStart).toBeNull();
+        expect(call.data.scheduleEnd).toBeNull();
+        expect(call.data.timezone).toBe('Asia/Manila');
+      });
+
+      it('persists description + normalized schedule from an object payload', async () => {
+        const result = await actions.createArena({
+          name: '  Court Kings  ',
+          description: '  Saturday night open play  ',
+          scheduleDays: [5, 1, 3, 1],
+          scheduleStart: '18:00',
+          scheduleEnd: '22:00',
+          timezone: 'Asia/Singapore',
+        });
+        expect(result.error).toBeUndefined();
+        const call = prisma.arena.create.mock.calls[0][0];
+        expect(call.data.name).toBe('Court Kings');
+        expect(call.data.description).toBe('Saturday night open play');
+        expect(call.data.scheduleDays).toEqual([1, 3, 5]);
+        expect(call.data.scheduleStart).toBe('18:00');
+        expect(call.data.scheduleEnd).toBe('22:00');
+        expect(call.data.timezone).toBe('Asia/Singapore');
+      });
+
+      it('null-coerces a blank description and empty schedule times', async () => {
+        await actions.createArena({ name: 'My Arena', description: '   ', scheduleStart: '', scheduleEnd: '' });
+        const call = prisma.arena.create.mock.calls[0][0];
+        expect(call.data.description).toBeNull();
+        expect(call.data.scheduleStart).toBeNull();
+        expect(call.data.scheduleEnd).toBeNull();
+        expect(call.data.timezone).toBe('Asia/Manila');
+      });
+
+      it.each([
+        ['a blank name', { name: '   ' }],
+        ['an over-long name', { name: 'x'.repeat(81) }],
+        ['an over-long description', { name: 'OK', description: 'x'.repeat(281) }],
+        ['an out-of-range day', { name: 'OK', scheduleDays: [7] }],
+        ['a partial-numeric day string', { name: 'OK', scheduleDays: ['1x'] }],
+        ['a blank day string', { name: 'OK', scheduleDays: [''] }],
+        ['a hex-shaped day string', { name: 'OK', scheduleDays: ['0x1'] }],
+        ['a malformed start time', { name: 'OK', scheduleStart: '6pm' }],
+        ['an end before the start', { name: 'OK', scheduleStart: '22:00', scheduleEnd: '18:00' }],
+        ['an unrecognized timezone', { name: 'OK', timezone: 'Mars/Olympus' }],
+      ])('rejects %s and writes nothing', async (_label, input) => {
+        const result = await actions.createArena(input);
+        expect(result.error).toBeTruthy();
+        expect(prisma.arena.create).not.toHaveBeenCalled();
+      });
+    });
+
     describe('deleteArena()', () => {
       it('deletes scoped to the caller, and reports a race when no row matches', async () => {
         prisma.arena.deleteMany.mockResolvedValueOnce({ count: 1 });

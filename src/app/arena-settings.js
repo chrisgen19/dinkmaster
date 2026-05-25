@@ -866,7 +866,7 @@ function DangerZone({ arenaId, arenaName, isOwner, viewerUserId, members }) {
               <div className="flex flex-wrap gap-2">
                 <input value={deleteText} onChange={(e) => setDeleteText(e.target.value)} placeholder="Arena name" className={`${inputClass} max-w-xs`} />
                 <button
-                  onClick={() => run(() => deleteArena(arenaId), () => router.push('/'))}
+                  onClick={() => run(() => deleteArena(arenaId), () => router.push('/arenas'))}
                   disabled={isPending || deleteText !== arenaName}
                   className="px-3 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >

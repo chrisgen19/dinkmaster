@@ -121,7 +121,9 @@ Viewing any arena is public. Managing one depends on the caller's `ArenaMembersh
 
 ## Routing
 
-- `/` — public **arena directory**: lists every arena; signed-in users get a "create arena" form.
+- `/` — public **marketing landing**: hero, features, and CTAs into the app.
+- `/arenas` — public **arena directory**: lists every arena; signed-in users get a "New arena" CTA.
+- `/arenas/new` — signed-in **create-arena** form (name, description, optional recurring schedule).
 - `/arena/[id]` — a single arena (rack, courts, match log, members, my stats). Public to view; owners and organizers see management controls plus a pending-requests queue, members see it read-only, and non-members get a "request to join" prompt (showing "pending approval" once requested).
 - `/arena/[id]/settings` — **manager-only** arena settings (General, Schedule, and a Danger Zone: reset for managers; transfer ownership and delete for the owner only). Non-managers are redirected to the arena view.
 - `/profile` — your account: aggregate stats and match history across every arena you play in.
@@ -188,12 +190,14 @@ Only players with **at least one win** appear, and the list is capped at five. W
 ```text
 src/
   app/
-    page.js            Server Component — the public arena directory
+    page.js            Server Component — the public marketing landing page
+    arenas/page.js     Server Component — the public arena directory
+    arenas/new/page.js Server Component — auth-gated create-arena form
     arena/[id]/page.js Server Component — reads one arena's state, renders it
     arena.js           Client UI (rack, courts, modals, my-stats, badges)
     arena-members.js   Client UI — members tab (roles, join/leave, pending requests, owner controls)
     actions.js         Server Actions — every mutation (role-gated) + rotation algorithm
-    create-arena-form.js  Client form for creating an arena
+    create-arena-form.js  Client form for /arenas/new (name, description, schedule)
     auth-status.js     Header sign-in / sign-out control + profile link
     profile/           Per-user stats & match history across all arenas
     login/             Sign-in page

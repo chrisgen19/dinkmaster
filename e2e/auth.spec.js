@@ -1,30 +1,39 @@
 import { test, expect } from '@playwright/test';
-
-/** A fresh email per call so e2e runs never collide on the unique constraint. */
-const uniqueEmail = () => `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.local`;
-const PASSWORD = 'e2epassword123';
+import { uniqueEmail, PASSWORD, fillRegisterForm } from './helpers';
 
 test.describe('registration', () => {
   test('creates an account and lands signed in on the directory', async ({ page }) => {
     await page.goto('/register');
-    await page.getByPlaceholder('Full name').fill('E2E Organizer');
-    await page.getByPlaceholder('Email').fill(uniqueEmail());
-    await page.getByPlaceholder('Password (min. 8 characters)').fill(PASSWORD);
+    await fillRegisterForm(page);
     await page.getByRole('button', { name: 'Create account' }).click();
 
-    await expect(page).toHaveURL('/');
+    await expect(page).toHaveURL('/arenas');
     await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
   });
 
   test('rejects a password shorter than 8 characters', async ({ page }) => {
     await page.goto('/register');
-    await page.getByPlaceholder('Full name').fill('E2E Organizer');
-    await page.getByPlaceholder('Email').fill(uniqueEmail());
-    await page.getByPlaceholder('Password (min. 8 characters)').fill('short');
+    // Fill all the required fields so the client-side completeness guard passes
+    // and the test actually exercises the password-length branch.
+    await fillRegisterForm(page, { password: 'short' });
     await page.getByRole('button', { name: 'Create account' }).click();
 
     await expect(page.getByTestId('auth-error')).toContainText(/8 characters/i);
     await expect(page).toHaveURL('/register');
+  });
+
+  test('preserves ?next= return path through registration (deep link to /arenas/new)', async ({ page }) => {
+    // Land on /login with the deep-link query, follow the "Create one" cross-link
+    // (which must carry `next` through), then complete registration.
+    await page.goto('/login?next=%2Farenas%2Fnew');
+    await page.getByRole('link', { name: /Create one/ }).click();
+    await expect(page).toHaveURL(/\/register\?next=%2Farenas%2Fnew$/);
+
+    await fillRegisterForm(page);
+    await page.getByRole('button', { name: 'Create account' }).click();
+
+    await expect(page).toHaveURL('/arenas/new');
+    await expect(page.getByRole('heading', { name: /Create a new arena/i })).toBeVisible();
   });
 });
 
@@ -42,7 +51,7 @@ test.describe('login', () => {
     await page.getByPlaceholder('Password').fill(PASSWORD);
     await page.getByRole('button', { name: 'Sign in' }).click();
 
-    await expect(page).toHaveURL('/');
+    await expect(page).toHaveURL('/arenas');
     await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
   });
 
@@ -54,5 +63,25 @@ test.describe('login', () => {
 
     await expect(page.getByTestId('auth-error')).toBeVisible();
     await expect(page).toHaveURL('/login');
+  });
+
+  test('preserves ?next= return path through login (deep link to /arenas/new)', async ({ page, request }) => {
+    // Seed an account via the API so this test exercises just the redirect flow.
+    const email = uniqueEmail();
+    await request.post('/api/auth/sign-up/email', {
+      data: { name: 'E2E Deep Link', email, password: PASSWORD },
+    });
+
+    // Hitting the auth-gated page as a guest should send us to /login with `next`.
+    await page.goto('/arenas/new');
+    await expect(page).toHaveURL(/\/login\?next=%2Farenas%2Fnew$/);
+
+    await page.getByPlaceholder('Email').fill(email);
+    await page.getByPlaceholder('Password').fill(PASSWORD);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+
+    // Lands on the original destination, not the default /arenas.
+    await expect(page).toHaveURL('/arenas/new');
+    await expect(page.getByRole('heading', { name: /Create a new arena/i })).toBeVisible();
   });
 });

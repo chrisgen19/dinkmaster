@@ -29,9 +29,10 @@ export function BrandMark({ className = 'h-11 w-11' }) {
 }
 
 /**
- * The two-tone DinkMaster wordmark in the display face.
+ * The two-tone DinkMaster wordmark in the display face. Exported so the
+ * landing page can reuse it without redefining the brand typography.
  */
-function Wordmark({ className = 'text-xl' }) {
+export function Wordmark({ className = 'text-xl' }) {
   return (
     <span className={`font-display font-extrabold tracking-tight leading-none ${className}`}>
       <span className="text-slate-900">Dink</span>
@@ -71,12 +72,12 @@ export function SiteHeader({ variant = 'home', arenaName, arenaSubtitle, childre
         <div className="animate-header-rise min-w-0">
           {variant === 'arena' ? (
             <div className="flex items-center gap-3 min-w-0">
-              <Link href="/" className="group shrink-0" aria-label="Back to all arenas">
+              <Link href="/arenas" className="group shrink-0" aria-label="Back to all arenas">
                 <BrandMark className="h-10 w-10 md:h-11 md:w-11" />
               </Link>
               <div className="min-w-0">
                 <Link
-                  href="/"
+                  href="/arenas"
                   className="inline-flex items-center gap-1 rounded-full bg-slate-100 hover:bg-slate-200
                     text-slate-500 hover:text-slate-700 text-[11px] font-bold uppercase tracking-wide
                     pl-1.5 pr-2.5 py-0.5 transition-colors"
@@ -97,7 +98,7 @@ export function SiteHeader({ variant = 'home', arenaName, arenaSubtitle, childre
               </div>
             </div>
           ) : (
-            <Link href="/" className="group flex items-center gap-3 min-w-0">
+            <Link href="/arenas" className="group flex items-center gap-3 min-w-0">
               <BrandMark />
               <div className="min-w-0">
                 <Wordmark />
