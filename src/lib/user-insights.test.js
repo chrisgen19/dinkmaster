@@ -108,6 +108,30 @@ describe('bestPartner()', () => {
     ];
     expect(bestPartner(matches, VIEWER_IDS).name).toBe('Mia C.');
   });
+
+  it('excludes tied matches from the partner tally', () => {
+    // 2 decided wins with Mia + 1 tie with Mia → reported as 2/2 (100%), not
+    // 2/3. Win % must only reflect decided games.
+    const matches = [
+      row({ matchId: 'a', score1: 11, score2: 6, partnerName: 'Mia', partnerId: 'pm' }),
+      row({ matchId: 'b', score1: 7, score2: 7, partnerName: 'Mia', partnerId: 'pm' }), // tie
+      row({ matchId: 'c', score1: 11, score2: 9, partnerName: 'Mia', partnerId: 'pm' }),
+    ];
+    expect(bestPartner(matches, VIEWER_IDS)).toEqual({
+      name: 'Mia',
+      games: 2,
+      wins: 2,
+      winPct: 100,
+    });
+  });
+
+  it('returns null when every match is a tie (no decided matches)', () => {
+    const matches = [
+      row({ matchId: 'a', score1: 7, score2: 7, partnerName: 'Mia', partnerId: 'pm' }),
+      row({ matchId: 'b', score1: 9, score2: 9, partnerName: 'Mia', partnerId: 'pm' }),
+    ];
+    expect(bestPartner(matches, VIEWER_IDS)).toBeNull();
+  });
 });
 
 describe('favoriteCourt()', () => {

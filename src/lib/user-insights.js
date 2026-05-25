@@ -48,6 +48,10 @@ export function enrichRecentMatches(matchPlayerRows, viewerPlayerIds) {
  * with most often (ties broken by win rate, then alphabetically). Returns
  * `null` if the viewer has no decided matches.
  *
+ * Tied matches (rare under the scoring rules) are excluded from the tally so
+ * the partner's win % only reflects decided games — otherwise a tie would be
+ * silently counted as a non-win and pull the rate down.
+ *
  * @param {object[]} matchPlayerRows - viewer's `matchPlayer` rows
  * @param {Set<string>} viewerPlayerIds
  * @returns {{name: string, games: number, wins: number, winPct: number}|null}
@@ -59,7 +63,10 @@ export function bestPartner(matchPlayerRows, viewerPlayerIds) {
   const tally = new Map();
   for (const mp of matchPlayerRows) {
     const m = mp.match;
-    const viewerWon = (mp.team === 1 ? m.score1 : m.score2) > (mp.team === 1 ? m.score2 : m.score1);
+    const scoreFor = mp.team === 1 ? m.score1 : m.score2;
+    const scoreAgainst = mp.team === 1 ? m.score2 : m.score1;
+    if (scoreFor === scoreAgainst) continue; // skip undecided (tie) matches
+    const viewerWon = scoreFor > scoreAgainst;
     for (const p of m.players ?? []) {
       if (p.team !== mp.team) continue; // opponents skipped
       if (viewerPlayerIds.has(p.playerId)) continue; // viewer themselves
