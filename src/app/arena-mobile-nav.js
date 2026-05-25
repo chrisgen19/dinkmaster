@@ -82,14 +82,19 @@ function ArenaMobileTabStrip({ navTabs, activeTab, onSelectTab }) {
     align: 'center',
   });
 
-  // Whenever activeTab changes from the outside (drawer pick, content swipe),
-  // bring that pill into view. `containScroll: 'trimSnaps'` keeps the end pills
-  // pinned to the gutter instead of over-centering them.
+  // The parent rebuilds `navTabs` on every render, so depending on it directly
+  // would re-snap the strip on every Arena state change (court updates, score
+  // changes, queue shuffles) — interrupting a user mid-scrub. Depend on a
+  // stable string of tab ids instead, so the scroll only fires when the
+  // active tab changes or the tab set actually changes (e.g. `mystats`
+  // appearing once `myPlayer` is linked).
+  const navTabIds = navTabs.map((t) => t.id).join('|');
   useEffect(() => {
     if (!emblaApi) return;
-    const idx = navTabs.findIndex((t) => t.id === activeTab);
+    const ids = navTabIds.split('|');
+    const idx = ids.indexOf(activeTab);
     if (idx >= 0) emblaApi.scrollTo(idx);
-  }, [emblaApi, activeTab, navTabs]);
+  }, [emblaApi, activeTab, navTabIds]);
 
   return (
     <div
@@ -280,21 +285,20 @@ export function ArenaMobileNav({ navTabs, activeTab, activeTabLabel, onSelectTab
 }
 
 /**
- * Detect coarse pointers (touch screens) so we only enable the swipe gesture
- * where it belongs. Mouse-driven desktops should never have a stray drag
- * change tabs — both for ergonomics and to keep text selection unaffected.
+ * Track a `matchMedia` query as boolean state. SSR-safe (returns false until
+ * mounted) and cleans up its own listener.
  */
-function useIsCoarsePointer() {
-  const [coarse, setCoarse] = useState(false);
+function useMatchMedia(query) {
+  const [matches, setMatches] = useState(false);
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mql = window.matchMedia('(pointer: coarse)');
-    const update = () => setCoarse(mql.matches);
+    const mql = window.matchMedia(query);
+    const update = () => setMatches(mql.matches);
     update();
     mql.addEventListener?.('change', update);
     return () => mql.removeEventListener?.('change', update);
-  }, []);
-  return coarse;
+  }, [query]);
+  return matches;
 }
 
 /**
@@ -332,11 +336,16 @@ function isInsideHorizontalScroller(start, boundary) {
  */
 export function ArenaContentSwipe({ navTabs, activeTab, onSelectTab, children }) {
   const idx = navTabs.findIndex((t) => t.id === activeTab);
-  const isCoarse = useIsCoarsePointer();
+  // Require both a touch device AND a mobile-sized viewport. A touch laptop
+  // or a tablet held horizontally is already seeing the desktop tablist, so
+  // a stray swipe there would be confusing.
+  const isCoarse = useMatchMedia('(pointer: coarse)');
+  const isMobileViewport = useMatchMedia('(max-width: 767px)');
+  const swipeEnabled = isCoarse && isMobileViewport;
   const dragControls = useDragControls();
 
   const handlePointerDown = (e) => {
-    if (!isCoarse) return;
+    if (!swipeEnabled) return;
     // If the gesture starts inside a horizontal scroller, let the browser
     // handle it — never start the tab-swipe drag.
     if (isInsideHorizontalScroller(e.target, e.currentTarget)) return;
@@ -359,7 +368,7 @@ export function ArenaContentSwipe({ navTabs, activeTab, onSelectTab, children })
 
   return (
     <motion.div
-      drag={isCoarse ? 'x' : false}
+      drag={swipeEnabled ? 'x' : false}
       dragListener={false}
       dragControls={dragControls}
       dragDirectionLock
