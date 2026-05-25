@@ -12,6 +12,7 @@
     "vercel-build": "prisma generate && prisma migrate deploy && next build",
     "start": "next start -p ${PORT:-3020}",
     "lint": "eslint",
+    "pwa:icons": "node scripts/generate-pwa-icons.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
@@ -35,10 +36,14 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
+    "@serwist/turbopack": "^9.5.11",
     "@tailwindcss/postcss": "^4",
     "dotenv": "^17.4.2",
+    "esbuild": "^0.28.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
+    "serwist": "^9.5.11",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4",
     "vitest": "^4.1.7"
   }

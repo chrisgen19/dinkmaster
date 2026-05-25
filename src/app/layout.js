@@ -1,6 +1,9 @@
 import { Geist, Geist_Mono, Bricolage_Grotesque } from "next/font/google";
+import { SerwistProvider } from "@serwist/turbopack/react";
 import "./globals.css";
 import { NavTracker } from "./nav-tracker";
+import { PwaInstallPrompt } from "./pwa-install-prompt";
+import { SwUpdatePrompt } from "./sw-update-prompt";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -24,7 +27,25 @@ export const metadata = {
   title: "DinkMaster — Smart Paddle Stacking & Partnership Mixing",
   description:
     "Run your pickleball open play: stack the rack, mix partnerships fairly, and track matches in real time.",
+  // iOS standalone (Add to Home Screen) behaviour + status bar appearance.
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "DinkMaster",
+  },
+  icons: {
+    apple: "/icons/apple-touch-icon.png",
+  },
 };
+
+export const viewport = {
+  // Drives the browser/standalone UI tint; matches the manifest theme_color.
+  themeColor: "#059669",
+};
+
+// Disable the service worker in development so we never fight stale caches while
+// iterating; it only registers in production builds.
+const swDisabled = process.env.NODE_ENV === "development";
 
 export default function RootLayout({ children }) {
   return (
@@ -33,8 +54,12 @@ export default function RootLayout({ children }) {
       className={`${geistSans.variable} ${geistMono.variable} ${bricolage.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <NavTracker />
-        {children}
+        <SerwistProvider swUrl="/serwist/sw.js" disable={swDisabled}>
+          <NavTracker />
+          {children}
+          <PwaInstallPrompt />
+          <SwUpdatePrompt />
+        </SerwistProvider>
       </body>
     </html>
   );
