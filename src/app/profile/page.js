@@ -4,6 +4,7 @@ import { getCurrentUser } from '@/lib/session';
 import { getUserPlayerStats } from '@/lib/arenas';
 import { eloToDupr } from '@/lib/rating';
 import { AuthStatus } from '../auth-status';
+import { BackPill } from '../back-pill';
 
 // Always read fresh stats on each request.
 export const dynamic = 'force-dynamic';
@@ -38,12 +39,7 @@ export default async function ProfilePage() {
             </svg>
           </div>
           <div>
-            <Link
-              href="/arenas"
-              className="text-[11px] text-slate-400 hover:text-emerald-600 font-semibold transition"
-            >
-              ← All arenas
-            </Link>
+            <BackPill fallbackHref="/arenas" label="All arenas" className="mb-1" />
             <h1 className="text-xl font-extrabold tracking-tight text-slate-900">My Profile</h1>
           </div>
         </div>

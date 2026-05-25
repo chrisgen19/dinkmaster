@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { BackPill } from './back-pill';
 
 /**
  * Arena hero strip — sits between the SiteHeader and the sticky tab bar. Holds
@@ -41,18 +42,7 @@ export function ArenaHero({
       <div className="w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8 pt-5 md:pt-7 pb-5 md:pb-6">
         {/* Top row: back chip + manage CTA */}
         <div className="flex items-center justify-between gap-3 mb-3 md:mb-4">
-          <Link
-            href="/arenas"
-            className="inline-flex items-center gap-1.5 rounded-full bg-white/80 backdrop-blur
-              ring-1 ring-slate-200 hover:ring-emerald-300 hover:text-emerald-700
-              text-slate-600 text-[11px] md:text-xs font-bold uppercase tracking-wide
-              pl-1.5 pr-3 py-1 transition-colors"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-            All arenas
-          </Link>
+          <BackPill fallbackHref="/arenas" label="All arenas" />
 
           {canManage && (
             <Link

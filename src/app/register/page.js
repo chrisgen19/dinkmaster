@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { signUp } from '@/lib/auth-client';
 import { safeNext } from '@/lib/safe-next';
+import { BackPill } from '../back-pill';
 
 // Shared input styling, reused across every field for visual consistency.
 const FIELD_CLASS =
@@ -209,9 +210,9 @@ function RegisterForm() {
             Sign in
           </Link>
         </p>
-        <p className="text-xs text-slate-400 text-center mt-2">
-          <Link href="/arenas" className="hover:text-slate-600">← Back to arenas</Link>
-        </p>
+        <div className="flex justify-center mt-3">
+          <BackPill fallbackHref="/arenas" label="Back to arenas" />
+        </div>
       </div>
     </div>
   );
