@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Drawer } from 'vaul';
 import useEmblaCarousel from 'embla-carousel-react';
-import { motion } from 'motion/react';
+import { motion, useDragControls } from 'motion/react';
 
 /**
  * Icons sized for the bottom-sheet menu rows (24px) and the strip pills (18px).
@@ -144,9 +144,27 @@ function ArenaMobileSheet({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
     setOpen(false);
   }, [onSelectTab]);
 
+  // Vaul renders the sheet through a portal, so the `md:hidden` ancestor tree
+  // doesn't gate it — without this listener, rotating a tablet (or resizing on
+  // desktop dev tools) past 768px while the sheet is open leaves the overlay,
+  // body-scroll lock, and focus trap layered over the desktop layout. Close
+  // the sheet as soon as the desktop breakpoint matches.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mql = window.matchMedia('(min-width: 768px)');
+    const update = () => { if (mql.matches) setOpen(false); };
+    update();
+    mql.addEventListener?.('change', update);
+    return () => mql.removeEventListener?.('change', update);
+  }, []);
+
   return (
     <>
-      <Drawer.Root open={open} onOpenChange={setOpen} shouldScaleBackground>
+      {/* `shouldScaleBackground` would zoom the page behind the sheet, but
+          vaul requires a `data-vaul-drawer-wrapper` ancestor for it to take
+          effect. Skipping the prop until we add the wrapper at the layout
+          level (a separate decision affecting every page). */}
+      <Drawer.Root open={open} onOpenChange={setOpen}>
         <Drawer.Trigger asChild>
           <button
             type="button"
@@ -280,17 +298,50 @@ function useIsCoarsePointer() {
 }
 
 /**
+ * Walk up from `start` to (but not past) `boundary`, returning true if any
+ * ancestor is an actually-scrollable horizontal container. Used to bail out
+ * of the tab swipe when the touch lands inside something like the Partnership
+ * Matrix table, so users can scroll the table without accidentally changing
+ * tabs.
+ */
+function isInsideHorizontalScroller(start, boundary) {
+  let el = start;
+  while (el && el !== boundary && el.nodeType === 1) {
+    const overflowX = window.getComputedStyle(el).overflowX;
+    if ((overflowX === 'auto' || overflowX === 'scroll') && el.scrollWidth > el.clientWidth) {
+      return true;
+    }
+    el = el.parentElement;
+  }
+  return false;
+}
+
+/**
  * Swipe handler for the tab content area on mobile. A left swipe advances to
  * the next tab, a right swipe returns to the previous tab — same direction
  * conventions as iOS / Android pager UIs. Wrap the active-tab content in this
  * component and pass the same `navTabs` and `activeTab` you give the nav.
  *
- * Drag is disabled on fine-pointer devices (mice) so a desktop drag never
- * changes tabs by accident.
+ * Drag is started manually in `onPointerDown` (via `useDragControls`) so we
+ * can opt out when the touch lands inside a horizontally-scrollable child.
+ * `touch-action: pan-y` cascades to descendants and would otherwise break
+ * native horizontal scrolling on tables / carousels nested inside this tree.
+ *
+ * Drag is also disabled on fine-pointer devices (mice) so a desktop drag
+ * never changes tabs by accident.
  */
 export function ArenaContentSwipe({ navTabs, activeTab, onSelectTab, children }) {
   const idx = navTabs.findIndex((t) => t.id === activeTab);
   const isCoarse = useIsCoarsePointer();
+  const dragControls = useDragControls();
+
+  const handlePointerDown = (e) => {
+    if (!isCoarse) return;
+    // If the gesture starts inside a horizontal scroller, let the browser
+    // handle it — never start the tab-swipe drag.
+    if (isInsideHorizontalScroller(e.target, e.currentTarget)) return;
+    dragControls.start(e);
+  };
 
   const handleDragEnd = (_event, info) => {
     // Distance and velocity thresholds tuned for thumb swipes: roughly a third
@@ -308,14 +359,14 @@ export function ArenaContentSwipe({ navTabs, activeTab, onSelectTab, children })
 
   return (
     <motion.div
-      // `touch-action: pan-y` lets vertical scrolls pass through while we still
-      // get to claim horizontal pans for the gesture.
-      className="touch-pan-y"
       drag={isCoarse ? 'x' : false}
+      dragListener={false}
+      dragControls={dragControls}
       dragDirectionLock
       dragConstraints={{ left: 0, right: 0 }}
       dragElastic={0.15}
       dragSnapToOrigin
+      onPointerDown={handlePointerDown}
       onDragEnd={handleDragEnd}
       transition={{ type: 'spring', stiffness: 380, damping: 32 }}
     >
