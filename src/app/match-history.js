@@ -167,16 +167,19 @@ const FILTER_OPTIONS = [
 
 function FilterPills({ active, onChange, stats }) {
   const count = (id) => (id === 'wins' ? stats.wins : id === 'losses' ? stats.losses : stats.total);
+  // Toggle-button group, not a tablist — the buttons don't control associated
+  // tabpanels and don't implement roving focus / arrow-key navigation, so
+  // `aria-pressed` is the honest pattern. The pills filter the list below;
+  // assistive tech announces the active filter via `aria-pressed="true"`.
   return (
-    <div className="flex gap-1.5 px-5 md:px-6 pb-4" role="tablist" aria-label="Filter matches">
+    <div className="flex gap-1.5 px-5 md:px-6 pb-4" role="group" aria-label="Filter matches">
       {FILTER_OPTIONS.map((opt) => {
         const isActive = active === opt.id;
         return (
           <button
             key={opt.id}
             type="button"
-            role="tab"
-            aria-selected={isActive}
+            aria-pressed={isActive}
             onClick={() => onChange(opt.id)}
             className={[
               'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider transition',

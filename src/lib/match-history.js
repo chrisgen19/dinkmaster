@@ -39,7 +39,7 @@ export function toMatch(raw, options = {}) {
   // Player-shape: explicit `won`/`scoreFor`/`scoreAgainst`, viewer always on side A.
   if (typeof raw.scoreFor === 'number' && typeof raw.scoreAgainst === 'number') {
     return {
-      id: String(raw.id ?? raw.matchId),
+      id: requireId(raw.id ?? raw.matchId),
       timestamp: raw.timestamp,
       courtName: raw.courtName,
       arenaName: raw.arenaName,
@@ -57,7 +57,7 @@ export function toMatch(raw, options = {}) {
     const onA = viewerId ? raw.team1.some((p) => p?.id === viewerId) : false;
     const onB = viewerId ? raw.team2.some((p) => p?.id === viewerId) : false;
     return {
-      id: String(raw.id),
+      id: requireId(raw.id),
       timestamp: raw.timestamp,
       courtName: raw.courtName,
       arenaName: raw.arenaName,
@@ -70,6 +70,15 @@ export function toMatch(raw, options = {}) {
   }
 
   throw new Error('toMatch: unrecognised raw match shape');
+}
+
+/** Fail fast on missing ids — silently stringifying `undefined` would create
+ *  duplicate React keys and break list reconciliation downstream. */
+function requireId(value) {
+  if (value === undefined || value === null || value === '') {
+    throw new Error('toMatch: match id required');
+  }
+  return String(value);
 }
 
 /**
