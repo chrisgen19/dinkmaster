@@ -39,7 +39,7 @@ export default async function ProfilePage() {
           </div>
           <div>
             <Link
-              href="/"
+              href="/arenas"
               className="text-[11px] text-slate-400 hover:text-emerald-600 font-semibold transition"
             >
               ← All arenas
@@ -86,7 +86,7 @@ export default async function ProfilePage() {
           {arenas.length === 0 ? (
             <div className="py-10 text-center text-sm text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
               You&apos;re not playing in any arena yet.{' '}
-              <Link href="/" className="text-emerald-600 font-semibold hover:text-emerald-700">
+              <Link href="/arenas" className="text-emerald-600 font-semibold hover:text-emerald-700">
                 Browse arenas
               </Link>{' '}
               to join one.

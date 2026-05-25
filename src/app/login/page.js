@@ -82,7 +82,7 @@ export default function LoginPage() {
           </Link>
         </p>
         <p className="text-xs text-slate-400 text-center mt-2">
-          <Link href="/" className="hover:text-slate-600">← Back to arena</Link>
+          <Link href="/arenas" className="hover:text-slate-600">← Back to arenas</Link>
         </p>
       </div>
     </div>
