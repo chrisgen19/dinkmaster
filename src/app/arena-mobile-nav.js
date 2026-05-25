@@ -385,7 +385,19 @@ export function ArenaContentSwipe({ navTabs, activeTab, onSelectTab, children })
   };
 
   return (
+    // `touch-pan-y` tells the browser "I'll handle horizontal pans; you keep
+    // vertical scroll." Required because Motion does NOT auto-apply
+    // `touch-action` when `dragListener={false}` — without it, iOS Safari's
+    // compositor can claim a slightly-diagonal swipe as a vertical scroll and
+    // fire `pointercancel`, killing the gesture before Motion engages.
+    //
+    // `touch-action` cascades by intersection, so a naive `pan-y` would also
+    // break horizontal scroll on the Partnership Matrix and any other child
+    // with `.overflow-x-auto`. The arbitrary variant below restores `pan-x`
+    // on those descendants so they can scroll horizontally natively while
+    // the wrapper still gets a clean shot at the horizontal swipe gesture.
     <motion.div
+      className="touch-pan-y [&_.overflow-x-auto]:touch-pan-x"
       drag={swipeEnabled ? 'x' : false}
       dragListener={false}
       dragControls={dragControls}
