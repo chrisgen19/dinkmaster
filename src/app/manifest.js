@@ -4,7 +4,7 @@
  *
  * Icons cover both `any` (transparent, for browser UI) and `maskable` (safe-zone
  * padded, for adaptive home-screen icons on Android). Regenerate the PNGs with
- * `pnpm pwa:icons` after editing public/icons/icon-source.svg.
+ * `pnpm pwa:icons` after editing public/icons/icon-source.png.
  */
 export default function manifest() {
   return {
