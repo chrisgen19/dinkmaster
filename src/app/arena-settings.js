@@ -211,7 +211,7 @@ export function ArenaSettings({ section = null, arenaId, arenaName, description,
           <IconSettings className="w-5 h-5 text-white" />
         </span>
         <div className="min-w-0">
-          <BackPill fallbackHref={`/arena/${arenaId}`} label={`Back to ${arenaName}`} className="mb-1.5 max-w-full truncate" />
+          <BackPill fallbackHref={`/arena/${arenaId}`} label={`Back to ${arenaName}`} className="mb-1.5 max-w-full truncate" forceFallback />
           <h1 className="font-display text-xl md:text-2xl font-extrabold tracking-tight text-slate-900 leading-none">
             Arena Settings
           </h1>

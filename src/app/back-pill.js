@@ -29,13 +29,17 @@ import { useEffect, useState } from 'react';
  * @param {string} props.fallbackHref - Where to go when there's no in-app history.
  * @param {string} props.label - Visible button label (kept short; rendered uppercase).
  * @param {string} [props.className] - Optional extra classes appended after the base.
+ * @param {boolean} [props.forceFallback] - Always navigate to `fallbackHref`, never
+ *   `router.back()`. Use on multi-URL screens that the user perceives as a single
+ *   page (e.g. arena Settings, whose sections each push a history entry) so back
+ *   leaves the screen instead of stepping through its internal tabs.
  */
-export function BackPill({ fallbackHref, label, className = '' }) {
+export function BackPill({ fallbackHref, label, className = '', forceFallback = false }) {
   const router = useRouter();
   const [canGoBack, setCanGoBack] = useState(false);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (forceFallback || typeof window === 'undefined') return;
     const origin = window.location.origin;
     const sameOriginReferrer =
       typeof document.referrer === 'string' &&
@@ -44,10 +48,10 @@ export function BackPill({ fallbackHref, label, className = '' }) {
     const hasClientHistory = window.history.length > 1;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reading document.referrer / window.history (client-only) on mount; unknowable during SSR
     setCanGoBack(sameOriginReferrer || hasClientHistory);
-  }, []);
+  }, [forceFallback]);
 
   const handleClick = (e) => {
-    if (canGoBack) {
+    if (!forceFallback && canGoBack) {
       e.preventDefault();
       router.back();
     }
