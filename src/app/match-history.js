@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   differential,
   groupByDay,
@@ -37,6 +37,14 @@ export function MatchHistory({
 }) {
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'wins' | 'losses'
 
+  // Day-bucket grouping derives keys from the viewer's local timezone, so it
+  // can drift between SSR (UTC on Vercel) and hydration (the user's locale).
+  // Render as a single flat list on first paint and regroup once mounted —
+  // same pattern arena.js uses to mount-gate `formatTimestamp`.
+  const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount flag for hydration-safe day bucketing
+  useEffect(() => setMounted(true), []);
+
   const filtered = useMemo(() => {
     if (!filters || activeFilter === 'all') return matches;
     return matches.filter((m) => {
@@ -56,8 +64,11 @@ export function MatchHistory({
   );
 
   const groups = useMemo(
-    () => (groupByDate ? groupByDay(filtered) : [{ key: 'all', label: '', matches: filtered }]),
-    [filtered, groupByDate],
+    () =>
+      groupByDate && mounted
+        ? groupByDay(filtered)
+        : [{ key: 'all', label: '', matches: filtered }],
+    [filtered, groupByDate, mounted],
   );
 
   const empty = emptyState ?? DEFAULT_EMPTY[perspective];
