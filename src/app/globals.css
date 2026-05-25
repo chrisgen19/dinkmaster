@@ -1,6 +1,12 @@
 @import "tailwindcss";
 
 @theme {
+  /* Body face for everything using `font-sans`, fed by next/font (Geist). */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+
+  /* Monospace face (scores, timestamps), fed by next/font. */
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+
   /* Display face for the brand wordmark / arena title, fed by next/font. */
   --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
 
