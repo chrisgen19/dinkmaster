@@ -25,6 +25,8 @@ import { AuthStatus } from './auth-status';
 import { SiteHeader } from './site-header';
 import { ArenaMembers } from './arena-members';
 import { ArenaMobileNav, ArenaContentSwipe } from './arena-mobile-nav';
+import { ArenaHero } from './arena-hero';
+import { TabIcon, TabBadge } from './arena-tab-icons';
 import { ArenaScheduleModal } from './arena-schedule-modal';
 import { ArenaCourtsPanel } from './arena-courts-panel';
 import { ArenaSessionPrepBanner } from './arena-session-prep-banner';
@@ -511,53 +513,20 @@ export default function Arena({
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans selection:bg-emerald-100 selection:text-slate-900">
 
-      <SiteHeader variant="arena" arenaName={arenaName} arenaSubtitle={description}>
-        {/* Desktop / tablet: stat chips */}
-        <div className="hidden md:flex items-stretch gap-2 text-xs">
-          <div className="bg-slate-50 px-3.5 py-1.5 rounded-xl border border-slate-200/70">
-            <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wide">Players</span>
-            <span className="text-sm font-bold text-slate-800">{players.length}</span>
-          </div>
-          <div className="bg-slate-50 px-3.5 py-1.5 rounded-xl border border-slate-200/70">
-            <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wide">In queue</span>
-            <span className="text-sm font-bold text-emerald-600">{queue.length}</span>
-          </div>
-          <div className="bg-slate-50 px-3.5 py-1.5 rounded-xl border border-slate-200/70">
-            <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wide">Live</span>
-            <span className="text-sm font-bold text-sky-600">
-              {liveCourtCount}
-            </span>
-          </div>
-        </div>
-
-        {/* Mobile: compact inline stat pills */}
-        <div className="flex md:hidden gap-1.5 text-[12px]">
-          <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2.5 py-1 font-bold text-slate-700">
-            {players.length}<span className="text-slate-400 font-semibold"> players</span>
-          </span>
-          <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2.5 py-1 font-bold text-emerald-600">
-            {queue.length}<span className="text-slate-400 font-semibold"> queued</span>
-          </span>
-          <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2.5 py-1 font-bold text-sky-600">
-            {liveCourtCount}<span className="text-slate-400 font-semibold"> live</span>
-          </span>
-        </div>
-
-        {canManage && (
-          <Link
-            href={`/arena/${arenaId}/settings`}
-            className="inline-flex items-center gap-1.5 text-xs bg-slate-50 hover:bg-slate-100 text-slate-700 px-3 py-2 md:px-3.5 md:py-2.5 rounded-xl border border-slate-200/70 transition-all font-semibold"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-            Settings
-          </Link>
-        )}
-
+      <SiteHeader variant="home">
         <AuthStatus />
       </SiteHeader>
+
+      <ArenaHero
+        arenaId={arenaId}
+        arenaName={arenaName}
+        description={description}
+        scheduleLabel={describeSchedule(schedule)}
+        playerCount={players.length}
+        queueLength={queue.length}
+        liveCourtCount={liveCourtCount}
+        canManage={canManage}
+      />
 
       <ArenaSessionPrepBanner
         arenaId={arenaId}
@@ -572,10 +541,7 @@ export default function Arena({
       />
 
       {!canManage && !viewerNoticeDismissed && (
-        <div
-          style={{ top: headerHeight + 12 }}
-          className="sticky z-40 mt-3 w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8"
-        >
+        <div className="mt-2 w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8">
           <div
             role="status"
             className="relative p-4 pr-10 bg-emerald-50/95 backdrop-blur border border-emerald-200 text-emerald-900 rounded-2xl shadow-lg shadow-emerald-900/10 flex flex-col items-center text-center gap-3 animate-fade-in"
@@ -656,13 +622,71 @@ export default function Arena({
         </div>
       )}
 
+      {/* Desktop sticky tab bar — sits below the SiteHeader on `md+`, pinned
+          so users can switch tabs after scrolling deep into Match Log etc.
+          The `top` offset is the live SiteHeader height (updated by the
+          ResizeObserver above) so the bar tucks right beneath it on any
+          header size. Hidden on mobile (the bottom sheet handles that). */}
+      <div
+        style={{ top: headerHeight }}
+        className="hidden md:block sticky z-30 bg-slate-50/85 backdrop-blur-md border-y border-slate-200/70"
+      >
+        <div
+          role="tablist"
+          aria-label="Arena views"
+          onKeyDown={handleTabKeyDown}
+          className="w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-2.5 flex gap-1.5 overflow-x-auto"
+        >
+          {navTabs.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                ref={(el) => { tabRefs.current[tab.id] = el; }}
+                role="tab"
+                id={`arena-tab-${tab.id}`}
+                aria-selected={isActive}
+                aria-controls={`arena-panel-${tab.id}`}
+                tabIndex={isActive ? 0 : -1}
+                onClick={() => setActiveTab(tab.id)}
+                className={`group relative shrink-0 inline-flex items-center gap-2 rounded-full
+                  px-4 py-2.5 text-sm font-extrabold tracking-tight
+                  transition-all duration-200 ${
+                  isActive
+                    ? 'bg-slate-900 text-white shadow-sm shadow-slate-900/20'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white ring-1 ring-transparent hover:ring-slate-200'
+                }`}
+              >
+                <TabIcon
+                  id={tab.id}
+                  className={`w-4 h-4 ${isActive ? 'text-emerald-300' : 'text-slate-400 group-hover:text-slate-500'}`}
+                />
+                <span>{tab.label}</span>
+                <TabBadge value={tab.badge} active={isActive} />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Mobile: sticky scrollable tab strip + bottom-sheet drawer. Rendered
+          OUTSIDE the main grid so it spans the page width. */}
+      <ArenaMobileNav
+        navTabs={navTabs}
+        activeTab={activeTab}
+        activeTabLabel={activeTabLabel}
+        onSelectTab={handleSelectTab}
+      />
+
       {/* Main Grid Workspace */}
-      <main className="flex-1 p-4 pb-28 md:p-6 md:pb-6 lg:p-8 lg:pb-8 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <main className="flex-1 p-4 pb-28 md:p-6 md:pb-8 lg:p-8 lg:pb-10 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
-        {/* Left Column: Player Administration & Paddle Queue */}
-        <div className="lg:col-span-5 space-y-6">
-
-          {/* Visual Paddle Stack Section */}
+        {/* Left Column: PaddleRack — sticks on lg+ so it stays visible while
+            users scroll through Match Log, Stats, etc. on the right. */}
+        <div
+          style={{ top: headerHeight + 64 }}
+          className="lg:col-span-5 lg:sticky lg:self-start space-y-6"
+        >
           <PaddleRackStack
             queue={queue}
             players={players}
@@ -679,63 +703,10 @@ export default function Arena({
             emergencyWait={matchmakingProp.emergencyWait}
             errorMsg={errorMsg}
           />
-
         </div>
 
-        {/* Right Column: Active Courts Grid */}
+        {/* Right Column: Tab content */}
         <div className="lg:col-span-7 space-y-6">
-
-          {/* Desktop: segmented tab control — equal-width segments on a single
-              row, so the bar never wraps regardless of how many tabs there are. */}
-          <div
-            role="tablist"
-            aria-label="Arena views"
-            onKeyDown={handleTabKeyDown}
-            className="hidden md:flex gap-1 p-1 rounded-2xl bg-slate-100/80 border border-slate-200/80 shadow-sm"
-          >
-            {navTabs.map((tab) => {
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  ref={(el) => { tabRefs.current[tab.id] = el; }}
-                  role="tab"
-                  id={`arena-tab-${tab.id}`}
-                  aria-selected={isActive}
-                  aria-controls={`arena-panel-${tab.id}`}
-                  tabIndex={isActive ? 0 : -1}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`relative flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl
-                    text-[13px] font-extrabold tracking-tight
-                    transition-all duration-200 ${
-                    isActive
-                      ? 'bg-slate-900 text-white shadow-md shadow-slate-900/20'
-                      : 'text-slate-500 hover:text-slate-900 hover:bg-white/80'
-                  }`}
-                >
-                  {isActive && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" aria-hidden="true" />
-                  )}
-                  <span className="truncate">{tab.label}</span>
-                  {tab.badge != null && (
-                    <span className={`shrink-0 text-[9px] font-black rounded-full px-1.5 py-0.5 leading-none ${
-                      isActive ? 'bg-emerald-400 text-slate-900' : 'bg-amber-500 text-white'
-                    }`}>
-                      {tab.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Mobile: sticky scrollable tab strip + bottom-sheet drawer */}
-          <ArenaMobileNav
-            navTabs={navTabs}
-            activeTab={activeTab}
-            activeTabLabel={activeTabLabel}
-            onSelectTab={handleSelectTab}
-          />
 
           {/* Scroll target — selecting a tab on mobile scrolls here. */}
           <div ref={contentAnchorRef} className="scroll-mt-24" aria-hidden="true" />
@@ -769,7 +740,7 @@ export default function Arena({
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h3 className="text-sm font-extrabold uppercase tracking-widest text-slate-400">
+                  <h3 className="font-display text-base md:text-lg font-extrabold tracking-tight text-slate-900">
                     🏆 Player of the Week
                   </h3>
                   <p className="text-xs text-slate-500 mt-1.5">{describeSchedule(schedule)}</p>
@@ -843,7 +814,7 @@ export default function Arena({
               className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in"
             >
               <div>
-                <h3 className="text-sm font-extrabold uppercase tracking-widest text-slate-400">
+                <h3 className="font-display text-base md:text-lg font-extrabold tracking-tight text-slate-900">
                   Partnership Pairing Matrix
                 </h3>
                 <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
@@ -924,7 +895,7 @@ export default function Arena({
               className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in"
             >
               <div>
-                <h3 className="text-sm font-extrabold uppercase tracking-widest text-slate-400">
+                <h3 className="font-display text-base md:text-lg font-extrabold tracking-tight text-slate-900">
                   Match History Log
                 </h3>
                 <p className="text-xs text-slate-500 mt-1.5">
@@ -1015,7 +986,7 @@ export default function Arena({
               className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in"
             >
               <div>
-                <h3 className="text-sm font-extrabold uppercase tracking-widest text-slate-400">
+                <h3 className="font-display text-base md:text-lg font-extrabold tracking-tight text-slate-900">
                   My Stats — {fullName(myPlayer)}
                 </h3>
                 <p className="text-xs text-slate-500 mt-1.5">
