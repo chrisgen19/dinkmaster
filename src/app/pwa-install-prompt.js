@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
+import Image from 'next/image';
 
 const noop = () => () => {};
 
@@ -76,8 +77,14 @@ export function PwaInstallPrompt() {
   return (
     <div className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-sm rounded-2xl border border-slate-200 bg-white p-4 shadow-lg animate-fade-in">
       <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600/10 text-xl">
-          🏓
+        <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl ring-1 ring-inset ring-slate-200/80">
+          <Image
+            src="/icons/icon-192.png"
+            alt="DinkMaster logo"
+            fill
+            sizes="40px"
+            className="object-cover"
+          />
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-slate-900">
