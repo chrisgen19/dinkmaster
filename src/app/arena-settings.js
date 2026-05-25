@@ -13,6 +13,7 @@ import {
   MAX_LEADERBOARD_SIZE,
 } from '@/lib/match-defaults';
 import { slugFromSectionId } from './arena-settings-sections';
+import { BackPill } from './back-pill';
 
 // --- Settings section icons (Lucide path data, inline) -----------------------
 // Hand-inlined so we don't pull in lucide-react for six icons. Sizing comes
@@ -210,13 +211,7 @@ export function ArenaSettings({ section = null, arenaId, arenaName, description,
           <IconSettings className="w-5 h-5 text-white" />
         </span>
         <div className="min-w-0">
-          <Link
-            href={`/arena/${arenaId}`}
-            className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-emerald-600 font-semibold transition"
-          >
-            <IconChevronLeft className="h-3 w-3" />
-            Back to {arenaName}
-          </Link>
+          <BackPill fallbackHref={`/arena/${arenaId}`} label={`Back to ${arenaName}`} className="mb-1.5 max-w-full truncate" forceFallback />
           <h1 className="font-display text-xl md:text-2xl font-extrabold tracking-tight text-slate-900 leading-none">
             Arena Settings
           </h1>

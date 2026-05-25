@@ -195,8 +195,13 @@ src/
     arenas/new/page.js Server Component — auth-gated create-arena form
     arena/[id]/page.js Server Component — reads one arena's state, renders it
     arena.js           Client UI (rack, courts, modals, my-stats, badges)
+    arena-hero.js      Arena page hero strip (name, description, schedule, stat tiles)
+    arena-mobile-nav.js Client UI — mobile tab strip + vaul bottom sheet + swipe
+    arena-tab-icons.js Shared tab glyphs for the desktop + mobile arena nav
     arena-members.js   Client UI — members tab (roles, join/leave, pending requests, owner controls)
     actions.js         Server Actions — every mutation (role-gated) + rotation algorithm
+    back-pill.js       Shared history-aware back-navigation pill
+    nav-tracker.js     Records history length at app entry (powers back-pill)
     create-arena-form.js  Client form for /arenas/new (name, description, schedule)
     auth-status.js     Header sign-in / sign-out control + profile link
     profile/           Per-user stats & match history across all arenas
@@ -207,6 +212,8 @@ src/
     prisma.js      Prisma 7 client (node-postgres driver adapter)
     data.js        getState(arenaId) — the shape the UI consumes
     arenas.js      directory + member/join-request reads, getUserPlayerStats()
+    nav-back.js    Pure rule for back-pill: router.back() vs fallbackHref
+    safe-next.js   Validates ?next= redirect targets (same-origin only)
     user-profile.js  normalizeUserProfile() — server-side signup validation
     roles.js       Role constants (OWNER/ORGANIZER/MEMBER) + helpers
     matchmaking.js Shared thresholds/weights
