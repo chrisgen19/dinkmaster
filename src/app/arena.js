@@ -652,13 +652,15 @@ export default function Arena({
 
       {/* Desktop sticky tab bar — sits below the SiteHeader on `md+`, pinned
           so users can switch tabs after scrolling deep into Match Log etc.
-          The `top` offset is the live SiteHeader height (updated by the
-          ResizeObserver above) so the bar tucks right beneath it on any
-          header size. Hidden on mobile (the bottom sheet handles that). */}
+          The `top` offset is the live SiteHeader height — published as
+          `--site-header-h` by the ResizeObserver above — so the bar tucks
+          right beneath it on any header size. The 64px fallback matches the
+          mobile strip and keeps the bar pinned correctly on the very first
+          paint, before the observer fires. Hidden on mobile (the bottom
+          sheet handles that). */}
       <div
         ref={tabBarRef}
-        style={{ top: headerHeight }}
-        className="hidden md:block sticky z-30 bg-slate-50/85 backdrop-blur-md border-y border-slate-200/70"
+        className="hidden md:block sticky top-[var(--site-header-h,64px)] z-30 bg-slate-50/85 backdrop-blur-md border-y border-slate-200/70"
       >
         <div
           role="tablist"

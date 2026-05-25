@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { NAV_BASELINE_KEY } from './nav-tracker';
-import { canNavigateBack } from '@/lib/nav-back';
+import { canNavigateBack, isSameOriginReferrer } from '@/lib/nav-back';
 
 /**
  * Shared back-navigation pill — the small chevron + uppercase-label affordance
@@ -43,17 +43,7 @@ export function BackPill({ fallbackHref, label, className = '', forceFallback = 
 
   useEffect(() => {
     if (forceFallback || typeof window === 'undefined') return;
-    const origin = window.location.origin;
-    let sameOriginReferrer = false;
-    if (typeof document.referrer === 'string' && document.referrer.length > 0) {
-      try {
-        // Compare parsed origins, not a prefix: startsWith() would treat a
-        // lookalike host like https://example.com.evil.tld as same-origin.
-        sameOriginReferrer = new URL(document.referrer).origin === origin;
-      } catch {
-        sameOriginReferrer = false;
-      }
-    }
+    const sameOriginReferrer = isSameOriginReferrer(document.referrer, window.location.origin);
     // history.length at app entry, recorded by NavTracker. If we've pushed
     // entries since (current > baseline), back() lands on one of our pages.
     const rawBaseline = sessionStorage.getItem(NAV_BASELINE_KEY);
