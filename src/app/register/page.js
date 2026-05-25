@@ -4,22 +4,13 @@ import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { signUp } from '@/lib/auth-client';
+import { safeNext } from '@/lib/safe-next';
 
 // Shared input styling, reused across every field for visual consistency.
 const FIELD_CLASS =
   'w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400';
 
 const GENDER_OPTIONS = ['Male', 'Female', 'Other', 'Prefer not to say'];
-
-/**
- * Accept only same-origin paths as a post-auth return URL — see the matching
- * helper in `login/page.js`. Falls back to `/arenas` for anything suspicious.
- */
-function safeNext(raw) {
-  if (typeof raw !== 'string') return '/arenas';
-  if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return '/arenas';
-  return raw;
-}
 
 export default function RegisterPage() {
   // `useSearchParams` (inside `RegisterForm`) requires a Suspense boundary so

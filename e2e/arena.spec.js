@@ -6,9 +6,14 @@ const PASSWORD = 'e2epassword123';
 
 async function registerFreshUser(page) {
   await page.goto('/register');
-  await page.getByPlaceholder('Full name').fill('Arena Maker');
+  await page.getByPlaceholder('First name').fill('Arena');
+  await page.getByPlaceholder('Last name').fill('Maker');
   await page.getByPlaceholder('Email').fill(uniqueEmail());
   await page.getByPlaceholder('Password (min. 8 characters)').fill(PASSWORD);
+  await page.getByPlaceholder('Phone number').fill('5550100');
+  await page.getByPlaceholder('Address').fill('123 Court Lane');
+  await page.locator('input[type="date"]').fill('1995-01-01');
+  await page.locator('select').selectOption('Prefer not to say');
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page).toHaveURL('/arenas');
 }

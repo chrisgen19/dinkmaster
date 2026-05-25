@@ -4,17 +4,7 @@ import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { signIn } from '@/lib/auth-client';
-
-/**
- * Accept only same-origin paths as a post-auth return URL — must start with a
- * single `/` and not `//` or `/\`, so an attacker can't smuggle an absolute
- * URL (e.g. `//evil.com`) through the `?next=` param. Falls back to `/arenas`.
- */
-function safeNext(raw) {
-  if (typeof raw !== 'string') return '/arenas';
-  if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return '/arenas';
-  return raw;
-}
+import { safeNext } from '@/lib/safe-next';
 
 export default function LoginPage() {
   // `useSearchParams` (inside `LoginForm`) requires a Suspense boundary so the

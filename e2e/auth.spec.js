@@ -4,12 +4,26 @@ import { test, expect } from '@playwright/test';
 const uniqueEmail = () => `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.local`;
 const PASSWORD = 'e2epassword123';
 
+/**
+ * Fill every required field on the register form. The page demands first/last
+ * name, email, password, phone, address, birthday, and gender — anything less
+ * trips the client-side guard before the submit reaches Better Auth.
+ */
+async function fillRegisterForm(page, { email = uniqueEmail(), password = PASSWORD } = {}) {
+  await page.getByPlaceholder('First name').fill('E2E');
+  await page.getByPlaceholder('Last name').fill('Organizer');
+  await page.getByPlaceholder('Email').fill(email);
+  await page.getByPlaceholder('Password (min. 8 characters)').fill(password);
+  await page.getByPlaceholder('Phone number').fill('5550100');
+  await page.getByPlaceholder('Address').fill('123 Court Lane');
+  await page.locator('input[type="date"]').fill('1995-01-01');
+  await page.locator('select').selectOption('Prefer not to say');
+}
+
 test.describe('registration', () => {
   test('creates an account and lands signed in on the directory', async ({ page }) => {
     await page.goto('/register');
-    await page.getByPlaceholder('Full name').fill('E2E Organizer');
-    await page.getByPlaceholder('Email').fill(uniqueEmail());
-    await page.getByPlaceholder('Password (min. 8 characters)').fill(PASSWORD);
+    await fillRegisterForm(page);
     await page.getByRole('button', { name: 'Create account' }).click();
 
     await expect(page).toHaveURL('/arenas');
@@ -18,9 +32,9 @@ test.describe('registration', () => {
 
   test('rejects a password shorter than 8 characters', async ({ page }) => {
     await page.goto('/register');
-    await page.getByPlaceholder('Full name').fill('E2E Organizer');
-    await page.getByPlaceholder('Email').fill(uniqueEmail());
-    await page.getByPlaceholder('Password (min. 8 characters)').fill('short');
+    // Fill all the required fields so the client-side completeness guard passes
+    // and the test actually exercises the password-length branch.
+    await fillRegisterForm(page, { password: 'short' });
     await page.getByRole('button', { name: 'Create account' }).click();
 
     await expect(page.getByTestId('auth-error')).toContainText(/8 characters/i);
@@ -54,5 +68,25 @@ test.describe('login', () => {
 
     await expect(page.getByTestId('auth-error')).toBeVisible();
     await expect(page).toHaveURL('/login');
+  });
+
+  test('preserves ?next= return path through login (deep link to /arenas/new)', async ({ page, request }) => {
+    // Seed an account via the API so this test exercises just the redirect flow.
+    const email = uniqueEmail();
+    await request.post('/api/auth/sign-up/email', {
+      data: { name: 'E2E Deep Link', email, password: PASSWORD },
+    });
+
+    // Hitting the auth-gated page as a guest should send us to /login with `next`.
+    await page.goto('/arenas/new');
+    await expect(page).toHaveURL(/\/login\?next=%2Farenas%2Fnew$/);
+
+    await page.getByPlaceholder('Email').fill(email);
+    await page.getByPlaceholder('Password').fill(PASSWORD);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+
+    // Lands on the original destination, not the default /arenas.
+    await expect(page).toHaveURL('/arenas/new');
+    await expect(page.getByRole('heading', { name: /Create a new arena/i })).toBeVisible();
   });
 });
