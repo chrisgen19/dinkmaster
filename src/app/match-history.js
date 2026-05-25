@@ -29,6 +29,12 @@ export function MatchHistory({
   description,
   summary = perspective === 'player',
   filters = perspective === 'player',
+  // Caller-supplied stats override for the summary strip — use when the page
+  // has a broader source of truth (e.g. /profile passes lifetime totals from
+  // the user record so the strip isn't scoped to the visible match slice).
+  // FilterPills still derive their counts from `matches` so the pill badges
+  // always reflect what's actually in the filterable list.
+  summaryStats,
   groupByDate = true,
   maxHeight = '600px',
   formatTimestamp,
@@ -56,12 +62,14 @@ export function MatchHistory({
     });
   }, [matches, activeFilter, filters]);
 
-  // Compute stats once when either the summary header or the filter pills need
-  // them — FilterPills uses the counts inside its labels.
-  const stats = useMemo(
+  // Auto-computed stats from the visible match slice — drives FilterPills'
+  // badge counts so they always match the filterable list. SummaryRow uses
+  // these too unless the caller passes `summaryStats` to override.
+  const localStats = useMemo(
     () => (summary || filters ? summarise(matches) : null),
     [matches, summary, filters],
   );
+  const summaryRowStats = summaryStats ?? localStats;
 
   const groups = useMemo(
     () =>
@@ -91,15 +99,15 @@ export function MatchHistory({
         </div>
       )}
 
-      {summary && stats && stats.total > 0 && (
-        <SummaryRow stats={stats} />
+      {summary && summaryRowStats && summaryRowStats.total > 0 && (
+        <SummaryRow stats={summaryRowStats} />
       )}
 
-      {filters && matches.length > 0 && stats && (
+      {filters && matches.length > 0 && localStats && (
         <FilterPills
           active={activeFilter}
           onChange={setActiveFilter}
-          stats={stats}
+          stats={localStats}
         />
       )}
 

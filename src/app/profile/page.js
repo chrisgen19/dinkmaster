@@ -19,8 +19,20 @@ export default async function ProfilePage() {
 
   const { totals, arenas, recentMatches, insights } = await getUserPlayerStats(user.id);
   const hasGames = totals.gamesPlayed > 0;
+  const decided = totals.wins + totals.losses;
   // Normalise on the server so the client component never branches on shape.
   const matches = recentMatches.map((m) => toMatch({ ...m, id: m.matchId }));
+  // Lifetime stats fed into MatchHistory's SummaryRow so the strip reads as
+  // a career summary instead of being scoped to the visible 20-match slice.
+  // Streak comes from `insights.streak` (computed over up to 500 matches) so
+  // it agrees with the Insights card by construction — no scope mismatch.
+  const lifetimeSummary = {
+    total: totals.gamesPlayed,
+    wins: totals.wins,
+    losses: totals.losses,
+    winPct: decided > 0 ? totals.winPct : null,
+    streak: insights.streak,
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
@@ -129,8 +141,10 @@ export default async function ProfilePage() {
               perspective="player"
               maxHeight="640px"
               // SummaryRow is the page's primary stats display now that the
-              // hero ramp is gone. Streak helpers across the codebase agree on
-              // tie semantics, so its streak slot matches the Insights card.
+              // hero ramp is gone. Pass lifetime totals so the strip isn't
+              // scoped to the visible 20-match slice; streak comes from the
+              // 500-match insights so it matches the Insights card.
+              summaryStats={lifetimeSummary}
               emptyState={{
                 icon: '🎾',
                 title: 'No matches yet',
