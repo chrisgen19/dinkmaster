@@ -3,32 +3,25 @@ import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/session';
 import { getUserPlayerStats } from '@/lib/arenas';
 import { eloToDupr } from '@/lib/rating';
+import { monogram } from '@/lib/user-insights';
+import { toMatch } from '@/lib/match-history';
 import { AuthStatus } from '../auth-status';
 import { SiteHeader } from '../site-header';
 import { BackPill } from '../back-pill';
+import { MatchHistory } from '../match-history';
 
 // Always read fresh stats on each request.
 export const dynamic = 'force-dynamic';
-
-/** A labelled stat tile. */
-function StatTile({ label, value, dashed = false }) {
-  return (
-    <div
-      className={`rounded-xl px-4 py-3 text-center bg-slate-50 ${
-        dashed ? 'border border-dashed border-slate-200' : 'border border-slate-200/60'
-      }`}
-    >
-      <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
-      <span className="block text-xl font-extrabold text-slate-800 mt-0.5">{value}</span>
-    </div>
-  );
-}
 
 export default async function ProfilePage() {
   const user = await getCurrentUser();
   if (!user) redirect('/login');
 
-  const { totals, arenas, recentMatches } = await getUserPlayerStats(user.id);
+  const { totals, arenas, recentMatches, insights } = await getUserPlayerStats(user.id);
+  const hasGames = totals.gamesPlayed > 0;
+  const decided = totals.wins + totals.losses;
+  // Normalise on the server so the client component never branches on shape.
+  const matches = recentMatches.map((m) => toMatch({ ...m, id: m.matchId }));
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
@@ -36,158 +29,350 @@ export default async function ProfilePage() {
         <AuthStatus />
       </SiteHeader>
 
-      <main className="flex-1 w-full max-w-4xl mx-auto p-4 md:p-8 space-y-6">
-        {/* Page heading — back pill + title, matching the arena / new-arena pages. */}
-        <div>
-          <BackPill fallbackHref="/arenas" label="All arenas" />
-          <h1 className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-slate-900 mt-2">
-            My Profile
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Your lifetime record and per-arena stats.
-          </p>
-        </div>
+      {/* Soft brand wash, kept faint so the page reads editorial, not flashy. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[420px] overflow-hidden">
+        <div className="absolute -top-32 -left-24 h-80 w-80 rounded-full bg-emerald-200/25 blur-3xl" />
+        <div className="absolute -top-24 right-0 h-80 w-80 rounded-full bg-sky-200/25 blur-3xl" />
+      </div>
 
-        {/* Identity + lifetime totals */}
-        <section className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-5">
-          <div>
-            <h2 className="text-base font-extrabold text-slate-900">{user.name}</h2>
-            <p className="text-xs text-slate-400 mt-0.5">{user.email}</p>
+      <main className="flex-1 w-full max-w-5xl mx-auto px-4 md:px-6 lg:px-8 pt-4 md:pt-6 pb-12 space-y-10">
+        <BackPill fallbackHref="/arenas" label="All arenas" />
+
+        {/* IDENTITY ── monogram tile + name + email, with the rating reading
+            big to the right on desktop so the page opens on a strong note. */}
+        <header className="animate-fade-in [animation-delay:40ms] flex flex-col gap-5 md:flex-row md:items-center md:justify-between md:gap-8">
+          <div className="flex items-center gap-4 md:gap-5 min-w-0">
+            <Monogram name={user.name} />
+            <div className="min-w-0">
+              <p className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-400 mb-1">
+                Player profile
+              </p>
+              <h1 className="font-display font-extrabold tracking-tight text-slate-900 leading-[1.05] text-3xl md:text-4xl lg:text-[44px] truncate">
+                {user.name}
+              </h1>
+              <p className="text-sm text-slate-500 mt-1 truncate">{user.email}</p>
+            </div>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <StatTile label="Arenas" value={totals.arenas} />
-            <StatTile label="Games" value={totals.gamesPlayed} />
-            <StatTile label="Wins" value={totals.wins} />
-            <StatTile label="Losses" value={totals.losses} />
-            <StatTile label="Win %" value={totals.wins + totals.losses > 0 ? `${totals.winPct}%` : '—'} />
-            <StatTile
-              label="Rating"
-              value={totals.rating !== null ? eloToDupr(totals.rating).toFixed(3) : '—'}
+
+          <RatingDisplay rating={totals.rating} />
+        </header>
+
+        {/* HERO STAT RAMP ── four oversized numbers with editorial separators. */}
+        <section className="animate-fade-in [animation-delay:120ms]">
+          <div className="grid grid-cols-3 md:grid-cols-3 gap-px bg-slate-200 rounded-2xl overflow-hidden border border-slate-200 shadow-sm">
+            <RampStat label="Games" value={totals.gamesPlayed} />
+            <RampStat
+              label="Record"
+              value={
+                <span className="tabular-nums">
+                  <span className="text-emerald-600">{totals.wins}</span>
+                  <span className="text-slate-300 font-normal mx-1.5">–</span>
+                  <span className="text-slate-500">{totals.losses}</span>
+                </span>
+              }
             />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <StatTile label="Wins this week" value={totals.weeklyWins} dashed />
-            <StatTile
-              label="Arenas led"
-              value={totals.weeklyArenasLed > 0 ? `🏆 ${totals.weeklyArenasLed}` : '—'}
-              dashed
+            <RampStat
+              label="Win rate"
+              value={decided > 0 ? `${totals.winPct}%` : '—'}
+              accent={decided > 0 && totals.winPct >= 50 ? 'emerald' : 'slate'}
             />
           </div>
         </section>
 
-        {/* Per-arena breakdown */}
-        <section className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm">
-          <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 mb-3">
-            By arena ({arenas.length})
-          </h2>
+        {/* THIS WEEK ── small accent strip; hidden if nothing happened. */}
+        {(totals.weeklyWins > 0 || totals.weeklyArenasLed > 0) && (
+          <section className="animate-fade-in [animation-delay:180ms]">
+            <WeeklyStrip wins={totals.weeklyWins} arenasLed={totals.weeklyArenasLed} />
+          </section>
+        )}
+
+        {/* INSIGHTS ── three cards: best partner / favorite court / streak. */}
+        <section className="animate-fade-in [animation-delay:240ms]">
+          <SectionHeader title="Insights" hint={hasGames ? null : 'Play a few matches and we’ll start showing patterns.'} />
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 mt-4">
+            <InsightCard
+              eyebrow="Best partner"
+              primary={insights.bestPartner?.name ?? '—'}
+              secondary={
+                insights.bestPartner
+                  ? `${insights.bestPartner.games} together · ${insights.bestPartner.winPct}% win rate`
+                  : 'No partners yet'
+              }
+              accent={insights.bestPartner && insights.bestPartner.winPct >= 50 ? 'emerald' : 'slate'}
+            />
+            <InsightCard
+              eyebrow="Favorite court"
+              primary={insights.favoriteCourt?.name ?? '—'}
+              secondary={
+                insights.favoriteCourt
+                  ? `${insights.favoriteCourt.games} ${insights.favoriteCourt.games === 1 ? 'match' : 'matches'}`
+                  : 'No matches yet'
+              }
+            />
+            <InsightCard
+              eyebrow={insights.streak ? `${insights.streak.kind === 'W' ? 'Win' : 'Loss'} streak` : 'Streak'}
+              primary={
+                insights.streak
+                  ? `${insights.streak.kind}${insights.streak.count}`
+                  : '—'
+              }
+              secondary={
+                insights.streak
+                  ? insights.streak.count === 1
+                    ? 'Just the latest match'
+                    : `${insights.streak.count} in a row`
+                  : 'Waiting on your first match'
+              }
+              accent={insights.streak?.kind === 'W' ? 'emerald' : insights.streak?.kind === 'L' ? 'slate-dim' : 'slate'}
+              monospace
+            />
+          </div>
+        </section>
+
+        {/* MY ARENAS ── card grid replaces the dense table. */}
+        <section className="animate-fade-in [animation-delay:300ms]">
+          <SectionHeader title="My arenas" count={arenas.length} />
           {arenas.length === 0 ? (
-            <div className="py-10 text-center text-sm text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
-              You&apos;re not playing in any arena yet.{' '}
-              <Link href="/arenas" className="text-emerald-600 font-semibold hover:text-emerald-700">
-                Browse arenas
-              </Link>{' '}
-              to join one.
-            </div>
+            <EmptyArenas />
           ) : (
-            <div className="overflow-x-auto border border-slate-200 rounded-xl">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-100 border-b border-slate-200 text-slate-500">
-                    <th className="p-3 font-extrabold">Arena</th>
-                    <th className="p-3 font-extrabold text-center">Games</th>
-                    <th className="p-3 font-extrabold text-center">W</th>
-                    <th className="p-3 font-extrabold text-center">L</th>
-                    <th className="p-3 font-extrabold text-center">Rating</th>
-                    <th className="p-3 font-extrabold text-center">This week</th>
-                    <th className="p-3 font-extrabold text-center">In rack</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {arenas.map((a) => (
-                    <tr key={a.arenaId} className="border-b border-slate-200/60 hover:bg-slate-50 transition">
-                      <td className="p-3 font-bold text-slate-700">
-                        <Link href={`/arena/${a.arenaId}`} className="hover:text-emerald-700">
-                          {a.arenaName}
-                        </Link>
-                        {!a.active && (
-                          <span className="ml-2 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400">
-                            left
-                          </span>
-                        )}
-                      </td>
-                      <td className="p-3 text-center text-slate-600">{a.gamesPlayed}</td>
-                      <td className="p-3 text-center font-bold text-emerald-700">{a.wins}</td>
-                      <td className="p-3 text-center font-bold text-slate-500">{a.losses}</td>
-                      <td className="p-3 text-center font-bold text-slate-700">
-                        {a.gamesPlayed > 0 ? eloToDupr(a.rating).toFixed(3) : '—'}
-                      </td>
-                      <td className="p-3 text-center text-slate-600">
-                        {a.weeklyWins > 0 ? (
-                          <span className="font-bold">
-                            {a.weeklyWins}W
-                            {a.weeklyRank && (
-                              <span className="ml-1 text-[10px] font-bold text-slate-400">
-                                {a.weeklyRank === 1 ? '🏆' : `#${a.weeklyRank}`}
-                              </span>
-                            )}
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td className="p-3 text-center text-slate-500">
-                        {a.inQueue ? 'Yes' : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-
-        {/* Recent matches across all arenas */}
-        <section className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm">
-          <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 mb-3">
-            Recent matches ({recentMatches.length})
-          </h2>
-          {recentMatches.length === 0 ? (
-            <div className="py-10 text-center text-sm text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
-              No finished matches yet.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {recentMatches.map((m) => (
-                <div
-                  key={m.matchId}
-                  className="flex items-center justify-between gap-3 border border-slate-100 rounded-xl bg-slate-50/50 p-3"
-                >
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-slate-700 flex items-center gap-2">
-                      <span
-                        className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
-                          m.won ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
-                        }`}
-                      >
-                        {m.won ? 'Win' : 'Loss'}
-                      </span>
-                      <span className="truncate">{m.arenaName}</span>
-                    </p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">
-                      {m.courtName} · {m.timestamp.slice(0, 10)}
-                    </p>
-                  </div>
-                  <span className="text-sm font-extrabold text-slate-800 shrink-0">
-                    {m.scoreFor}
-                    <span className="text-slate-300 font-normal"> : </span>
-                    {m.scoreAgainst}
-                  </span>
-                </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 mt-4">
+              {arenas.map((a) => (
+                <ArenaCard key={a.arenaId} arena={a} />
               ))}
             </div>
           )}
         </section>
+
+        {/* RECENT MATCHES ── delegated to the shared MatchHistory ledger. */}
+        <section className="animate-fade-in [animation-delay:360ms]">
+          <SectionHeader title="Recent matches" count={recentMatches.length} />
+          <div className="mt-4">
+            <MatchHistory
+              matches={matches}
+              perspective="player"
+              maxHeight="640px"
+              emptyState={{
+                icon: '🎾',
+                title: 'No matches yet',
+                hint: 'Your finished games will appear here as you play.',
+              }}
+            />
+          </div>
+        </section>
       </main>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Identity + chrome */
+
+/** Big circular monogram tile in slate-900 with white initials. Subtle ring
+ *  highlight + cross-hatched corner accents to keep it from feeling flat. */
+function Monogram({ name }) {
+  const initials = monogram(name);
+  return (
+    <div className="relative shrink-0">
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 rounded-full bg-emerald-200/50 blur-xl"
+      />
+      <div className="relative h-20 w-20 md:h-24 md:w-24 rounded-full bg-slate-900 text-white grid place-items-center ring-1 ring-slate-200 shadow-[0_8px_24px_rgba(15,23,42,0.18)]">
+        <span className="font-display font-extrabold tracking-tight text-2xl md:text-3xl">
+          {initials}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Right-aligned rating block on the identity row. Shows '—' when unrated so
+ *  the rhythm of the row stays intact for brand-new accounts. */
+function RatingDisplay({ rating }) {
+  const dupr = rating !== null ? eloToDupr(rating).toFixed(3) : null;
+  return (
+    <div className="md:text-right shrink-0">
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
+        Rating
+      </p>
+      <p className="font-display font-extrabold tracking-tight tabular-nums text-slate-900 leading-none mt-1 text-4xl md:text-5xl">
+        {dupr ?? '—'}
+      </p>
+      <p className="text-xs text-slate-400 mt-1">{dupr ? 'DUPR-style' : 'Play a match to seed your rating'}</p>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Hero stat ramp */
+
+function RampStat({ label, value, accent = 'slate' }) {
+  const valueClass = accent === 'emerald' ? 'text-emerald-600' : 'text-slate-900';
+  return (
+    <div className="bg-white px-4 py-4 md:px-6 md:py-5">
+      <p className="text-[10px] md:text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
+        {label}
+      </p>
+      <p className={`font-display font-extrabold tracking-tight tabular-nums leading-none mt-1.5 text-2xl md:text-3xl lg:text-[34px] ${valueClass}`}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Weekly callout */
+
+function WeeklyStrip({ wins, arenasLed }) {
+  return (
+    <div className="inline-flex flex-wrap items-center gap-x-3 gap-y-2 rounded-full border border-emerald-200/70 bg-emerald-50/60 pl-2 pr-4 py-1.5 ring-1 ring-emerald-100/60">
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest px-2.5 py-1">
+        <Spark /> This week
+      </span>
+      {wins > 0 && (
+        <span className="text-xs font-bold text-emerald-800 tabular-nums">
+          {wins} {wins === 1 ? 'win' : 'wins'}
+        </span>
+      )}
+      {arenasLed > 0 && (
+        <span className="text-xs font-bold text-emerald-800 tabular-nums">
+          🏆 leading {arenasLed} {arenasLed === 1 ? 'arena' : 'arenas'}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function Spark() {
+  return (
+    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 2 14.39 8.26 21 9l-5 4.87L17.18 22 12 18.27 6.82 22 8 13.87 3 9l6.61-.74L12 2z" />
+    </svg>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Section header */
+
+function SectionHeader({ title, count, hint }) {
+  return (
+    <div className="flex items-end justify-between gap-3 border-b border-slate-200 pb-2.5">
+      <h2 className="font-display text-base md:text-lg font-extrabold tracking-tight text-slate-900 flex items-baseline gap-2">
+        {title}
+        {typeof count === 'number' && (
+          <span className="text-xs font-bold tabular-nums text-slate-400">{count}</span>
+        )}
+      </h2>
+      {hint && <p className="text-[11px] text-slate-400 max-w-[20rem] text-right leading-snug">{hint}</p>}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Insights */
+
+const INSIGHT_ACCENT = {
+  slate: 'text-slate-900',
+  'slate-dim': 'text-slate-500',
+  emerald: 'text-emerald-600',
+};
+
+function InsightCard({ eyebrow, primary, secondary, accent = 'slate', monospace = false }) {
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl p-4 md:p-5 shadow-sm">
+      <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">{eyebrow}</p>
+      <p
+        className={[
+          'font-display font-extrabold tracking-tight leading-none mt-2 text-xl md:text-2xl truncate',
+          monospace ? 'tabular-nums' : '',
+          INSIGHT_ACCENT[accent],
+        ].join(' ')}
+        title={typeof primary === 'string' ? primary : undefined}
+      >
+        {primary}
+      </p>
+      <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">{secondary}</p>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Arena card grid */
+
+function ArenaCard({ arena }) {
+  const rating = arena.gamesPlayed > 0 ? eloToDupr(arena.rating).toFixed(3) : '—';
+  return (
+    <Link
+      href={`/arena/${arena.arenaId}`}
+      className="group relative block bg-white border border-slate-200 rounded-2xl p-4 md:p-5 shadow-sm hover:border-slate-300 hover:shadow-md transition"
+    >
+      {/* Decorative top-edge accent — emerald when leading, slate otherwise. */}
+      <span
+        aria-hidden="true"
+        className={`absolute top-0 left-5 right-5 h-px ${
+          arena.weeklyRank === 1 ? 'bg-emerald-500' : 'bg-slate-200'
+        }`}
+      />
+
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="font-display font-extrabold tracking-tight text-slate-900 text-base md:text-lg leading-tight group-hover:text-emerald-700 transition-colors">
+          {arena.arenaName}
+        </h3>
+        {!arena.active && (
+          <span className="shrink-0 text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400">
+            Left
+          </span>
+        )}
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">Rating</p>
+          <p className="font-display font-extrabold tracking-tight tabular-nums text-slate-900 leading-none mt-1 text-xl md:text-2xl">
+            {rating}
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">Record</p>
+          <p className="font-display font-extrabold tracking-tight tabular-nums leading-none mt-1 text-xl md:text-2xl">
+            <span className="text-emerald-600">{arena.wins}</span>
+            <span className="text-slate-300 font-normal mx-1">–</span>
+            <span className="text-slate-500">{arena.losses}</span>
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-1.5">
+        {arena.weeklyWins > 0 && (
+          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-widest text-emerald-700 bg-emerald-50 ring-1 ring-emerald-100 rounded-full px-2 py-0.5 tabular-nums">
+            {arena.weeklyWins}W this wk
+            {arena.weeklyRank === 1 && <span aria-hidden="true">🏆</span>}
+            {arena.weeklyRank && arena.weeklyRank > 1 && <span className="text-emerald-600">#{arena.weeklyRank}</span>}
+          </span>
+        )}
+        {arena.inQueue && (
+          <span className="inline-flex items-center text-[10px] font-extrabold uppercase tracking-widest text-sky-700 bg-sky-50 ring-1 ring-sky-100 rounded-full px-2 py-0.5">
+            In rack
+          </span>
+        )}
+        <span className="ml-auto text-[10px] font-bold uppercase tracking-widest text-slate-300 group-hover:text-emerald-600 transition-colors">
+          Open →
+        </span>
+      </div>
+    </Link>
+  );
+}
+
+function EmptyArenas() {
+  return (
+    <div className="mt-4 py-12 text-center text-sm text-slate-500 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/40">
+      <p className="font-semibold text-slate-600">You haven&apos;t joined an arena yet.</p>
+      <p className="text-xs mt-1">
+        <Link href="/arenas" className="text-emerald-600 font-semibold hover:text-emerald-700">
+          Browse arenas
+        </Link>{' '}
+        to start playing.
+      </p>
     </div>
   );
 }

@@ -1,5 +1,11 @@
 import { prisma } from '@/lib/prisma';
 import { getWeeklyLeaderboard } from '@/lib/leaderboard-server';
+import {
+  bestPartner,
+  currentStreak,
+  enrichRecentMatches,
+  favoriteCourt,
+} from '@/lib/user-insights';
 
 /**
  * List every arena for the public directory, with owner and content counts.
@@ -257,7 +263,12 @@ export async function hasPendingJoinRequest(arenaId, userId) {
  * @returns {Promise<{
  *   totals:{arenas:number,gamesPlayed:number,wins:number,losses:number,winPct:number,rating:number|null,weeklyWins:number,weeklyArenasLed:number},
  *   arenas:Array<{arenaId:string,arenaName:string,gamesPlayed:number,wins:number,losses:number,rating:number,inQueue:boolean,active:boolean,weeklyWins:number,weeklyRank:number|null}>,
- *   recentMatches:Array<{matchId:string,arenaName:string,courtName:string,won:boolean,scoreFor:number,scoreAgainst:number,timestamp:string}>
+ *   recentMatches:Array<{matchId:string,arenaName:string,courtName:string,won:boolean,scoreFor:number,scoreAgainst:number,timestamp:string,partners:Array<{firstName:string,lastName:string|null}>,opponents:Array<{firstName:string,lastName:string|null}>}>,
+ *   insights:{
+ *     bestPartner:{name:string,games:number,wins:number,winPct:number}|null,
+ *     favoriteCourt:{name:string,games:number}|null,
+ *     streak:{kind:'W'|'L',count:number}|null,
+ *   },
  * }>}
  */
 export async function getUserPlayerStats(userId) {
@@ -339,33 +350,37 @@ export async function getUserPlayerStats(userId) {
     ? activePlayers.reduce((acc, p) => acc + p.rating * p.gamesPlayed, 0) / ratingWeight
     : null;
 
-  // Recent matches across all the user's arenas. `MatchPlayer.playerId` is a
-  // plain id snapshot (no FK), so it is matched against the user's player ids.
+  // Recent matches + insights across all the user's arenas. `MatchPlayer.playerId`
+  // is a plain id snapshot (no FK), so it is matched against the user's player
+  // ids. We pull the most-recent 500 rows (a couple of years of casual play)
+  // for aggregations, then slice the top 20 for the display feed.
   const playerIds = players.map((p) => p.id);
+  const playerIdSet = new Set(playerIds);
   const matchPlayers = playerIds.length
     ? await prisma.matchPlayer.findMany({
         where: { playerId: { in: playerIds } },
-        include: { match: { include: { arena: { select: { name: true } } } } },
+        include: {
+          match: {
+            include: {
+              arena: { select: { name: true } },
+              // All 4 participants per match — fuels partner/opponent rosters
+              // and the best-partner aggregation. Cheap: each match has
+              // exactly 4 MatchPlayer rows.
+              players: true,
+            },
+          },
+        },
         orderBy: { match: { createdAt: 'desc' } },
-        take: 20,
+        take: 500,
       })
     : [];
 
-  const recentMatches = matchPlayers.map((mp) => {
-    const m = mp.match;
-    const scoreFor = mp.team === 1 ? m.score1 : m.score2;
-    const scoreAgainst = mp.team === 1 ? m.score2 : m.score1;
-    return {
-      matchId: m.id,
-      arenaName: m.arena.name,
-      courtName: m.courtName,
-      won: scoreFor > scoreAgainst,
-      scoreFor,
-      scoreAgainst,
-      // ISO string; formatted client-side in the viewer's locale.
-      timestamp: new Date(m.createdAt).toISOString(),
-    };
-  });
+  const recentMatches = enrichRecentMatches(matchPlayers.slice(0, 20), playerIdSet);
+  const insights = {
+    bestPartner: bestPartner(matchPlayers, playerIdSet),
+    favoriteCourt: favoriteCourt(matchPlayers),
+    streak: currentStreak(matchPlayers),
+  };
 
   return {
     totals: {
@@ -380,5 +395,6 @@ export async function getUserPlayerStats(userId) {
     },
     arenas,
     recentMatches,
+    insights,
   };
 }
