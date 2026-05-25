@@ -1,19 +1,9 @@
 import { test, expect } from '@playwright/test';
-
-/** A fresh email per call so e2e runs never collide on the unique constraint. */
-const uniqueEmail = () => `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.local`;
-const PASSWORD = 'e2epassword123';
+import { uniqueEmail, PASSWORD, fillRegisterForm } from './helpers';
 
 async function registerFreshUser(page) {
   await page.goto('/register');
-  await page.getByPlaceholder('First name').fill('Arena');
-  await page.getByPlaceholder('Last name').fill('Maker');
-  await page.getByPlaceholder('Email').fill(uniqueEmail());
-  await page.getByPlaceholder('Password (min. 8 characters)').fill(PASSWORD);
-  await page.getByPlaceholder('Phone number').fill('5550100');
-  await page.getByPlaceholder('Address').fill('123 Court Lane');
-  await page.locator('input[type="date"]').fill('1995-01-01');
-  await page.locator('select').selectOption('Prefer not to say');
+  await fillRegisterForm(page, { firstName: 'Arena', lastName: 'Maker' });
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page).toHaveURL('/arenas');
 }

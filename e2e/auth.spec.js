@@ -1,24 +1,5 @@
 import { test, expect } from '@playwright/test';
-
-/** A fresh email per call so e2e runs never collide on the unique constraint. */
-const uniqueEmail = () => `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.local`;
-const PASSWORD = 'e2epassword123';
-
-/**
- * Fill every required field on the register form. The page demands first/last
- * name, email, password, phone, address, birthday, and gender — anything less
- * trips the client-side guard before the submit reaches Better Auth.
- */
-async function fillRegisterForm(page, { email = uniqueEmail(), password = PASSWORD } = {}) {
-  await page.getByPlaceholder('First name').fill('E2E');
-  await page.getByPlaceholder('Last name').fill('Organizer');
-  await page.getByPlaceholder('Email').fill(email);
-  await page.getByPlaceholder('Password (min. 8 characters)').fill(password);
-  await page.getByPlaceholder('Phone number').fill('5550100');
-  await page.getByPlaceholder('Address').fill('123 Court Lane');
-  await page.locator('input[type="date"]').fill('1995-01-01');
-  await page.locator('select').selectOption('Prefer not to say');
-}
+import { uniqueEmail, PASSWORD, fillRegisterForm } from './helpers';
 
 test.describe('registration', () => {
   test('creates an account and lands signed in on the directory', async ({ page }) => {
@@ -39,6 +20,20 @@ test.describe('registration', () => {
 
     await expect(page.getByTestId('auth-error')).toContainText(/8 characters/i);
     await expect(page).toHaveURL('/register');
+  });
+
+  test('preserves ?next= return path through registration (deep link to /arenas/new)', async ({ page }) => {
+    // Land on /login with the deep-link query, follow the "Create one" cross-link
+    // (which must carry `next` through), then complete registration.
+    await page.goto('/login?next=%2Farenas%2Fnew');
+    await page.getByRole('link', { name: /Create one/ }).click();
+    await expect(page).toHaveURL(/\/register\?next=%2Farenas%2Fnew$/);
+
+    await fillRegisterForm(page);
+    await page.getByRole('button', { name: 'Create account' }).click();
+
+    await expect(page).toHaveURL('/arenas/new');
+    await expect(page.getByRole('heading', { name: /Create a new arena/i })).toBeVisible();
   });
 });
 

@@ -28,6 +28,8 @@ describe('safeNext()', () => {
     ['percent-encoded protocol-relative', '/%2fevil.com'],
     ['mixed-case percent-encoded protocol-relative', '/%2Fevil.com'],
     ['percent-encoded backslash', '/%5cevil.com'],
+    ['double-encoded protocol-relative', '/%252f%252fevil.com'],
+    ['triple-encoded protocol-relative', '/%25252f%25252fevil.com'],
     ['malformed percent-encoding', '/%E0%A4%A'],
   ])('rejects %s and returns the fallback', (_label, input) => {
     expect(safeNext(input)).toBe('/arenas');
