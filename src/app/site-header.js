@@ -21,8 +21,21 @@ export function BrandMark({ className = 'h-11 w-11' }) {
         before:bg-gradient-to-b before:from-white/35 before:to-transparent before:opacity-80
         ${className}`}
     >
-      <svg className="relative w-[58%] h-[58%] text-white drop-shadow-sm" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm-3 5c.83 0 1.5.67 1.5 1.5S9.83 10 9 10s-1.5-.67-1.5-1.5S8.17 7 9 7zm-2 6.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm6 5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1-5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm3.5-3.5c-.83 0-1.5-.67-1.5-1.5S16.17 7 17 7s1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm0 5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm-5-10c-.83 0-1.5-.67-1.5-1.5S12.17 3 13 3s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z" />
+      {/* Paddle + ball mark, drawn to echo the brand logo. White on the tile
+          gradient; the ball's holes are cut out (evenodd) so the gradient shows
+          through. Scales crisply at any badge size. */}
+      <svg className="relative w-[62%] h-[62%] text-white drop-shadow-sm" viewBox="0 0 24 24" fill="currentColor">
+        <g transform="rotate(-24 10 9)">
+          {/* paddle head (elongated oval) + handle as one shape */}
+          <rect x="5.6" y="1.4" width="7.6" height="13" rx="3.8" />
+          <rect x="7.6" y="12.6" width="3.6" height="7.4" rx="1.6" />
+        </g>
+        {/* ball body, set apart at lower-right, with punched holes (evenodd) */}
+        <path
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M18 12.9a3.75 3.75 0 1 1 0 7.5 3.75 3.75 0 0 1 0-7.5Zm-1.4 1.9a.68.68 0 1 0 0 1.36.68.68 0 0 0 0-1.36Zm2.8 0a.68.68 0 1 0 0 1.36.68.68 0 0 0 0-1.36ZM18 16.4a.68.68 0 1 0 0 1.36.68.68 0 0 0 0-1.36Zm-1.3 1.8a.62.62 0 1 0 0 1.24.62.62 0 0 0 0-1.24Zm2.6 0a.62.62 0 1 0 0 1.24.62.62 0 0 0 0-1.24Z"
+        />
       </svg>
     </span>
   );
