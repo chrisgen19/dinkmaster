@@ -29,6 +29,12 @@ export function MatchHistory({
   description,
   summary = perspective === 'player',
   filters = perspective === 'player',
+  // Caller-supplied stats override for the summary strip — use when the page
+  // has a broader source of truth (e.g. /profile passes lifetime totals from
+  // the user record so the strip isn't scoped to the visible match slice).
+  // FilterPills still derive their counts from `matches` so the pill badges
+  // always reflect what's actually in the filterable list.
+  summaryStats,
   groupByDate = true,
   maxHeight = '600px',
   formatTimestamp,
@@ -56,12 +62,14 @@ export function MatchHistory({
     });
   }, [matches, activeFilter, filters]);
 
-  // Compute stats once when either the summary header or the filter pills need
-  // them — FilterPills uses the counts inside its labels.
-  const stats = useMemo(
+  // Auto-computed stats from the visible match slice — drives FilterPills'
+  // badge counts so they always match the filterable list. SummaryRow uses
+  // these too unless the caller passes `summaryStats` to override.
+  const localStats = useMemo(
     () => (summary || filters ? summarise(matches) : null),
     [matches, summary, filters],
   );
+  const summaryRowStats = summaryStats ?? localStats;
 
   const groups = useMemo(
     () =>
@@ -91,15 +99,15 @@ export function MatchHistory({
         </div>
       )}
 
-      {summary && stats && stats.total > 0 && (
-        <SummaryRow stats={stats} />
+      {summary && summaryRowStats && summaryRowStats.total > 0 && (
+        <SummaryRow stats={summaryRowStats} />
       )}
 
-      {filters && matches.length > 0 && stats && (
+      {filters && matches.length > 0 && localStats && (
         <FilterPills
           active={activeFilter}
           onChange={setActiveFilter}
-          stats={stats}
+          stats={localStats}
         />
       )}
 
@@ -134,40 +142,48 @@ export function MatchHistory({
   );
 }
 
-/** Player-perspective W–L–% strip with the current streak surfaced when present. */
+/** Player-perspective W–L–% strip. Renders as an edge-bordered ribbon (no
+ *  inner card fill) so it reads as a confident scoreboard band sitting on
+ *  top of the parent card — instead of a card-in-a-card. Streak surfaces
+ *  with its kind prefix ("W3" / "L2") so the value carries its own context
+ *  and stays visible on mobile. */
 function SummaryRow({ stats }) {
+  const streakTone =
+    stats.streak?.kind === 'W' ? 'emerald' : stats.streak?.kind === 'L' ? 'slate-dim' : 'slate';
+  const streakValue = stats.streak
+    ? `${stats.streak.kind}${stats.streak.count}`
+    : stats.winPct !== null
+      ? `${stats.winPct}%`
+      : '—';
   return (
-    <div className="mx-5 md:mx-6 mb-4 grid grid-cols-3 sm:grid-cols-4 gap-2 border border-slate-200/80 rounded-xl bg-slate-50/60 p-3">
+    <div className="mx-5 md:mx-6 mb-5 grid grid-cols-4 divide-x divide-slate-200/70 border-y border-slate-200/70">
       <Stat label="Played" value={stats.total} tone="slate" />
       <Stat label="Wins" value={stats.wins} tone="emerald" />
       <Stat label="Losses" value={stats.losses} tone="slate-dim" />
       <Stat
-        label={stats.streak ? `${stats.streak.kind === 'W' ? 'Win' : 'Loss'} streak` : 'Win %'}
-        value={
-          stats.streak
-            ? stats.streak.count
-            : stats.winPct !== null
-              ? `${stats.winPct}%`
-              : '—'
-        }
-        tone={stats.streak?.kind === 'W' ? 'emerald' : stats.streak?.kind === 'L' ? 'slate-dim' : 'slate'}
-        className="hidden sm:block"
+        label={stats.streak ? 'Streak' : 'Win rate'}
+        value={streakValue}
+        tone={streakTone}
       />
     </div>
   );
 }
 
 const STAT_TONE = {
-  slate: 'text-slate-800',
+  slate: 'text-slate-900',
   'slate-dim': 'text-slate-500',
   emerald: 'text-emerald-600',
 };
 
-function Stat({ label, value, tone = 'slate', className = '' }) {
+function Stat({ label, value, tone = 'slate' }) {
   return (
-    <div className={className}>
-      <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">{label}</p>
-      <p className={`font-display font-extrabold tracking-tight tabular-nums text-xl leading-none mt-1 ${STAT_TONE[tone]}`}>
+    <div className="px-3 py-3.5 md:px-4 md:py-4 min-w-0">
+      <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400 truncate">
+        {label}
+      </p>
+      <p
+        className={`font-display font-extrabold tracking-tight tabular-nums leading-none mt-1.5 text-2xl md:text-[28px] ${STAT_TONE[tone]}`}
+      >
         {value}
       </p>
     </div>
