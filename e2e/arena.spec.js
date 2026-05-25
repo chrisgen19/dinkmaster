@@ -10,7 +10,14 @@ async function registerFreshUser(page) {
   await page.getByPlaceholder('Email').fill(uniqueEmail());
   await page.getByPlaceholder('Password (min. 8 characters)').fill(PASSWORD);
   await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page).toHaveURL('/');
+  await expect(page).toHaveURL('/arenas');
+}
+
+async function createArenaFromDirectory(page, arenaName) {
+  await page.getByRole('link', { name: /New arena/ }).click();
+  await expect(page).toHaveURL('/arenas/new');
+  await page.getByPlaceholder(/Saturday Open Play/).fill(arenaName);
+  await page.getByRole('button', { name: 'Create arena' }).click();
 }
 
 test.describe('arenas', () => {
@@ -18,8 +25,7 @@ test.describe('arenas', () => {
     await registerFreshUser(page);
 
     const arenaName = `E2E Arena ${Date.now()}`;
-    await page.getByPlaceholder(/New arena name/).fill(arenaName);
-    await page.getByRole('button', { name: 'Create arena' }).click();
+    await createArenaFromDirectory(page, arenaName);
 
     // Lands on the new arena, which the creator owns and can manage.
     await expect(page).toHaveURL(/\/arena\/.+/);
@@ -38,11 +44,10 @@ test.describe('arenas', () => {
     await page.getByPlaceholder('Email').fill(email);
     await page.getByPlaceholder('Password').fill(PASSWORD);
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect(page).toHaveURL('/');
+    await expect(page).toHaveURL('/arenas');
 
     const arenaName = `Guest View Arena ${Date.now()}`;
-    await page.getByPlaceholder(/New arena name/).fill(arenaName);
-    await page.getByRole('button', { name: 'Create arena' }).click();
+    await createArenaFromDirectory(page, arenaName);
     await expect(page).toHaveURL(/\/arena\/.+/);
     const arenaUrl = page.url();
 
@@ -58,8 +63,7 @@ test.describe('arenas', () => {
     // User A creates an arena.
     await registerFreshUser(page);
     const arenaName = `Joinable Arena ${Date.now()}`;
-    await page.getByPlaceholder(/New arena name/).fill(arenaName);
-    await page.getByRole('button', { name: 'Create arena' }).click();
+    await createArenaFromDirectory(page, arenaName);
     await expect(page).toHaveURL(/\/arena\/.+/);
     const arenaUrl = page.url();
 

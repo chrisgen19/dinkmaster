@@ -12,7 +12,7 @@ test.describe('registration', () => {
     await page.getByPlaceholder('Password (min. 8 characters)').fill(PASSWORD);
     await page.getByRole('button', { name: 'Create account' }).click();
 
-    await expect(page).toHaveURL('/');
+    await expect(page).toHaveURL('/arenas');
     await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
   });
 
@@ -42,7 +42,7 @@ test.describe('login', () => {
     await page.getByPlaceholder('Password').fill(PASSWORD);
     await page.getByRole('button', { name: 'Sign in' }).click();
 
-    await expect(page).toHaveURL('/');
+    await expect(page).toHaveURL('/arenas');
     await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
   });
 

@@ -222,7 +222,7 @@ export default async function LandingPage() {
               Mark who’s in for today. The paddle rack manages the queue and mixes
               partners as games finish.
             </Step>
-            <Step n="3" title="Play &amp; track">
+            <Step n="3" title="Play & track">
               Log scores as you go. Stats, ratings, and weekly leaders update
               automatically.
             </Step>

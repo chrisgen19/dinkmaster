@@ -71,7 +71,7 @@ export default function RegisterPage() {
         setError(signUpError.message || 'Could not create account.');
         return;
       }
-      router.push('/');
+      router.push('/arenas');
     } catch (err) {
       // Network or unexpected failure — surface it instead of hanging on "Creating…".
       setError(err?.message || 'Could not create account.');

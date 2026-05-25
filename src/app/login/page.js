@@ -22,7 +22,7 @@ export default function LoginPage() {
       setError(signInError.message || 'Invalid email or password.');
       return;
     }
-    router.push('/');
+    router.push('/arenas');
   };
 
   return (
