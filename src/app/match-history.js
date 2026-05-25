@@ -279,34 +279,44 @@ function MatchRow({ match, perspective, formatTime }) {
           </span>
         </div>
 
-        {/* Teams + score */}
-        <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-center">
-          <TeamCell
-            team={match.teams.a}
-            isYou={youOn === 'a'}
-            isWinner={winner === 'a'}
-            align="left"
-            label={labelFor('a', perspective, youOn)}
-          />
+        {/* Teams + score — in player mode the viewer's side always sits on
+            the left so the row reads "you : them". Ordering happens once
+            here so the team column and the score column can't drift apart
+            (which would put the wrong score under the wrong name). */}
+        {(() => {
+          const viewerOnLeft = perspective !== 'player' || youOn !== 'b';
+          const leftSide = viewerOnLeft ? 'a' : 'b';
+          const rightSide = viewerOnLeft ? 'b' : 'a';
+          return (
+            <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-center">
+              <TeamCell
+                team={match.teams[leftSide]}
+                isYou={youOn === leftSide}
+                isWinner={winner === leftSide}
+                align="left"
+                label={labelFor(leftSide, perspective, youOn)}
+              />
 
-          <ScoreBlock
-            scoreA={match.teams.a.score}
-            scoreB={match.teams.b.score}
-            winner={winner}
-            differential={diff}
-            perspective={perspective}
-            youOn={youOn}
-            youWon={youWon}
-          />
+              <ScoreBlock
+                scoreLeft={match.teams[leftSide].score}
+                scoreRight={match.teams[rightSide].score}
+                leftWon={winner === leftSide}
+                rightWon={winner === rightSide}
+                differential={diff}
+                perspective={perspective}
+                youWon={youWon}
+              />
 
-          <TeamCell
-            team={match.teams.b}
-            isYou={youOn === 'b'}
-            isWinner={winner === 'b'}
-            align="right"
-            label={labelFor('b', perspective, youOn)}
-          />
-        </div>
+              <TeamCell
+                team={match.teams[rightSide]}
+                isYou={youOn === rightSide}
+                isWinner={winner === rightSide}
+                align="right"
+                label={labelFor(rightSide, perspective, youOn)}
+              />
+            </div>
+          );
+        })()}
       </div>
     </article>
   );
@@ -350,14 +360,9 @@ function labelFor(side, perspective, youOn) {
   return side === 'a' ? 'Team A' : 'Team B';
 }
 
-function ScoreBlock({ scoreA, scoreB, winner, differential, perspective, youOn, youWon }) {
-  // In player mode put viewer's score on the left so it always reads "you : them".
-  const showAsA = perspective !== 'player' || youOn !== 'b';
-  const left = showAsA ? scoreA : scoreB;
-  const right = showAsA ? scoreB : scoreA;
-  const leftWon = showAsA ? winner === 'a' : winner === 'b';
-  const rightWon = showAsA ? winner === 'b' : winner === 'a';
-
+/** Dumb score renderer — receives already-ordered values from the parent so
+ *  the team columns and the score columns can't get out of sync. */
+function ScoreBlock({ scoreLeft, scoreRight, leftWon, rightWon, differential, perspective, youWon }) {
   const diffSign = differential > 0 ? '+' : differential < 0 ? '−' : '';
   const diffMag = Math.abs(differential);
   const diffTone = perspective === 'player'
@@ -374,11 +379,11 @@ function ScoreBlock({ scoreA, scoreB, winner, differential, perspective, youOn, 
     <div className="flex flex-col items-center">
       <div className="flex items-baseline gap-2 font-display font-extrabold tabular-nums leading-none">
         <span className={`text-2xl md:text-[28px] ${leftWon ? 'text-slate-900' : 'text-slate-400'}`}>
-          {left}
+          {scoreLeft}
         </span>
         <span className="text-base text-slate-300 font-normal">:</span>
         <span className={`text-2xl md:text-[28px] ${rightWon ? 'text-slate-900' : 'text-slate-400'}`}>
-          {right}
+          {scoreRight}
         </span>
       </div>
       <span
