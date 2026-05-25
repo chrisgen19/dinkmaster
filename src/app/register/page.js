@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { signUp } from '@/lib/auth-client';
 
@@ -11,8 +11,31 @@ const FIELD_CLASS =
 
 const GENDER_OPTIONS = ['Male', 'Female', 'Other', 'Prefer not to say'];
 
+/**
+ * Accept only same-origin paths as a post-auth return URL — see the matching
+ * helper in `login/page.js`. Falls back to `/arenas` for anything suspicious.
+ */
+function safeNext(raw) {
+  if (typeof raw !== 'string') return '/arenas';
+  if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return '/arenas';
+  return raw;
+}
+
 export default function RegisterPage() {
+  // `useSearchParams` (inside `RegisterForm`) requires a Suspense boundary so
+  // the rest of the route can still prerender.
+  return (
+    <Suspense fallback={null}>
+      <RegisterForm />
+    </Suspense>
+  );
+}
+
+function RegisterForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = safeNext(searchParams.get('next'));
+  const loginHref = next !== '/arenas' ? `/login?next=${encodeURIComponent(next)}` : '/login';
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
@@ -71,7 +94,7 @@ export default function RegisterPage() {
         setError(signUpError.message || 'Could not create account.');
         return;
       }
-      router.push('/arenas');
+      router.push(next);
     } catch (err) {
       // Network or unexpected failure — surface it instead of hanging on "Creating…".
       setError(err?.message || 'Could not create account.');
@@ -191,7 +214,7 @@ export default function RegisterPage() {
 
         <p className="text-xs text-slate-400 text-center mt-4">
           Already have an account?{' '}
-          <Link href="/login" className="text-emerald-600 font-semibold hover:text-emerald-700">
+          <Link href={loginHref} className="text-emerald-600 font-semibold hover:text-emerald-700">
             Sign in
           </Link>
         </p>

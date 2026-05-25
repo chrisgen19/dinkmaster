@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function NewArenaPage() {
   const user = await getCurrentUser();
-  if (!user) redirect('/login');
+  if (!user) redirect('/login?next=/arenas/new');
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
