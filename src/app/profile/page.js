@@ -57,18 +57,18 @@ export default async function ProfilePage() {
           <RatingDisplay rating={totals.rating} />
         </header>
 
-        {/* HERO STAT RAMP ── four oversized numbers with editorial separators. */}
+        {/* HERO STAT RAMP ── three oversized numbers with editorial separators. */}
         <section className="animate-fade-in [animation-delay:120ms]">
-          <div className="grid grid-cols-3 md:grid-cols-3 gap-px bg-slate-200 rounded-2xl overflow-hidden border border-slate-200 shadow-sm">
+          <div className="grid grid-cols-3 gap-px bg-slate-200 rounded-2xl overflow-hidden border border-slate-200 shadow-sm">
             <RampStat label="Games" value={totals.gamesPlayed} />
             <RampStat
               label="Record"
               value={
-                <span className="tabular-nums">
+                <>
                   <span className="text-emerald-600">{totals.wins}</span>
                   <span className="text-slate-300 font-normal mx-1.5">–</span>
                   <span className="text-slate-500">{totals.losses}</span>
-                </span>
+                </>
               }
             />
             <RampStat
@@ -175,12 +175,11 @@ export default async function ProfilePage() {
  *  highlight + cross-hatched corner accents to keep it from feeling flat. */
 function Monogram({ name }) {
   const initials = monogram(name);
+  // Whole tile is decorative — the user's full name is rendered right next to
+  // it, so announcing "CD" would just add noise for screen readers.
   return (
-    <div className="relative shrink-0">
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 rounded-full bg-emerald-200/50 blur-xl"
-      />
+    <div aria-hidden="true" className="relative shrink-0">
+      <div className="absolute inset-0 rounded-full bg-emerald-200/50 blur-xl" />
       <div className="relative h-20 w-20 md:h-24 md:w-24 rounded-full bg-slate-900 text-white grid place-items-center ring-1 ring-slate-200 shadow-[0_8px_24px_rgba(15,23,42,0.18)]">
         <span className="font-display font-extrabold tracking-tight text-2xl md:text-3xl">
           {initials}
@@ -359,7 +358,10 @@ function ArenaCard({ arena }) {
             In rack
           </span>
         )}
-        <span className="ml-auto text-[10px] font-bold uppercase tracking-widest text-slate-300 group-hover:text-emerald-600 transition-colors">
+        <span
+          aria-hidden="true"
+          className="ml-auto text-[10px] font-bold uppercase tracking-widest text-slate-300 group-hover:text-emerald-600 transition-colors"
+        >
           Open →
         </span>
       </div>

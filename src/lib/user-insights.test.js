@@ -51,7 +51,6 @@ describe('enrichRecentMatches()', () => {
       VIEWER_IDS,
     );
     expect(out).toHaveLength(1);
-    expect(out[0].won).toBe(true);
     expect(out[0].scoreFor).toBe(11);
     expect(out[0].scoreAgainst).toBe(7);
     expect(out[0].partners.map((p) => p.firstName)).toEqual(['Mia']);
@@ -59,13 +58,24 @@ describe('enrichRecentMatches()', () => {
     expect(out[0].arenaName).toBe('QC Open');
   });
 
-  it('handles viewer on team 2 — partners still excludes the viewer', () => {
+  it('handles viewer on team 2 — scores flip and partners still excludes the viewer', () => {
     const out = enrichRecentMatches(
       [row({ matchId: 'm1', score1: 5, score2: 11, team: 2 })],
       VIEWER_IDS,
     );
-    expect(out[0].won).toBe(true);
+    expect(out[0].scoreFor).toBe(11);
+    expect(out[0].scoreAgainst).toBe(5);
     expect(out[0].partners.map((p) => p.firstName)).toEqual(['Mia']);
+  });
+
+  it('omits the legacy `won` field — outcome is derived in the UI layer', () => {
+    // Prevents the tie-as-loss flaw from reappearing: callers should compute
+    // outcome via winnerSide(toMatch(m)), which correctly handles ties.
+    const out = enrichRecentMatches(
+      [row({ matchId: 'm1', score1: 7, score2: 7 })],
+      VIEWER_IDS,
+    );
+    expect(out[0]).not.toHaveProperty('won');
   });
 
   it('emits ISO timestamps', () => {

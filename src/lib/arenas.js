@@ -263,7 +263,7 @@ export async function hasPendingJoinRequest(arenaId, userId) {
  * @returns {Promise<{
  *   totals:{arenas:number,gamesPlayed:number,wins:number,losses:number,winPct:number,rating:number|null,weeklyWins:number,weeklyArenasLed:number},
  *   arenas:Array<{arenaId:string,arenaName:string,gamesPlayed:number,wins:number,losses:number,rating:number,inQueue:boolean,active:boolean,weeklyWins:number,weeklyRank:number|null}>,
- *   recentMatches:Array<{matchId:string,arenaName:string,courtName:string,won:boolean,scoreFor:number,scoreAgainst:number,timestamp:string,partners:Array<{firstName:string,lastName:string|null}>,opponents:Array<{firstName:string,lastName:string|null}>}>,
+ *   recentMatches:Array<{matchId:string,arenaName:string,courtName:string,scoreFor:number,scoreAgainst:number,timestamp:string,partners:Array<{firstName:string,lastName:string|null}>,opponents:Array<{firstName:string,lastName:string|null}>}>,
  *   insights:{
  *     bestPartner:{name:string,games:number,wins:number,winPct:number}|null,
  *     favoriteCourt:{name:string,games:number}|null,

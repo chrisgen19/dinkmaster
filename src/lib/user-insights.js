@@ -29,11 +29,13 @@ export function enrichRecentMatches(matchPlayerRows, viewerPlayerIds) {
     const opponents = (m.players ?? [])
       .filter((p) => p.team !== mp.team)
       .map(toName);
+    // Outcome is intentionally omitted — `winnerSide(toMatch(m))` in the UI
+    // layer is the single source of truth and correctly treats ties as a
+    // distinct third state instead of a loss.
     return {
       matchId: m.id,
       arenaName: m.arena?.name,
       courtName: m.courtName,
-      won: scoreFor > scoreAgainst,
       scoreFor,
       scoreAgainst,
       partners,
