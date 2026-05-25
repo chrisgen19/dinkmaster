@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 
 export const metadata = {
   title: "Offline — DinkMaster",
@@ -12,8 +13,14 @@ export const metadata = {
 export default function OfflinePage() {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center gap-6 px-6 text-center bg-slate-50">
-      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-600/10 text-3xl">
-        🏓
+      <div className="relative h-16 w-16 overflow-hidden rounded-2xl ring-1 ring-inset ring-slate-200/80 shadow-sm">
+        <Image
+          src="/icons/icon-192.png"
+          alt="DinkMaster logo"
+          fill
+          sizes="64px"
+          className="object-cover"
+        />
       </div>
       <div className="space-y-2">
         <h1 className="font-display text-2xl font-bold text-slate-900">
