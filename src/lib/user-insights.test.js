@@ -5,6 +5,7 @@ import {
   favoriteCourt,
   currentStreak,
   monogram,
+  arenaMatchToRow,
 } from './user-insights';
 
 const VIEWER_IDS = new Set(['viewer-1']);
@@ -220,5 +221,56 @@ describe('monogram()', () => {
     expect(monogram('')).toBe('?');
     expect(monogram(null)).toBe('?');
     expect(monogram(undefined)).toBe('?');
+  });
+});
+
+describe('arenaMatchToRow()', () => {
+  const ARENA_MATCH = {
+    id: 'am1',
+    courtName: 'Court 1',
+    timestamp: '2026-05-25T19:00:00.000Z',
+    score1: 11,
+    score2: 7,
+    team1: [
+      { id: 'viewer-1', firstName: 'Me', lastName: 'You' },
+      { id: 'partner', firstName: 'Mia', lastName: null },
+    ],
+    team2: [
+      { id: 'opp-1', firstName: 'Joe', lastName: 'Smith' },
+      { id: 'opp-2', firstName: 'Lin', lastName: null },
+    ],
+  };
+
+  it('produces a matchPlayer-row shape that flows through the rest of the module', () => {
+    const row = arenaMatchToRow(ARENA_MATCH, 'viewer-1');
+    expect(row.playerId).toBe('viewer-1');
+    expect(row.team).toBe(1);
+    expect(row.match.id).toBe('am1');
+    expect(row.match.players).toHaveLength(4);
+
+    // bestPartner + favoriteCourt + currentStreak should consume the output.
+    const viewerSet = new Set(['viewer-1']);
+    expect(bestPartner([row], viewerSet)).toEqual({
+      name: 'Mia',
+      games: 1,
+      wins: 1,
+      winPct: 100,
+    });
+    expect(favoriteCourt([row])).toEqual({ name: 'Court 1', games: 1 });
+    expect(currentStreak([row])).toEqual({ kind: 'W', count: 1 });
+  });
+
+  it('reflects team 2 membership in `team`', () => {
+    const row = arenaMatchToRow(ARENA_MATCH, 'opp-1');
+    expect(row.team).toBe(2);
+  });
+
+  it('returns null when the viewer was not on the court', () => {
+    expect(arenaMatchToRow(ARENA_MATCH, 'someone-else')).toBeNull();
+  });
+
+  it('returns null for falsy input', () => {
+    expect(arenaMatchToRow(null, 'viewer-1')).toBeNull();
+    expect(arenaMatchToRow(ARENA_MATCH, null)).toBeNull();
   });
 });

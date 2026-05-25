@@ -165,6 +165,58 @@ function nameFromRow(row) {
   return row.playerFirstName;
 }
 
+/**
+ * Convert one arena `matchHistory` record into the `matchPlayer`-row shape
+ * the rest of this module consumes. Returns `null` when the viewer wasn't in
+ * the match — caller is expected to `.filter(Boolean)`.
+ *
+ * The arena page keeps matches in memory as `{ team1, team2, score1, score2,
+ * courtName, timestamp, id }` with team arrays of `{ id, firstName, lastName }`.
+ * `bestPartner` / `favoriteCourt` / `currentStreak` / `enrichRecentMatches` all
+ * expect the DB shape (`mp.team`, `mp.match.players[]`), so we adapt here
+ * instead of forking each helper.
+ *
+ * @param {object} match - one arena-shape match record
+ * @param {string} viewerPlayerId - the viewer's player id in this arena
+ * @returns {object|null} matchPlayer-row shape, or null when the viewer
+ *   wasn't on the court
+ */
+export function arenaMatchToRow(match, viewerPlayerId) {
+  if (!match || !viewerPlayerId) return null;
+  const team1 = match.team1 ?? [];
+  const team2 = match.team2 ?? [];
+  const onTeam1 = team1.some((p) => p?.id === viewerPlayerId);
+  const onTeam2 = !onTeam1 && team2.some((p) => p?.id === viewerPlayerId);
+  if (!onTeam1 && !onTeam2) return null;
+  const team = onTeam1 ? 1 : 2;
+  const players = [
+    ...team1.map((p) => ({
+      playerId: p.id,
+      team: 1,
+      playerFirstName: p.firstName,
+      playerLastName: p.lastName ?? null,
+    })),
+    ...team2.map((p) => ({
+      playerId: p.id,
+      team: 2,
+      playerFirstName: p.firstName,
+      playerLastName: p.lastName ?? null,
+    })),
+  ];
+  return {
+    playerId: viewerPlayerId,
+    team,
+    match: {
+      id: match.id,
+      score1: match.score1,
+      score2: match.score2,
+      courtName: match.courtName,
+      createdAt: match.timestamp,
+      players,
+    },
+  };
+}
+
 /** Initial-monogram for an avatar tile: "Christian Genesis Diomampo" → "CD".
  *  Falls back to "?" for empty/missing input. */
 export function monogram(name) {
