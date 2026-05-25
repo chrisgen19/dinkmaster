@@ -4,6 +4,7 @@ import { getCurrentUser } from '@/lib/session';
 import { getUserPlayerStats } from '@/lib/arenas';
 import { eloToDupr } from '@/lib/rating';
 import { AuthStatus } from '../auth-status';
+import { SiteHeader } from '../site-header';
 import { BackPill } from '../back-pill';
 
 // Always read fresh stats on each request.
@@ -31,22 +32,22 @@ export default async function ProfilePage() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
-      <header className="border-b border-slate-200 bg-white/95 backdrop-blur sticky top-0 z-50 px-4 py-4 md:px-8 flex flex-wrap justify-between items-center gap-4 shadow-sm">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center shadow-sm">
-            <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="12" r="9" />
-            </svg>
-          </div>
-          <div>
-            <BackPill fallbackHref="/arenas" label="All arenas" className="mb-1" />
-            <h1 className="text-xl font-extrabold tracking-tight text-slate-900">My Profile</h1>
-          </div>
-        </div>
+      <SiteHeader variant="home">
         <AuthStatus />
-      </header>
+      </SiteHeader>
 
       <main className="flex-1 w-full max-w-4xl mx-auto p-4 md:p-8 space-y-6">
+        {/* Page heading — back pill + title, matching the arena / new-arena pages. */}
+        <div>
+          <BackPill fallbackHref="/arenas" label="All arenas" />
+          <h1 className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-slate-900 mt-2">
+            My Profile
+          </h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Your lifetime record and per-arena stats.
+          </p>
+        </div>
+
         {/* Identity + lifetime totals */}
         <section className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-5">
           <div>
