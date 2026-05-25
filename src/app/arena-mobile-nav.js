@@ -1,0 +1,325 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { Drawer } from 'vaul';
+import useEmblaCarousel from 'embla-carousel-react';
+import { motion } from 'motion/react';
+
+/**
+ * Icons sized for the bottom-sheet menu rows (24px) and the strip pills (18px).
+ * Inline SVGs keep the bundle slim and the stroke weight consistent with the
+ * rest of the app chrome — no icon library needed for six glyphs.
+ */
+const TAB_ICONS = {
+  courts: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 12h18M12 4v16" />
+    </svg>
+  ),
+  thisweek: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2l2.39 6.96H22l-5.8 4.21L18.59 22 12 17.77 5.41 22l2.39-8.83L2 8.96h7.61z" />
+    </svg>
+  ),
+  stats: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="3" />
+      <path d="M3 9h18M9 3v18" />
+    </svg>
+  ),
+  history: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 6h16M4 12h16M4 18h10" />
+    </svg>
+  ),
+  members: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  ),
+  mystats: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  ),
+};
+
+function TabIcon({ id, className }) {
+  const icon = TAB_ICONS[id];
+  if (!icon) return null;
+  return <span className={className} aria-hidden="true">{icon}</span>;
+}
+
+function Badge({ value, active }) {
+  if (value == null) return null;
+  return (
+    <span
+      className={`shrink-0 text-[10px] font-black rounded-full px-1.5 py-0.5 leading-none ${
+        active ? 'bg-emerald-400 text-slate-900' : 'bg-amber-500 text-white'
+      }`}
+    >
+      {value}
+    </span>
+  );
+}
+
+/**
+ * Mobile horizontal tab strip. Embla gives us momentum scrolling and a
+ * snap-into-view animation when the active tab changes from anywhere (the
+ * bottom sheet, a content swipe, or a direct tap on a pill).
+ *
+ * Stays in DOM order under the SiteHeader so the page header → strip → content
+ * reading order matches the visual order. Hidden at `md` and above.
+ */
+function ArenaMobileTabStrip({ navTabs, activeTab, onSelectTab }) {
+  const [emblaRef, emblaApi] = useEmblaCarousel({
+    dragFree: true,
+    containScroll: 'trimSnaps',
+    align: 'center',
+  });
+
+  // Whenever activeTab changes from the outside (drawer pick, content swipe),
+  // bring that pill into view. `containScroll: 'trimSnaps'` keeps the end pills
+  // pinned to the gutter instead of over-centering them.
+  useEffect(() => {
+    if (!emblaApi) return;
+    const idx = navTabs.findIndex((t) => t.id === activeTab);
+    if (idx >= 0) emblaApi.scrollTo(idx);
+  }, [emblaApi, activeTab, navTabs]);
+
+  return (
+    <div
+      className="md:hidden sticky top-[var(--site-header-h,64px)] z-30
+        bg-slate-50/85 backdrop-blur-md border-b border-slate-200/70"
+    >
+      <div ref={emblaRef} className="overflow-hidden">
+        <div className="flex gap-2 px-3 py-2.5">
+          {navTabs.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => onSelectTab(tab.id)}
+                aria-current={isActive ? 'page' : undefined}
+                className={`relative shrink-0 inline-flex items-center gap-2 rounded-full
+                  px-3.5 py-2 text-[13px] font-bold tracking-tight transition
+                  ${isActive
+                    ? 'bg-slate-900 text-white shadow-sm shadow-slate-900/20'
+                    : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:text-slate-900'
+                  }`}
+              >
+                <TabIcon
+                  id={tab.id}
+                  className={`w-[18px] h-[18px] ${isActive ? 'text-emerald-300' : 'text-slate-400'}`}
+                />
+                <span>{tab.label}</span>
+                <Badge value={tab.badge} active={isActive} />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Mobile bottom sheet — primary navigation. A persistent pill sits in the
+ * thumb zone showing the current tab; tapping it opens a vaul drawer with the
+ * full tab list. Vaul handles the native-feel drag-to-dismiss, snap points,
+ * body-scroll lock, focus trap, and overlay automatically.
+ *
+ * Hidden at `md` and above where the desktop tablist takes over.
+ */
+function ArenaMobileSheet({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
+  const [open, setOpen] = useState(false);
+
+  const handleSelect = useCallback((id) => {
+    onSelectTab(id);
+    setOpen(false);
+  }, [onSelectTab]);
+
+  return (
+    <>
+      <Drawer.Root open={open} onOpenChange={setOpen} shouldScaleBackground>
+        <Drawer.Trigger asChild>
+          <button
+            type="button"
+            aria-label={`Switch arena view (current: ${activeTabLabel})`}
+            className="md:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40
+              flex items-center gap-3 pl-4 pr-5 py-3 rounded-full
+              bg-slate-900 text-white shadow-xl shadow-slate-900/30
+              ring-1 ring-white/10 active:scale-[0.98] transition"
+          >
+            <TabIcon id={activeTab} className="w-5 h-5 text-emerald-300" />
+            <span className="font-display font-extrabold tracking-tight text-sm">
+              {activeTabLabel}
+            </span>
+            <motion.span
+              aria-hidden="true"
+              animate={{ rotate: open ? 180 : 0 }}
+              transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+              className="inline-flex"
+            >
+              <svg className="w-4 h-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </motion.span>
+          </button>
+        </Drawer.Trigger>
+        <Drawer.Portal>
+          <Drawer.Overlay className="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-[2px]" />
+          <Drawer.Content
+            className="fixed bottom-0 left-0 right-0 z-50 outline-none
+              bg-white rounded-t-[28px]
+              shadow-[0_-20px_50px_-12px_rgba(15,23,42,0.25)]
+              focus:outline-none"
+          >
+            {/* Vaul recommends a visible drag handle so users discover the gesture. */}
+            <div className="mx-auto mt-3 mb-1 h-1.5 w-12 rounded-full bg-slate-200" aria-hidden="true" />
+            <Drawer.Title className="sr-only">Arena views</Drawer.Title>
+            <Drawer.Description className="sr-only">
+              Pick which arena view to show. The current view is {activeTabLabel}.
+            </Drawer.Description>
+            <div className="px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 px-2 mb-2">
+                Arena views
+              </p>
+              <nav className="space-y-1">
+                {navTabs.map((tab) => {
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => handleSelect(tab.id)}
+                      aria-current={isActive ? 'page' : undefined}
+                      className={`w-full flex items-center gap-3 px-3 py-3.5 rounded-2xl
+                        text-left transition
+                        ${isActive
+                          ? 'bg-slate-900 text-white shadow-md shadow-slate-900/20'
+                          : 'text-slate-700 hover:bg-slate-100 active:bg-slate-100'
+                        }`}
+                    >
+                      <span className={`shrink-0 grid place-items-center w-9 h-9 rounded-xl ${
+                        isActive ? 'bg-white/10 text-emerald-300' : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        <TabIcon id={tab.id} className="w-5 h-5" />
+                      </span>
+                      <span className="flex-1 font-display font-extrabold tracking-tight text-[15px]">
+                        {tab.label}
+                      </span>
+                      <Badge value={tab.badge} active={isActive} />
+                      {isActive && (
+                        <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-300">
+                          Open
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+          </Drawer.Content>
+        </Drawer.Portal>
+      </Drawer.Root>
+    </>
+  );
+}
+
+/**
+ * Mobile navigation composed of two complementary surfaces:
+ *
+ * 1. A sticky horizontal tab strip just under the SiteHeader (always visible,
+ *    swipe to scrub through tabs, tap to switch).
+ * 2. A floating "current view" pill above the thumb zone that opens a vaul
+ *    bottom sheet with the full tab list, descriptions, and badges.
+ *
+ * Both write to the same `onSelectTab` callback, so the parent owns the
+ * single source of truth for `activeTab`.
+ */
+export function ArenaMobileNav({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
+  return (
+    <>
+      <ArenaMobileTabStrip
+        navTabs={navTabs}
+        activeTab={activeTab}
+        onSelectTab={onSelectTab}
+      />
+      <ArenaMobileSheet
+        navTabs={navTabs}
+        activeTab={activeTab}
+        activeTabLabel={activeTabLabel}
+        onSelectTab={onSelectTab}
+      />
+    </>
+  );
+}
+
+/**
+ * Detect coarse pointers (touch screens) so we only enable the swipe gesture
+ * where it belongs. Mouse-driven desktops should never have a stray drag
+ * change tabs — both for ergonomics and to keep text selection unaffected.
+ */
+function useIsCoarsePointer() {
+  const [coarse, setCoarse] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mql = window.matchMedia('(pointer: coarse)');
+    const update = () => setCoarse(mql.matches);
+    update();
+    mql.addEventListener?.('change', update);
+    return () => mql.removeEventListener?.('change', update);
+  }, []);
+  return coarse;
+}
+
+/**
+ * Swipe handler for the tab content area on mobile. A left swipe advances to
+ * the next tab, a right swipe returns to the previous tab — same direction
+ * conventions as iOS / Android pager UIs. Wrap the active-tab content in this
+ * component and pass the same `navTabs` and `activeTab` you give the nav.
+ *
+ * Drag is disabled on fine-pointer devices (mice) so a desktop drag never
+ * changes tabs by accident.
+ */
+export function ArenaContentSwipe({ navTabs, activeTab, onSelectTab, children }) {
+  const idx = navTabs.findIndex((t) => t.id === activeTab);
+  const isCoarse = useIsCoarsePointer();
+
+  const handleDragEnd = (_event, info) => {
+    // Distance and velocity thresholds tuned for thumb swipes: roughly a third
+    // of the screen, OR a quick flick. Tap/scroll noise stays under both.
+    const distance = Math.abs(info.offset.x);
+    const velocity = Math.abs(info.velocity.x);
+    if (distance < 80 && velocity < 400) return;
+
+    if (info.offset.x < 0 && idx < navTabs.length - 1) {
+      onSelectTab(navTabs[idx + 1].id);
+    } else if (info.offset.x > 0 && idx > 0) {
+      onSelectTab(navTabs[idx - 1].id);
+    }
+  };
+
+  return (
+    <motion.div
+      // `touch-action: pan-y` lets vertical scrolls pass through while we still
+      // get to claim horizontal pans for the gesture.
+      className="touch-pan-y"
+      drag={isCoarse ? 'x' : false}
+      dragDirectionLock
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.15}
+      dragSnapToOrigin
+      onDragEnd={handleDragEnd}
+      transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+    >
+      {children}
+    </motion.div>
+  );
+}
