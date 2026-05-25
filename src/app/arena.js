@@ -24,7 +24,7 @@ import { formatShortName } from '@/lib/player-display';
 import { AuthStatus } from './auth-status';
 import { SiteHeader } from './site-header';
 import { ArenaMembers } from './arena-members';
-import { ArenaNavDrawer } from './arena-nav-drawer';
+import { ArenaMobileNav, ArenaContentSwipe } from './arena-mobile-nav';
 import { ArenaScheduleModal } from './arena-schedule-modal';
 import { ArenaCourtsPanel } from './arena-courts-panel';
 import { ArenaSessionPrepBanner } from './arena-session-prep-banner';
@@ -531,14 +531,14 @@ export default function Arena({
         </div>
 
         {/* Mobile: compact inline stat pills */}
-        <div className="flex md:hidden gap-1.5 text-[11px]">
-          <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-slate-700">
+        <div className="flex md:hidden gap-1.5 text-[12px]">
+          <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2.5 py-1 font-bold text-slate-700">
             {players.length}<span className="text-slate-400 font-semibold"> players</span>
           </span>
-          <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-emerald-600">
+          <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2.5 py-1 font-bold text-emerald-600">
             {queue.length}<span className="text-slate-400 font-semibold"> queued</span>
           </span>
-          <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2 py-1 font-bold text-sky-600">
+          <span className="bg-slate-100 border border-slate-200/60 rounded-lg px-2.5 py-1 font-bold text-sky-600">
             {liveCourtCount}<span className="text-slate-400 font-semibold"> live</span>
           </span>
         </div>
@@ -706,7 +706,7 @@ export default function Arena({
                   tabIndex={isActive ? 0 : -1}
                   onClick={() => setActiveTab(tab.id)}
                   className={`relative flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl
-                    text-[11px] font-extrabold uppercase tracking-[0.06em]
+                    text-[13px] font-extrabold tracking-tight
                     transition-all duration-200 ${
                     isActive
                       ? 'bg-slate-900 text-white shadow-md shadow-slate-900/20'
@@ -729,18 +729,22 @@ export default function Arena({
             })}
           </div>
 
-          {/* Mobile: persistent bottom navigation drawer */}
-          <ArenaNavDrawer
+          {/* Mobile: sticky scrollable tab strip + bottom-sheet drawer */}
+          <ArenaMobileNav
             navTabs={navTabs}
             activeTab={activeTab}
             activeTabLabel={activeTabLabel}
-            canManage={canManage}
-            pendingRequests={pendingRequests}
             onSelectTab={handleSelectTab}
           />
 
           {/* Scroll target — selecting a tab on mobile scrolls here. */}
           <div ref={contentAnchorRef} className="scroll-mt-24" aria-hidden="true" />
+
+          <ArenaContentSwipe
+            navTabs={navTabs}
+            activeTab={activeTab}
+            onSelectTab={handleSelectTab}
+          >
 
           {activeTab === 'courts' && (
             <ArenaCourtsPanel
@@ -1118,6 +1122,7 @@ export default function Arena({
             </div>
           )}
 
+          </ArenaContentSwipe>
         </div>
       </main>
 
