@@ -67,6 +67,18 @@ export function BackPill({ fallbackHref, label, className = '', forceFallback = 
   }, [forceFallback]);
 
   const handleClick = (e) => {
+    // Let the browser handle modified / non-primary clicks (open-in-new-tab,
+    // middle-click, etc.) on the underlying <Link> to fallbackHref.
+    if (
+      e.defaultPrevented ||
+      e.button !== 0 ||
+      e.metaKey ||
+      e.ctrlKey ||
+      e.shiftKey ||
+      e.altKey
+    ) {
+      return;
+    }
     if (!forceFallback && canGoBack) {
       e.preventDefault();
       router.back();
