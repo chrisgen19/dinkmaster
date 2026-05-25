@@ -151,6 +151,10 @@ export default async function ProfilePage() {
               matches={matches}
               perspective="player"
               maxHeight="640px"
+              // The hero ramp above already shows Played/Wins/Losses/Win rate
+              // and the Insights card carries the streak — turning off the
+              // MatchHistory summary avoids two streak displays on one page.
+              summary={false}
               emptyState={{
                 icon: '🎾',
                 title: 'No matches yet',

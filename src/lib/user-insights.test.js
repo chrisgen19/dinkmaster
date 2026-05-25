@@ -149,11 +149,22 @@ describe('currentStreak()', () => {
 
   it('treats a leading tie as undecided and anchors on the next match', () => {
     const matches = [
-      row({ matchId: 'a', score1: 7, score2: 7 }),   // tie → skip
+      row({ matchId: 'a', score1: 7, score2: 7 }),   // tie → skip (leading)
       row({ matchId: 'b', score1: 5, score2: 11 }),  // L
       row({ matchId: 'c', score1: 6, score2: 11 }),  // L
     ];
     expect(currentStreak(matches)).toEqual({ kind: 'L', count: 2 });
+  });
+
+  it('breaks on a mid-streak tie instead of skipping it', () => {
+    // Aligns with summarise() in match-history.js so the Insights card and the
+    // MatchHistory summary strip never show conflicting streak counts.
+    const matches = [
+      row({ matchId: 'a', score1: 11, score2: 6 }),  // W
+      row({ matchId: 'b', score1: 7, score2: 7 }),   // tie → ends the streak
+      row({ matchId: 'c', score1: 11, score2: 4 }),  // W (should not count)
+    ];
+    expect(currentStreak(matches)).toEqual({ kind: 'W', count: 1 });
   });
 });
 

@@ -133,7 +133,10 @@ export function currentStreak(matchPlayerRows) {
   let count = 0;
   for (let j = i; j < matchPlayerRows.length; j += 1) {
     const w = wonAt(matchPlayerRows[j]);
-    if (w === null) continue;
+    // Break (not continue) on a mid-streak tie so the count matches
+    // `summarise()` in match-history.js — otherwise two streak displays on
+    // the same page can show different numbers when a tie interrupts.
+    if (w === null) break;
     if ((w && kind === 'W') || (!w && kind === 'L')) count += 1;
     else break;
   }
