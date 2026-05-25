@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { NAV_BASELINE_KEY } from './nav-tracker';
+import { canNavigateBack } from '@/lib/nav-back';
 
 /**
  * Shared back-navigation pill — the small chevron + uppercase-label affordance
@@ -21,10 +22,11 @@ import { NAV_BASELINE_KEY } from './nav-tracker';
  *     entry. This catches SPA navigations (whose `document.referrer` stays
  *     stale at the original entry page).
  *
- * Why not `history.length > 1`? That's true even when the previous entry is an
- * external site (search result, shared link), so `router.back()` would leave
- * the app. Comparing against the entry-time baseline only returns true when the
- * back target is one of *our* pushed entries.
+ * The exact rules live in the pure `canNavigateBack` helper (unit-tested). Two
+ * subtleties it encodes: `history.length > 1` alone is NOT "in-app" (an
+ * external referrer also has length ≥ 2), and a same-origin referrer in a
+ * fresh tab has `history.length === 1` with no useful back target — both of
+ * those resolve to `fallbackHref`.
  *
  * @param {object} props
  * @param {string} props.fallbackHref - Where to go when there's no in-app history.
@@ -50,9 +52,12 @@ export function BackPill({ fallbackHref, label, className = '', forceFallback = 
     // entries since (current > baseline), back() lands on one of our pages.
     const rawBaseline = sessionStorage.getItem(NAV_BASELINE_KEY);
     const baseline = rawBaseline === null ? window.history.length : Number(rawBaseline);
-    const grewInApp = window.history.length > baseline;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reading document.referrer / window.history / sessionStorage (client-only) on mount; unknowable during SSR
-    setCanGoBack(sameOriginReferrer || grewInApp);
+    setCanGoBack(canNavigateBack({
+      sameOriginReferrer,
+      historyLength: window.history.length,
+      baseline,
+    }));
   }, [forceFallback]);
 
   const handleClick = (e) => {

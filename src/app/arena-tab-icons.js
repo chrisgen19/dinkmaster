@@ -1,6 +1,6 @@
 /**
  * Shared tab glyphs for the arena page. Mobile (`arena-mobile-nav`) and the
- * desktop tab bar (`arena-desktop-tabs`) both import from here so the icon
+ * desktop tab bar (inline in `arena.js`) both import from here so the icon
  * language stays in sync across breakpoints.
  *
  * Inline SVGs keep the bundle slim and the stroke weight consistent with the

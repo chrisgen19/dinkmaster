@@ -62,6 +62,11 @@ const formatClock = (hhmm) => {
   return `${h12}:${String(m).padStart(2, '0')} ${period}`;
 };
 
+/** Whether an arena has any real play schedule set (days or times), vs. the
+ *  empty default that `describeSchedule` would render as "Every day". */
+const hasConfiguredSchedule = (schedule) =>
+  Boolean(schedule?.days?.length || schedule?.start || schedule?.end);
+
 /** One-line schedule summary, e.g. "Mon, Wed, Fri · 6:00 PM–10:00 PM (Asia/Manila)". */
 const describeSchedule = ({ days = [], start, end, timezone } = {}) => {
   const ordered = WEEKDAYS.filter((d) => days.includes(d.value)).map((d) => d.short);
@@ -250,7 +255,14 @@ export default function Arena({
     // resizes. (The manager prep banner is in-flow now, so it doesn't use this.)
     const header = document.querySelector('[data-site-header]');
     if (!header) return undefined;
-    const measure = () => setHeaderHeight(header.getBoundingClientRect().height);
+    const measure = () => {
+      const h = header.getBoundingClientRect().height;
+      setHeaderHeight(h);
+      // Also publish as a CSS variable so the mobile tab strip
+      // (`sticky top-[var(--site-header-h)]`) tucks under the real header
+      // height instead of its 64px fallback.
+      document.documentElement.style.setProperty('--site-header-h', `${h}px`);
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(header);
@@ -537,11 +549,7 @@ export default function Arena({
         arenaId={arenaId}
         arenaName={arenaName}
         description={description}
-        scheduleLabel={
-          schedule?.days?.length || schedule?.start || schedule?.end
-            ? describeSchedule(schedule)
-            : null
-        }
+        scheduleLabel={hasConfiguredSchedule(schedule) ? describeSchedule(schedule) : null}
         playerCount={players.length}
         queueLength={queue.length}
         liveCourtCount={liveCourtCount}
@@ -764,7 +772,9 @@ export default function Arena({
                   <h3 className="font-display text-base md:text-lg font-extrabold tracking-tight text-slate-900">
                     🏆 Player of the Week
                   </h3>
-                  <p className="text-xs text-slate-500 mt-1.5">{describeSchedule(schedule)}</p>
+                  <p className="text-xs text-slate-500 mt-1.5">
+                    {hasConfiguredSchedule(schedule) ? describeSchedule(schedule) : 'Counting every day — set a schedule to scope the week.'}
+                  </p>
                 </div>
                 {canManage && (
                   <button
