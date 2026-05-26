@@ -70,7 +70,12 @@ export function PwaInstallPrompt() {
   // on the server, where window is undefined).
   const [dismissed, setDismissed] = useState(() => {
     if (typeof window === 'undefined') return false;
-    return window.sessionStorage.getItem(DISMISS_KEY) === '1';
+    try {
+      return window.sessionStorage.getItem(DISMISS_KEY) === '1';
+    } catch {
+      // sessionStorage can throw in private mode / when disabled — non-fatal.
+      return false;
+    }
   });
 
   useEffect(() => {
