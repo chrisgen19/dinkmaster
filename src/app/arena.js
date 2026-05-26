@@ -20,6 +20,7 @@ import {
 import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE } from '@/lib/match-defaults';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
+import { computeSessionStats } from '@/lib/session-stats';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
 import { formatShortName } from '@/lib/player-display';
 import { AuthStatus } from './auth-status';
@@ -319,9 +320,44 @@ export default function Arena({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [courtToCancel, isPending]);
 
+  // Session-scoped overlay of games / wins / losses. The DB `Player` row holds
+  // lifetime counters (incremented on every `endMatch` and surfaced on
+  // /profile), but inside the arena view those numbers stop matching what the
+  // This Week leaderboard shows after a manager hits "Reset session now". We
+  // recompute games/W/L from `matchHistory` since `lastSessionResetAt` and
+  // overlay them onto the players array so the Paddle Rack tile and the My
+  // Stats tab (both derived from `players` / `myPlayer`) read off the same
+  // truth the leaderboard does. A null reset timestamp means "no reset yet"
+  // and the tally falls through to lifetime equivalence (every recorded
+  // match counts), so a never-reset arena looks identical to before.
+  const sessionStats = useMemo(
+    () => computeSessionStats(matchHistory, lastSessionResetAt),
+    [matchHistory, lastSessionResetAt],
+  );
+  // We DO preserve the original lifetime counters under `lifetime*` keys so
+  // the My Stats tab's "show rating" / "play a few matches" gates can keep
+  // asking "have they ever played?" rather than "have they played this
+  // session?" — otherwise a Reset Session would hide a rated player's rating
+  // until they finished their first game in the new session.
+  const displayPlayers = useMemo(
+    () =>
+      players.map((p) => {
+        const s = sessionStats.get(p.id);
+        return {
+          ...p,
+          lifetimeGamesPlayed: p.gamesPlayed,
+          lifetimeWins: p.wins,
+          lifetimeLosses: p.losses,
+          gamesPlayed: s?.games ?? 0,
+          wins: s?.wins ?? 0,
+          losses: s?.losses ?? 0,
+        };
+      }),
+    [players, sessionStats],
+  );
   // The viewer's own linked player in this arena (null for guests / non-players).
   const myPlayer = viewerUserId
-    ? players.find((p) => p.userId === viewerUserId) ?? null
+    ? displayPlayers.find((p) => p.userId === viewerUserId) ?? null
     : null;
   // Courts with a match in progress — surfaced in the header stats and the
   // tab badge, so compute it once.
@@ -748,7 +784,7 @@ export default function Arena({
         >
           <PaddleRackStack
             queue={queue}
-            players={players}
+            players={displayPlayers}
             canManage={canManage}
             viewerUserId={viewerUserId}
             autoMix={autoMix}
@@ -779,7 +815,7 @@ export default function Arena({
           {activeTab === 'courts' && (
             <ArenaCourtsPanel
               courts={courts}
-              players={players}
+              players={displayPlayers}
               canManage={canManage}
               isPending={isPending}
               queueLength={queue.length}
@@ -941,7 +977,7 @@ export default function Arena({
         <ArenaPrepRosterModal
           arenaId={arenaId}
           members={members}
-          players={players}
+          players={displayPlayers}
           queue={queue}
           pendingRequests={pendingRequests}
           pendingLinkRequests={pendingLinkRequests}

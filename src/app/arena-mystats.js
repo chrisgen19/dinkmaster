@@ -85,10 +85,14 @@ export function ArenaMyStats({
     ? `In the rack · #${queueIndex + 1}`
     : onCourt ? 'On a court' : 'Not in the rack';
   const queueTone = queueIndex >= 0 ? 'emerald' : onCourt ? 'sky' : 'slate';
-  const ratingLabel = myPlayer.gamesPlayed > 0
-    ? eloToDupr(myPlayer.rating).toFixed(3)
-    : '—';
-  const hasGames = myPlayer.gamesPlayed > 0;
+  // Rating + "play a few matches" hint gate on whether the player has ever
+  // played in this arena — not just this session — so a Reset Session
+  // doesn't hide a rated player's rating until they finish their first
+  // game in the new session. `lifetimeGamesPlayed` is overlaid alongside
+  // the session-scoped `gamesPlayed` by Arena's displayPlayers memo.
+  const everPlayed = (myPlayer.lifetimeGamesPlayed ?? myPlayer.gamesPlayed) > 0;
+  const ratingLabel = everPlayed ? eloToDupr(myPlayer.rating).toFixed(3) : '—';
+  const hasGames = everPlayed;
 
   return (
     <div
