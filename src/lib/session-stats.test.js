@@ -64,6 +64,21 @@ describe('computeSessionStats', () => {
     expect(out.has('z')).toBe(false);
   });
 
+  it('omits players who only appear in pre-cutoff matches (rack tile reads 0)', () => {
+    // `preOnly` plays before the cutoff, `post` plays after. The overlay in
+    // arena.js falls back to {games:0, wins:0, losses:0} when a player has
+    // no entry — so this case is what makes the rack tile show 0/0/0 for
+    // someone who hasn't played yet this session.
+    const matches = [
+      m({ team1: ['preOnly'], team2: ['post'], score1: 11, score2: 7, t: -30 }),
+      m({ team1: ['post'], team2: ['other'], score1: 11, score2: 7, t: 5 }),
+    ];
+    const out = computeSessionStats(matches, CUTOFF);
+    expect(out.has('preOnly')).toBe(false);
+    expect(out.get('post')).toEqual({ games: 1, wins: 1, losses: 0 });
+    expect(out.get('other')).toEqual({ games: 1, wins: 0, losses: 1 });
+  });
+
   it('accepts a Date instance for sessionStart', () => {
     const matches = [
       m({ team1: ['a'], team2: ['b'], score1: 11, score2: 9, t: -10 }),

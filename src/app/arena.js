@@ -947,6 +947,7 @@ export default function Arena({
             <ArenaMyStats
               myPlayer={myPlayer}
               matchHistory={matchHistory}
+              sessionStart={lastSessionResetAt}
               queue={queue}
               courts={courts}
               formatTimestamp={formatTimestamp}
