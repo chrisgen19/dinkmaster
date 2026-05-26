@@ -100,12 +100,6 @@ function ArenaMobileSheet({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
   const titleId = useId();
   const descId = useId();
 
-  const close = useCallback(() => setOpen(false), []);
-  const handleSelect = useCallback((id) => {
-    onSelectTab(id);
-    setOpen(false);
-  }, [onSelectTab]);
-
   // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount flag so createPortal only runs client-side (document.body is unavailable during SSR)
   useEffect(() => setMounted(true), []);
 
@@ -137,6 +131,19 @@ function ArenaMobileSheet({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
     style.width = '';
     window.scrollTo(0, y);
   }, []);
+
+  const close = useCallback(() => setOpen(false), []);
+  const handleSelect = useCallback((id) => {
+    // Unlock scroll *now* rather than waiting for onExitComplete: arena.js
+    // scrolls to the freshly selected tab's content shortly after, and a body
+    // still pinned with `position: fixed` (or a late scroll-restore) would
+    // cancel that. Restoring to the saved offset first keeps the background
+    // from flashing to the top while the sheet animates out. Deferred unlock
+    // stays for the dismiss paths (overlay / Escape / drag).
+    unlockScroll();
+    onSelectTab(id);
+    setOpen(false);
+  }, [onSelectTab, unlockScroll]);
 
   // The desktop tablist takes over at `md`, so a sheet left open while the
   // viewport crosses 768px (tablet rotation, desktop dev-tools resize) would
