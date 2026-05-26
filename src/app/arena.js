@@ -311,15 +311,19 @@ export default function Arena({
   }, [scoreModalOpen]);
 
   // Escape closes the cancel-fill confirm modal too (keyboard partner to the
-  // backdrop click and the "Keep Playing" button).
+  // backdrop click and the "Keep Playing" button). Suppressed while the action
+  // is in flight: handleConfirmCancelFill keeps the modal open until the result
+  // lands so a NOT_PLAYING/INVALID_COURT race surfaces in context, and that
+  // promise would be broken if Esc could still dismiss mid-action. `isPending`
+  // is in the deps so the listener captures its current value, not a stale one.
   useEffect(() => {
     if (!courtToCancel) return undefined;
     const onKeyDown = (e) => {
-      if (e.key === 'Escape') setCourtToCancel(null);
+      if (e.key === 'Escape' && !isPending) setCourtToCancel(null);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [courtToCancel]);
+  }, [courtToCancel, isPending]);
 
   // The viewer's own linked player in this arena (null for guests / non-players).
   const myPlayer = viewerUserId
@@ -1031,7 +1035,10 @@ export default function Arena({
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
           onClick={(e) => {
-            if (e.target === e.currentTarget) setCourtToCancel(null);
+            // Ignore backdrop dismiss while the cancel is in flight; both
+            // buttons are already disabled, and Esc is suppressed too, so the
+            // modal stays put until the result lands.
+            if (e.target === e.currentTarget && !isPending) setCourtToCancel(null);
           }}
         >
           <div
