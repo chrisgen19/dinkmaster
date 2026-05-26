@@ -778,15 +778,28 @@ export async function cancelFill(arenaId, courtId) {
   try {
     await prisma.$transaction(async (tx) => {
       await lockQueue(tx, arenaId);
+      // Read the fill's bookkeeping under the queue lock, BEFORE the atomic
+      // claim clears it — we need the exact set of players the fill bumped.
+      const courtRow = await tx.court.findFirst({
+        where: { id: courtId, arenaId },
+        select: { fillBumpedPlayerIds: true },
+      });
+      const bumpedIds = courtRow?.fillBumpedPlayerIds ?? [];
+
       // Atomically claim the cancel: only flip playing -> vacant, so a
       // concurrent endMatch/cancelFill for the same court can't double-process.
+      // Also clear `fillBumpedPlayerIds` so a vacant court never carries the
+      // previous fill's bookkeeping into a future debug session.
       const claimed = await tx.court.updateMany({
         where: { id: courtId, arenaId, status: 'playing' },
-        data: { status: 'vacant' },
+        data: { status: 'vacant', fillBumpedPlayerIds: [] },
       });
       if (claimed.count !== 1) throw new Error('NOT_PLAYING');
 
       const slots = await tx.courtSlot.findMany({ where: { courtId } });
+      // fillCourt always writes four slots — anything else means the court row
+      // is corrupt and a partial restore would unbump the wrong teams.
+      if (slots.length !== 4) throw new Error('INVALID_COURT');
       // Need both snapshot fields to restore order + wait fairness exactly;
       // a partial/absent snapshot (pre-feature slot) is non-cancellable.
       if (slots.some((s) => s.prevQueueOrder === null || s.prevWaitRounds === null)) {
@@ -796,11 +809,6 @@ export async function cancelFill(arenaId, courtId) {
       // Reverse the fill's "+1 wait" for exactly the players it bumped, skipping
       // any who have since left or re-entered a court — so a concurrent finish
       // elsewhere can't get a decrement it never earned. Floor at 0.
-      const court = await tx.court.findUnique({
-        where: { id: courtId },
-        select: { fillBumpedPlayerIds: true },
-      });
-      const bumpedIds = court?.fillBumpedPlayerIds ?? [];
       if (bumpedIds.length > 0) {
         await tx.player.updateMany({
           where: {
@@ -815,11 +823,17 @@ export async function cancelFill(arenaId, courtId) {
       }
 
       // Restore each player's pre-fill wait fairness and undo the games bump.
-      // Their queueOrder is set by the renumber below.
+      // The waitRounds restore uses `update` (the row exists; we just read it).
+      // The gamesPlayed decrement is guarded by `updateMany` with `gt: 0` so an
+      // inconsistent counter can't go negative.
       for (const s of slots) {
         await tx.player.update({
           where: { id: s.playerId },
-          data: { waitRounds: s.prevWaitRounds, gamesPlayed: { decrement: 1 } },
+          data: { waitRounds: s.prevWaitRounds },
+        });
+        await tx.player.updateMany({
+          where: { id: s.playerId, gamesPlayed: { gt: 0 } },
+          data: { gamesPlayed: { decrement: 1 } },
         });
       }
 
@@ -849,11 +863,24 @@ export async function cancelFill(arenaId, courtId) {
       await tx.courtSlot.deleteMany({ where: { courtId } });
     });
   } catch (err) {
-    // Already finished/vacant (a concurrent finish or cancel won) — no-op.
-    if (err?.message === 'NOT_PLAYING') return { state: await getState(arenaId) };
+    // Already finished/cancelled (a concurrent action won, or a duplicate
+    // submit). Surface a clear message so the manager doesn't assume their
+    // cancel succeeded when nothing actually changed.
+    if (err?.message === 'NOT_PLAYING') {
+      return {
+        error: 'This court is no longer active — it was already finished or cancelled.',
+        state: await getState(arenaId),
+      };
+    }
     if (err?.message === 'NO_SNAPSHOT') {
       return {
         error: 'This match started before cancel was available — finish it to record the score instead.',
+        state: await getState(arenaId),
+      };
+    }
+    if (err?.message === 'INVALID_COURT') {
+      return {
+        error: 'This court is in an unexpected state and can\'t be cancelled — finish the match instead.',
         state: await getState(arenaId),
       };
     }
@@ -890,9 +917,11 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
       await lockQueue(tx, arenaId);
       // Atomically claim the finish: only one caller can flip playing -> vacant,
       // so concurrent endMatch calls for the same court can't double-record.
+      // Also clear the cancel-bookkeeping (`fillBumpedPlayerIds`) so a vacant
+      // court never carries the previous fill's metadata.
       const claimed = await tx.court.updateMany({
         where: { id: courtId, arenaId, status: 'playing' },
-        data: { status: 'vacant' },
+        data: { status: 'vacant', fillBumpedPlayerIds: [] },
       });
       if (claimed.count !== 1) throw new Error('ALREADY_FINISHED');
 
