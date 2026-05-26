@@ -30,6 +30,15 @@ async function bumpPartnership(tx, arenaId, x, y) {
   });
 }
 
+/** Decrement a partnership count (floored at 0); no-op if the row is absent. Reverses {@link bumpPartnership}. */
+async function unbumpPartnership(tx, x, y) {
+  const [playerA, playerB] = canonicalPair(x, y);
+  await tx.partnership.updateMany({
+    where: { playerA, playerB, count: { gt: 0 } },
+    data: { count: { decrement: 1 } },
+  });
+}
+
 /** Highest queueOrder currently assigned to an active player, or 0 if the rack is empty. */
 async function maxQueueOrder(tx, arenaId) {
   const top = await tx.player.aggregate({
@@ -653,15 +662,21 @@ export async function fillCourt(arenaId, courtId) {
       if (claimed.count !== 1) throw new Error('COURT_UNAVAILABLE');
 
       // Select the current top 4 inside the tx so we never act on a stale snapshot.
+      // Pull queueOrder/waitRounds too so we can snapshot each player's pre-fill
+      // rack state onto their slot (lets cancelFill restore them precisely).
       const queued = await tx.player.findMany({
         where: { arenaId, leftAt: null, queueOrder: { not: null } },
         orderBy: { queueOrder: 'asc' },
         take: 4,
-        select: { id: true },
+        select: { id: true, queueOrder: true, waitRounds: true },
       });
       if (queued.length < 4) throw new Error('NOT_ENOUGH');
 
       const [p0, p1, p2, p3] = queued.map((p) => p.id);
+      // playerId -> { prevQueueOrder, prevWaitRounds } for the slot snapshot below.
+      const snapshot = new Map(
+        queued.map((p) => [p.id, { prevQueueOrder: p.queueOrder, prevWaitRounds: p.waitRounds }]),
+      );
 
       // Remove exactly these four from the rack; bail if any slipped away meanwhile.
       const dequeued = await tx.player.updateMany({
@@ -694,8 +709,8 @@ export async function fillCourt(arenaId, courtId) {
 
       await tx.courtSlot.createMany({
         data: [
-          ...best.team1.map((playerId) => ({ courtId, playerId, team: 1 })),
-          ...best.team2.map((playerId) => ({ courtId, playerId, team: 2 })),
+          ...best.team1.map((playerId) => ({ courtId, playerId, team: 1, ...snapshot.get(playerId) })),
+          ...best.team2.map((playerId) => ({ courtId, playerId, team: 2, ...snapshot.get(playerId) })),
         ],
       });
       await bumpPartnership(tx, arenaId, best.team1[0], best.team1[1]);
@@ -712,6 +727,94 @@ export async function fillCourt(arenaId, courtId) {
     if (err?.code === 'P2002' || ['COURT_UNAVAILABLE', 'QUEUE_CHANGED'].includes(err?.message)) {
       return {
         error: 'The court or queue changed while loading. Please try again.',
+        state: await getState(arenaId),
+      };
+    }
+    throw err;
+  }
+
+  return { state: await getState(arenaId) };
+}
+
+/**
+ * Cancel a live court's fill: send its four players back to their exact
+ * pre-fill rack positions and undo every side effect of {@link fillCourt},
+ * WITHOUT recording a match or touching wins/losses/Elo. Manager-only.
+ *
+ * Reverses, in one locked transaction:
+ *   - court `playing` -> `vacant` (atomic claim, so it can't race a finish);
+ *   - each player's `queueOrder`/`waitRounds` restored from the slot snapshot,
+ *     and `gamesPlayed` decremented (the fill had incremented it);
+ *   - the `waitRounds +1` the fill applied to everyone else still waiting;
+ *   - the two partnership-count bumps the fill recorded.
+ *
+ * Slots created before the snapshot columns existed carry a null
+ * `prevQueueOrder`; those courts can't be cancelled (there's nowhere precise to
+ * put the players back), so we refuse and tell the manager to finish instead.
+ */
+export async function cancelFill(arenaId, courtId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockQueue(tx, arenaId);
+      // Atomically claim the cancel: only flip playing -> vacant, so a
+      // concurrent endMatch/cancelFill for the same court can't double-process.
+      const claimed = await tx.court.updateMany({
+        where: { id: courtId, arenaId, status: 'playing' },
+        data: { status: 'vacant' },
+      });
+      if (claimed.count !== 1) throw new Error('NOT_PLAYING');
+
+      const slots = await tx.courtSlot.findMany({ where: { courtId } });
+      // Without a snapshot we can't restore rack positions — refuse rather than
+      // strand the players at the back of the queue.
+      if (slots.some((s) => s.prevQueueOrder === null)) throw new Error('NO_SNAPSHOT');
+
+      const slotPlayerIds = slots.map((s) => s.playerId);
+
+      // Reverse the fill's "+1 wait for everyone else still waiting". Scope to
+      // currently-queued players, exclude the four being restored (they aren't
+      // queued yet), and floor at 0 so we can't push a wait count negative.
+      await tx.player.updateMany({
+        where: {
+          arenaId,
+          leftAt: null,
+          queueOrder: { not: null },
+          id: { notIn: slotPlayerIds },
+          waitRounds: { gt: 0 },
+        },
+        data: { waitRounds: { decrement: 1 } },
+      });
+
+      // Restore each player's exact pre-fill rack state and undo the games bump.
+      for (const s of slots) {
+        await tx.player.update({
+          where: { id: s.playerId },
+          data: {
+            queueOrder: s.prevQueueOrder,
+            waitRounds: s.prevWaitRounds ?? 0,
+            gamesPlayed: { decrement: 1 },
+          },
+        });
+      }
+
+      // Undo the two partnership bumps from the fill (one per team).
+      const team1 = slots.filter((s) => s.team === 1).map((s) => s.playerId);
+      const team2 = slots.filter((s) => s.team === 2).map((s) => s.playerId);
+      if (team1.length === 2) await unbumpPartnership(tx, team1[0], team1[1]);
+      if (team2.length === 2) await unbumpPartnership(tx, team2[0], team2[1]);
+
+      // Slots last, so the player restores above still read the snapshot.
+      await tx.courtSlot.deleteMany({ where: { courtId } });
+    });
+  } catch (err) {
+    // Already finished/vacant (a concurrent finish or cancel won) — no-op.
+    if (err?.message === 'NOT_PLAYING') return { state: await getState(arenaId) };
+    if (err?.message === 'NO_SNAPSHOT') {
+      return {
+        error: 'This match started before cancel was available — finish it to record the score instead.',
         state: await getState(arenaId),
       };
     }

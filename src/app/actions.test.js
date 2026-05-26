@@ -56,6 +56,7 @@ const PLAY = [
   ['removePlayer', () => actions.removePlayer(ARENA, 'p1')],
   ['shuffleQueue', () => actions.shuffleQueue(ARENA)],
   ['fillCourt', () => actions.fillCourt(ARENA, 'c1')],
+  ['cancelFill', () => actions.cancelFill(ARENA, 'c1')],
   ['endMatch', () => actions.endMatch(ARENA, 'c1', 11, 5, true)],
   ['addCourt', () => actions.addCourt(ARENA)],
   ['removeCourt', () => actions.removeCourt(ARENA, 'c1')],

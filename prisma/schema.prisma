@@ -202,6 +202,13 @@ model CourtSlot {
   playerId String
   team     Int // 1 or 2
 
+  // Snapshot of the player's rack state at the moment they were stacked onto
+  // this court, captured by `fillCourt`. Lets `cancelFill` restore their exact
+  // original queue position and wait fairness. Null for slots created before
+  // this feature (those courts simply can't be cancelled).
+  prevQueueOrder Int?
+  prevWaitRounds Int?
+
   court  Court  @relation(fields: [courtId], references: [id], onDelete: Cascade)
   player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
