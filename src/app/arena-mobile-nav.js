@@ -191,19 +191,23 @@ function ArenaMobileSheet({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
         </motion.span>
       </button>
 
+      {/* The overlay and sheet are kept as two *direct* children of
+          AnimatePresence — wrapping them in a Fragment makes AnimatePresence
+          see a single opaque child and silently drops the exit animations. */}
       <AnimatePresence>
         {open && (
-          <>
-            <motion.div
-              key="overlay"
-              aria-hidden="true"
-              onClick={close}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="md:hidden fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-[2px]"
-            />
+          <motion.div
+            key="overlay"
+            aria-hidden="true"
+            onClick={close}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="md:hidden fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-[2px]"
+          />
+        )}
+        {open && (
             <motion.div
               key="sheet"
               ref={sheetRef}
@@ -283,7 +287,6 @@ function ArenaMobileSheet({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
                 </nav>
               </div>
             </motion.div>
-          </>
         )}
       </AnimatePresence>
     </>
