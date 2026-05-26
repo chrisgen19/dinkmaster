@@ -268,10 +268,10 @@ model User {
   name          String // Better Auth core field; stored as "First Last"
   firstName     String
   lastName      String
-  phone         String
-  address       String
-  birthday      DateTime
-  gender        String
+  phone         String?   // optional: collected under "Add more details" at sign-up
+  address       String?   // optional: collected under "Add more details" at sign-up
+  birthday      DateTime? // optional: collected under "Add more details" at sign-up
+  gender        String?   // optional: collected under "Add more details" at sign-up
   email         String   @unique
   emailVerified Boolean  @default(false)
   image         String?

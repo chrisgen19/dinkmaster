@@ -11,9 +11,18 @@ test.describe('registration', () => {
     await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
   });
 
+  test('creates an account with the optional details section filled', async ({ page }) => {
+    await page.goto('/register');
+    await fillRegisterForm(page, { withOptional: true });
+    await page.getByRole('button', { name: 'Create account' }).click();
+
+    await expect(page).toHaveURL('/arenas');
+    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+  });
+
   test('rejects a password shorter than 8 characters', async ({ page }) => {
     await page.goto('/register');
-    // Fill all the required fields so the client-side completeness guard passes
+    // Fill the required fields so the client-side completeness guard passes
     // and the test actually exercises the password-length branch.
     await fillRegisterForm(page, { password: 'short' });
     await page.getByRole('button', { name: 'Create account' }).click();
@@ -42,7 +51,7 @@ test.describe('login', () => {
     // Seed an account directly through the Better Auth API, then test the UI.
     const email = uniqueEmail();
     const res = await request.post('/api/auth/sign-up/email', {
-      data: { name: 'E2E Login', email, password: PASSWORD },
+      data: { name: 'E2E Login', email, password: PASSWORD, firstName: 'E2E', lastName: 'Login' },
     });
     expect(res.ok()).toBeTruthy();
 
@@ -69,7 +78,7 @@ test.describe('login', () => {
     // Seed an account via the API so this test exercises just the redirect flow.
     const email = uniqueEmail();
     await request.post('/api/auth/sign-up/email', {
-      data: { name: 'E2E Deep Link', email, password: PASSWORD },
+      data: { name: 'E2E Deep Link', email, password: PASSWORD, firstName: 'E2E', lastName: 'DeepLink' },
     });
 
     // Hitting the auth-gated page as a guest should send us to /login with `next`.

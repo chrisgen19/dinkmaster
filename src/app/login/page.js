@@ -2,10 +2,16 @@
 
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
 import { signIn } from '@/lib/auth-client';
 import { safeNext } from '@/lib/safe-next';
-import { BackPill } from '../back-pill';
+import {
+  AuthShell,
+  AuthSubmit,
+  AuthError,
+  AuthCrossLink,
+  AUTH_FIELD_CLASS,
+  BackPill,
+} from '../auth-shell';
 
 export default function LoginPage() {
   // `useSearchParams` (inside `LoginForm`) requires a Suspense boundary so the
@@ -31,77 +37,62 @@ function LoginForm() {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const { error: signInError } = await signIn.email({ email, password });
-    setLoading(false);
-    if (signInError) {
-      setError(signInError.message || 'Invalid email or password.');
-      return;
+    try {
+      const { error: signInError } = await signIn.email({ email, password });
+      if (signInError) {
+        setError(signInError.message || 'Invalid email or password.');
+        return;
+      }
+      router.push(next);
+    } catch (err) {
+      // Network or unexpected failure — surface it instead of hanging on "Signing in…".
+      setError(err?.message || 'Could not sign in.');
+    } finally {
+      setLoading(false);
     }
-    router.push(next);
   };
 
   const registerHref = next !== '/arenas' ? `/register?next=${encodeURIComponent(next)}` : '/register';
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 font-sans">
-      <div className="w-full max-w-sm">
-        <div className="flex items-center justify-center gap-2 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center shadow-sm">
-            <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="12" r="9" />
-            </svg>
+    <AuthShell
+      title="Welcome back"
+      subtitle="Sign in to manage your arena."
+      footer={
+        <>
+          <AuthCrossLink prompt="No account?" href={registerHref} action="Create one" />
+          <div className="flex justify-center">
+            <BackPill fallbackHref="/arenas" label="Back to arenas" />
           </div>
-          <span className="text-lg font-extrabold tracking-tight text-slate-800">DINKMASTER</span>
-        </div>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-3">
+        <input
+          type="email"
+          required
+          autoComplete="email"
+          placeholder="Email"
+          aria-label="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className={AUTH_FIELD_CLASS}
+        />
+        <input
+          type="password"
+          required
+          autoComplete="current-password"
+          placeholder="Password"
+          aria-label="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className={AUTH_FIELD_CLASS}
+        />
 
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6">
-          <h1 className="text-base font-extrabold text-slate-900">Welcome back</h1>
-          <p className="text-xs text-slate-400 mt-1 mb-5">Sign in to manage your arena.</p>
+        {error && <AuthError>{error}</AuthError>}
 
-          <form onSubmit={handleSubmit} className="space-y-3">
-            <input
-              type="email"
-              required
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400"
-            />
-            <input
-              type="password"
-              required
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400"
-            />
-
-            {error && (
-              <div role="alert" data-testid="auth-error" className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold px-5 py-2.5 rounded-xl transition duration-150 shadow-sm"
-            >
-              {loading ? 'Signing in…' : 'Sign in'}
-            </button>
-          </form>
-        </div>
-
-        <p className="text-xs text-slate-400 text-center mt-4">
-          No account?{' '}
-          <Link href={registerHref} className="text-emerald-600 font-semibold hover:text-emerald-700">
-            Create one
-          </Link>
-        </p>
-        <div className="flex justify-center mt-3">
-          <BackPill fallbackHref="/arenas" label="Back to arenas" />
-        </div>
-      </div>
-    </div>
+        <AuthSubmit loading={loading} label="Sign in" loadingLabel="Signing in…" />
+      </form>
+    </AuthShell>
   );
 }

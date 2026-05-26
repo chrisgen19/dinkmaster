@@ -32,7 +32,7 @@ test.describe('arenas', () => {
     // Create an arena via a registered account, then visit it as a guest.
     const email = uniqueEmail();
     await request.post('/api/auth/sign-up/email', {
-      data: { name: 'Owner', email, password: PASSWORD },
+      data: { name: 'Owner', email, password: PASSWORD, firstName: 'Owner', lastName: 'Account' },
     });
 
     await page.goto('/login');
