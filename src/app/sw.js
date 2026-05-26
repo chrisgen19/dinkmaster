@@ -17,13 +17,6 @@ const serwist = new Serwist({
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching: [
-    // Auth/session endpoints: never cache — always hit the network so we don't
-    // serve a stale or wrong session. Listed first so it wins over the generic
-    // /api/ rule below.
-    {
-      matcher: ({ url }) => url.pathname.startsWith("/api/auth/"),
-      handler: new NetworkOnly(),
-    },
     // _next/static: filenames are content-hashed and immutable, so a given URL's
     // bytes never change — serve from cache and skip the network entirely.
     {
@@ -50,11 +43,12 @@ const serwist = new Serwist({
       matcher: ({ request }) => request.destination === "font",
       handler: new StaleWhileRevalidate({ cacheName: "fonts" }),
     },
-    // API routes: correctness first. Try the network (with a timeout so a dead
-    // connection doesn't hang), fall back to the last cached response offline.
+    // API routes (auth/session and everything else): never cache. Responses are
+    // user-specific, so persisting them risks replaying one user's data to
+    // another on a shared device — always hit the network.
     {
       matcher: ({ url }) => url.pathname.startsWith("/api/"),
-      handler: new NetworkFirst({ cacheName: "api", networkTimeoutSeconds: 10 }),
+      handler: new NetworkOnly(),
     },
     // Static, non-personalized page navigations: network-first for fresh
     // content, with the cache backing offline revisits. Note `/` is excluded —
@@ -63,7 +57,13 @@ const serwist = new Serwist({
       matcher: ({ request, url }) =>
         request.mode === "navigate" &&
         (url.pathname === "/login" || url.pathname === "/register"),
-      handler: new NetworkFirst({ cacheName: "pages", networkTimeoutSeconds: 10 }),
+      handler: new NetworkFirst({
+        cacheName: "pages",
+        networkTimeoutSeconds: 10,
+        plugins: [
+          new ExpirationPlugin({ maxEntries: 16, maxAgeSeconds: 7 * 24 * 60 * 60 }),
+        ],
+      }),
     },
     // All other (personalized/authenticated) navigations: never persist
     // user-specific HTML to a shared cache — on a shared device that could

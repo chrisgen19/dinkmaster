@@ -4,6 +4,16 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import Image from 'next/image';
 
 const noop = () => () => {};
+const DISMISS_KEY = 'pwa-install-dismissed';
+
+/** Hide the prompt and remember it for the rest of the browser session. */
+function rememberDismissal() {
+  try {
+    window.sessionStorage.setItem(DISMISS_KEY, '1');
+  } catch {
+    // sessionStorage can throw in private mode / when disabled — non-fatal.
+  }
+}
 
 /**
  * `true` once the app is running as an installed PWA. Read via
@@ -55,7 +65,13 @@ export function PwaInstallPrompt() {
   const isStandalone = useIsStandalone();
   const isIOS = useIsIOS();
   const [deferredPrompt, setDeferredPrompt] = useState(null);
-  const [dismissed, setDismissed] = useState(false);
+  // Remember a dismissal for the rest of the session so we don't re-nag on every
+  // navigation. Lazy-initialized from sessionStorage (SSR-safe: returns false
+  // on the server, where window is undefined).
+  const [dismissed, setDismissed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.sessionStorage.getItem(DISMISS_KEY) === '1';
+  });
 
   useEffect(() => {
     function onBeforeInstallPrompt(event) {
@@ -121,7 +137,10 @@ export function PwaInstallPrompt() {
         </div>
         <button
           type="button"
-          onClick={() => setDismissed(true)}
+          onClick={() => {
+            rememberDismissal();
+            setDismissed(true);
+          }}
           aria-label="Dismiss install prompt"
           className="-mr-1 -mt-1 rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
         >

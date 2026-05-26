@@ -1,5 +1,5 @@
-import Link from "next/link";
 import Image from "next/image";
+import { RetryButton } from "./retry-button";
 
 export const metadata = {
   title: "Offline — DinkMaster",
@@ -35,12 +35,7 @@ export default function OfflinePage() {
           internet to keep stacking the rack.
         </p>
       </div>
-      <Link
-        href="/arenas"
-        className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
-      >
-        Back to arenas
-      </Link>
+      <RetryButton />
     </main>
   );
 }

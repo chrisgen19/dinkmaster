@@ -58,8 +58,10 @@ export default function RootLayout({ children }) {
           <NavTracker />
           {children}
           {/* Shared stack so the install and update prompts never overlap when
-              both are visible — they sit in a column, bottom-anchored. */}
-          <div className="fixed inset-x-4 bottom-4 z-50 mx-auto flex max-w-sm flex-col gap-2">
+              both are visible — they sit in a column, bottom-anchored. Lifted
+              above the arena mobile-nav FAB on small screens (it sits at
+              bottom-4), back to bottom-4 once the FAB is hidden at md. */}
+          <div className="fixed inset-x-4 bottom-20 z-50 mx-auto flex max-w-sm flex-col gap-2 md:bottom-4">
             <PwaInstallPrompt />
             <SwUpdatePrompt />
           </div>

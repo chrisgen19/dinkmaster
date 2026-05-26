@@ -25,24 +25,24 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "@serwist/turbopack": "^9.5.11",
     "better-auth": "^1.6.11",
     "embla-carousel-react": "^8.6.0",
+    "esbuild": "^0.28.0",
     "motion": "^12.40.0",
     "next": "16.2.6",
     "prisma": "^7.8.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "serwist": "^9.5.11",
     "vaul": "^1.1.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
-    "@serwist/turbopack": "^9.5.11",
     "@tailwindcss/postcss": "^4",
     "dotenv": "^17.4.2",
-    "esbuild": "^0.28.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
-    "serwist": "^9.5.11",
     "sharp": "^0.34.5",
     "tailwindcss": "^4",
     "vitest": "^4.1.7"
