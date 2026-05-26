@@ -334,11 +334,11 @@ export default function Arena({
     () => computeSessionStats(matchHistory, lastSessionResetAt),
     [matchHistory, lastSessionResetAt],
   );
-  // We DO preserve the original lifetime counters under `lifetime*` keys so
-  // the My Stats tab's "show rating" / "play a few matches" gates can keep
-  // asking "have they ever played?" rather than "have they played this
-  // session?" — otherwise a Reset Session would hide a rated player's rating
-  // until they finished their first game in the new session.
+  // Preserve the lifetime `gamesPlayed` under `lifetimeGamesPlayed` so the My
+  // Stats tab's "show rating" / "play a few matches" gates can keep asking
+  // "have they ever played?" rather than "have they played this session?" —
+  // otherwise a Reset Session would hide a rated player's rating until they
+  // finished their first game in the new session.
   const displayPlayers = useMemo(
     () =>
       players.map((p) => {
@@ -346,8 +346,6 @@ export default function Arena({
         return {
           ...p,
           lifetimeGamesPlayed: p.gamesPlayed,
-          lifetimeWins: p.wins,
-          lifetimeLosses: p.losses,
           gamesPlayed: s?.games ?? 0,
           wins: s?.wins ?? 0,
           losses: s?.losses ?? 0,
@@ -391,6 +389,13 @@ export default function Arena({
       setCourts(result.state.courts);
       setMatchHistory(result.state.matchHistory);
       setHistory(result.state.history);
+      // Server-authoritative reset boundary: kept in sync on every action
+      // so session-scoped tallies (rack tile, My Stats) never key off a
+      // client-stamped timestamp that could disagree with `Match.createdAt`
+      // for a match finishing right around a reset.
+      if ('lastSessionResetAt' in result.state) {
+        setLastSessionResetAt(result.state.lastSessionResetAt);
+      }
     }
   };
 
@@ -484,10 +489,10 @@ export default function Arena({
         const result = await prepareNextSession(arenaId);
         applyResult(result);
         if (!result?.error) {
-          // Stamp locally so the banner re-renders as "prepared" right away,
-          // without waiting for the next server read. The next router.refresh
-          // (e.g. on tab switch) will replace this with the server value.
-          setLastSessionResetAt(new Date().toISOString());
+          // `applyResult` already pulled the server-persisted
+          // `lastSessionResetAt` out of `result.state`, so the banner and the
+          // session-scoped overlays re-render against the same timestamp the
+          // server stored — no client clock involved.
           setRosterModalOpen(true);
         }
       } catch {
