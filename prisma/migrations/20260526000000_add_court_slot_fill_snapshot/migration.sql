@@ -15,3 +15,10 @@
 ALTER TABLE "CourtSlot"
   ADD COLUMN IF NOT EXISTS "prevQueueOrder" INTEGER,
   ADD COLUMN IF NOT EXISTS "prevWaitRounds" INTEGER;
+
+-- `fillBumpedPlayerIds` on `Court` records exactly which players the current
+-- fill bumped (+1 waitRounds), so cancelFill reverses the bump for only those
+-- players — never someone recycled into the queue by a finish on another court
+-- after the fill. Empty array for vacant courts / pre-feature fills.
+ALTER TABLE "Court"
+  ADD COLUMN IF NOT EXISTS "fillBumpedPlayerIds" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

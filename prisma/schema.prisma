@@ -186,6 +186,11 @@ model Court {
   name      String
   status    String   @default("vacant") // "vacant" | "playing"
   position  Int
+  // Player ids whose `waitRounds` were bumped (+1) by the fill currently on this
+  // court — captured at fill time so `cancelFill` can reverse the bump for
+  // exactly those players, not whoever is queued at cancel time. Empty when the
+  // court is vacant / was filled before this feature.
+  fillBumpedPlayerIds String[] @default([])
   createdAt DateTime @default(now())
 
   arena Arena       @relation(fields: [arenaId], references: [id], onDelete: Cascade)

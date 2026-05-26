@@ -685,10 +685,21 @@ export async function fillCourt(arenaId, courtId) {
       });
       if (dequeued.count !== 4) throw new Error('QUEUE_CHANGED');
 
-      // Everyone still waiting in this arena was skipped this round.
+      // Everyone still waiting in this arena was skipped this round. Capture
+      // exactly who gets the +1 (the four are already dequeued, so excluded) and
+      // record it on the court, so cancelFill can reverse the bump for precisely
+      // these players — not whoever happens to be queued at cancel time.
+      const bumped = await tx.player.findMany({
+        where: { arenaId, leftAt: null, queueOrder: { not: null } },
+        select: { id: true },
+      });
       await tx.player.updateMany({
         where: { arenaId, leftAt: null, queueOrder: { not: null } },
         data: { waitRounds: { increment: 1 } },
+      });
+      await tx.court.update({
+        where: { id: courtId },
+        data: { fillBumpedPlayerIds: bumped.map((p) => p.id) },
       });
 
       // Pick the matchup with the fewest prior partnerships (random tie-break).
@@ -737,20 +748,28 @@ export async function fillCourt(arenaId, courtId) {
 }
 
 /**
- * Cancel a live court's fill: send its four players back to their exact
- * pre-fill rack positions and undo every side effect of {@link fillCourt},
- * WITHOUT recording a match or touching wins/losses/Elo. Manager-only.
+ * Cancel a live court's fill: send its four players back to the FRONT of the
+ * rack in their original relative order and undo every side effect of
+ * {@link fillCourt}, WITHOUT recording a match or touching wins/losses/Elo.
+ * Manager-only.
  *
  * Reverses, in one locked transaction:
  *   - court `playing` -> `vacant` (atomic claim, so it can't race a finish);
- *   - each player's `queueOrder`/`waitRounds` restored from the slot snapshot,
- *     and `gamesPlayed` decremented (the fill had incremented it);
- *   - the `waitRounds +1` the fill applied to everyone else still waiting;
+ *   - each player's `waitRounds` restored from the slot snapshot, and
+ *     `gamesPlayed` decremented (the fill had incremented it);
+ *   - the `waitRounds +1` the fill applied — but only for the exact players it
+ *     bumped (recorded on the court at fill time), so a finish on another court
+ *     in the meantime can't earn a phantom decrement;
  *   - the two partnership-count bumps the fill recorded.
  *
- * Slots created before the snapshot columns existed carry a null
- * `prevQueueOrder`; those courts can't be cancelled (there's nowhere precise to
- * put the players back), so we refuse and tell the manager to finish instead.
+ * Rather than writing the raw snapshot positions back (which could collide with
+ * players recycled/shuffled into those slots while the court was live), the
+ * whole rack is renumbered 1..N with the cancelled four placed first — so
+ * positions stay dense, unique, and the four land at the front as promised.
+ *
+ * Slots created before the snapshot columns existed carry null snapshot fields;
+ * those courts can't be cancelled (no original order to restore), so we refuse
+ * and tell the manager to finish the match instead.
  */
 export async function cancelFill(arenaId, courtId) {
   const guard = await requireArenaManager(arenaId);
@@ -768,36 +787,56 @@ export async function cancelFill(arenaId, courtId) {
       if (claimed.count !== 1) throw new Error('NOT_PLAYING');
 
       const slots = await tx.courtSlot.findMany({ where: { courtId } });
-      // Without a snapshot we can't restore rack positions — refuse rather than
-      // strand the players at the back of the queue.
-      if (slots.some((s) => s.prevQueueOrder === null)) throw new Error('NO_SNAPSHOT');
+      // Need both snapshot fields to restore order + wait fairness exactly;
+      // a partial/absent snapshot (pre-feature slot) is non-cancellable.
+      if (slots.some((s) => s.prevQueueOrder === null || s.prevWaitRounds === null)) {
+        throw new Error('NO_SNAPSHOT');
+      }
 
-      const slotPlayerIds = slots.map((s) => s.playerId);
-
-      // Reverse the fill's "+1 wait for everyone else still waiting". Scope to
-      // currently-queued players, exclude the four being restored (they aren't
-      // queued yet), and floor at 0 so we can't push a wait count negative.
-      await tx.player.updateMany({
-        where: {
-          arenaId,
-          leftAt: null,
-          queueOrder: { not: null },
-          id: { notIn: slotPlayerIds },
-          waitRounds: { gt: 0 },
-        },
-        data: { waitRounds: { decrement: 1 } },
+      // Reverse the fill's "+1 wait" for exactly the players it bumped, skipping
+      // any who have since left or re-entered a court — so a concurrent finish
+      // elsewhere can't get a decrement it never earned. Floor at 0.
+      const court = await tx.court.findUnique({
+        where: { id: courtId },
+        select: { fillBumpedPlayerIds: true },
       });
+      const bumpedIds = court?.fillBumpedPlayerIds ?? [];
+      if (bumpedIds.length > 0) {
+        await tx.player.updateMany({
+          where: {
+            id: { in: bumpedIds },
+            arenaId,
+            leftAt: null,
+            queueOrder: { not: null },
+            waitRounds: { gt: 0 },
+          },
+          data: { waitRounds: { decrement: 1 } },
+        });
+      }
 
-      // Restore each player's exact pre-fill rack state and undo the games bump.
+      // Restore each player's pre-fill wait fairness and undo the games bump.
+      // Their queueOrder is set by the renumber below.
       for (const s of slots) {
         await tx.player.update({
           where: { id: s.playerId },
-          data: {
-            queueOrder: s.prevQueueOrder,
-            waitRounds: s.prevWaitRounds ?? 0,
-            gamesPlayed: { decrement: 1 },
-          },
+          data: { waitRounds: s.prevWaitRounds, gamesPlayed: { decrement: 1 } },
         });
+      }
+
+      // Reinsert the four at the front in their original relative order, then
+      // renumber the whole rack so positions can't collide with players the
+      // queue gained/recycled/shuffled while this court was live.
+      const restored = [...slots]
+        .sort((a, b) => a.prevQueueOrder - b.prevQueueOrder)
+        .map((s) => s.playerId);
+      const others = await tx.player.findMany({
+        where: { arenaId, leftAt: null, queueOrder: { not: null }, id: { notIn: restored } },
+        orderBy: { queueOrder: 'asc' },
+        select: { id: true },
+      });
+      const ordered = [...restored, ...others.map((p) => p.id)];
+      for (let i = 0; i < ordered.length; i++) {
+        await tx.player.update({ where: { id: ordered[i] }, data: { queueOrder: i + 1 } });
       }
 
       // Undo the two partnership bumps from the fill (one per team).
