@@ -702,10 +702,14 @@ export default function Arena({
       <main className="flex-1 p-4 pb-28 md:p-6 md:pb-8 lg:p-8 lg:pb-10 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
         {/* Left Column: PaddleRack — sticks on lg+ so it stays visible while
-            users scroll through Match Log, Stats, etc. on the right. */}
+            users scroll through Match Log, Stats, etc. on the right. On mobile
+            (single-column, below lg) it only belongs to the Active Courts tab,
+            so hide it on the other tabs; the lg+ sidebar always shows. */}
         <div
           style={{ top: headerHeight + tabBarHeight }}
-          className="lg:col-span-5 lg:sticky lg:self-start space-y-6"
+          className={`lg:col-span-5 lg:sticky lg:self-start space-y-6 ${
+            activeTab === 'courts' ? '' : 'hidden lg:block'
+          }`}
         >
           <PaddleRackStack
             queue={queue}

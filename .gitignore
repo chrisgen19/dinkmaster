@@ -56,3 +56,12 @@ next-env.d.ts
 
 # local screenshots
 Screenshot*.png
+
+# local screen recordings — never commit large media binaries
+*.mp4
+*.mov
+ScreenRecording*
+
+# Windows alternate-data-stream provenance sidecars (leak download URLs,
+# colon paths break checkouts on Windows)
+*:Zone.Identifier

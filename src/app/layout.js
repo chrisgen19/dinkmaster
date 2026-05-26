@@ -70,8 +70,13 @@ export default function RootLayout({ children }) {
           {/* Shared stack so the install and update prompts never overlap when
               both are visible — they sit in a column, bottom-anchored. Lifted
               above the arena mobile-nav FAB on small screens (it sits at
-              bottom-4), back to bottom-4 once the FAB is hidden at md. */}
-          <div className="fixed inset-x-4 bottom-20 z-50 mx-auto flex max-w-sm flex-col gap-2 md:bottom-4">
+              bottom-4), back to bottom-4 once the FAB is hidden at md.
+
+              z-40 keeps these prompts below the mobile nav sheet + its overlay
+              (z-50): when the sheet opens, its scrim covers the prompts rather
+              than the prompts floating on top of the open menu. They share z-40
+              with the FAB pill, which they never overlap spatially. */}
+          <div className="fixed inset-x-4 bottom-20 z-40 mx-auto flex max-w-sm flex-col gap-2 md:bottom-4">
             <PwaInstallPrompt />
             <SwUpdatePrompt />
           </div>
