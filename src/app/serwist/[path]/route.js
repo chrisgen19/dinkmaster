@@ -22,6 +22,11 @@ const revision =
 export const { dynamic, dynamicParams, revalidate, generateStaticParams, GET } =
   createSerwistRoute({
     swSrc: "src/app/sw.js",
-    additionalPrecacheEntries: [{ url: "/offline", revision }],
+    // Precache the offline page and the logo it renders, so the fallback shows
+    // intact even on a route the user never visited online.
+    additionalPrecacheEntries: [
+      { url: "/offline", revision },
+      { url: "/icons/icon-192.png", revision },
+    ],
     useNativeEsbuild: true,
   });

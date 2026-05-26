@@ -50,7 +50,11 @@ export function SwUpdatePrompt() {
   }
 
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-900 p-3.5 pl-4 text-white shadow-lg animate-fade-in">
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-900 p-3.5 pl-4 text-white shadow-lg animate-fade-in"
+    >
       <p className="min-w-0 flex-1 text-sm font-medium">
         A new version is available.
       </p>

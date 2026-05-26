@@ -82,7 +82,11 @@ export function PwaInstallPrompt() {
   if (!deferredPrompt && !isIOS) return null;
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-lg animate-fade-in">
+    <div
+      role="status"
+      aria-live="polite"
+      className="rounded-2xl border border-slate-200 bg-white p-4 shadow-lg animate-fade-in"
+    >
       <div className="flex items-start gap-3">
         <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl ring-1 ring-inset ring-slate-200/80">
           <Image

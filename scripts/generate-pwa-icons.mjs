@@ -29,6 +29,9 @@ await mkdir(OUT, { recursive: true });
 async function direct({ size, file }) {
   await sharp(SRC)
     .resize(size, size, { fit: "cover" })
+    // Flatten any transparency onto white — iOS ignores alpha on touch icons,
+    // and keeps output opaque if a future source SVG/PNG has an alpha channel.
+    .flatten({ background: "#ffffff" })
     .png({ compressionLevel: 9 })
     .toFile(join(OUT, file));
 }
