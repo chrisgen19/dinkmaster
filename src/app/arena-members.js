@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, useTransition } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import {
   updateMemberRole,
@@ -513,6 +514,14 @@ function WalkInsList({ orphans, canManage, isPending, onLink, onRemove }) {
 function LinkPlayerModal({ title, description, submitLabel, options, onCancel, onSubmit, disabled }) {
   const [value, setValue] = useState('');
   const canSubmit = !!value && !disabled;
+  // Portal-gate so we only render on the client. `document.body` doesn't
+  // exist during SSR, and the sticky SiteHeader (z-50) sits above any
+  // inline overlay — mirroring the cancel-fill / prep-roster modals in
+  // arena.js, we mount through a portal at z-[100] so the backdrop covers
+  // the header and any ancestor overflow/transform/filter can't clip us.
+  const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount flag so the portal only attaches on the client
+  useEffect(() => setMounted(true), []);
   // Escape-to-close. Backdrop-click is handled inline below; full focus
   // trap + body scroll lock are out of scope for this iteration (the modal
   // is small and short-lived; no other dialog component in the app uses
@@ -524,12 +533,13 @@ function LinkPlayerModal({ title, description, submitLabel, options, onCancel, o
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [disabled, onCancel]);
-  return (
+  if (!mounted) return null;
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 animate-fade-in"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 animate-fade-in"
       onClick={(e) => {
         if (e.target === e.currentTarget && !disabled) onCancel();
       }}
@@ -577,6 +587,7 @@ function LinkPlayerModal({ title, description, submitLabel, options, onCancel, o
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
