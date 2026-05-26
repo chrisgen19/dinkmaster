@@ -11,9 +11,18 @@ test.describe('registration', () => {
     await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
   });
 
+  test('creates an account with the optional details section filled', async ({ page }) => {
+    await page.goto('/register');
+    await fillRegisterForm(page, { withOptional: true });
+    await page.getByRole('button', { name: 'Create account' }).click();
+
+    await expect(page).toHaveURL('/arenas');
+    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+  });
+
   test('rejects a password shorter than 8 characters', async ({ page }) => {
     await page.goto('/register');
-    // Fill all the required fields so the client-side completeness guard passes
+    // Fill the required fields so the client-side completeness guard passes
     // and the test actually exercises the password-length branch.
     await fillRegisterForm(page, { password: 'short' });
     await page.getByRole('button', { name: 'Create account' }).click();

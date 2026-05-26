@@ -2,14 +2,16 @@
 
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
 import { signUp } from '@/lib/auth-client';
 import { safeNext } from '@/lib/safe-next';
-import { BackPill } from '../back-pill';
-
-// Shared input styling, reused across every field for visual consistency.
-const FIELD_CLASS =
-  'w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-xl px-4 py-2.5 text-sm outline-none transition text-slate-800 placeholder-slate-400';
+import {
+  AuthShell,
+  AuthSubmit,
+  AuthError,
+  AuthCrossLink,
+  AUTH_FIELD_CLASS,
+  BackPill,
+} from '../auth-shell';
 
 const GENDER_OPTIONS = ['Male', 'Female', 'Other', 'Prefer not to say'];
 
@@ -36,6 +38,7 @@ function RegisterForm() {
   const [address, setAddress] = useState('');
   const [birthday, setBirthday] = useState('');
   const [gender, setGender] = useState('');
+  const [showMore, setShowMore] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -45,21 +48,10 @@ function RegisterForm() {
 
     // Trim required text fields up front: HTML `required` accepts a
     // whitespace-only value, which would otherwise reach the server as empty.
-    const trimmed = {
-      firstName: firstName.trim(),
-      lastName: lastName.trim(),
-      phone: phone.trim(),
-      address: address.trim(),
-    };
-    if (
-      !trimmed.firstName ||
-      !trimmed.lastName ||
-      !trimmed.phone ||
-      !trimmed.address ||
-      !birthday ||
-      !gender
-    ) {
-      setError('Please complete all required fields.');
+    const firstNameTrimmed = firstName.trim();
+    const lastNameTrimmed = lastName.trim();
+    if (!firstNameTrimmed || !lastNameTrimmed) {
+      setError('Please enter your first and last name.');
       return;
     }
     if (password.length < 8) {
@@ -70,17 +62,19 @@ function RegisterForm() {
     setLoading(true);
     try {
       // `name` is Better Auth's core field; keep it populated as "First Last".
-      const name = `${trimmed.firstName} ${trimmed.lastName}`;
+      // Optional extras are only sent when filled — empty values normalize to
+      // null server-side (see normalizeUserProfile).
+      const name = `${firstNameTrimmed} ${lastNameTrimmed}`;
       const { error: signUpError } = await signUp.email({
         name,
         email,
         password,
-        firstName: trimmed.firstName,
-        lastName: trimmed.lastName,
-        phone: trimmed.phone,
-        address: trimmed.address,
-        birthday: new Date(birthday),
-        gender,
+        firstName: firstNameTrimmed,
+        lastName: lastNameTrimmed,
+        phone: phone.trim() || undefined,
+        address: address.trim() || undefined,
+        birthday: birthday ? new Date(birthday) : undefined,
+        gender: gender || undefined,
       });
       if (signUpError) {
         setError(signUpError.message || 'Could not create account.');
@@ -96,124 +90,143 @@ function RegisterForm() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 font-sans">
-      <div className="w-full max-w-sm">
-        <div className="flex items-center justify-center gap-2 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center shadow-sm">
-            <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="12" r="9" />
-            </svg>
+    <AuthShell
+      title="Create your account"
+      subtitle="Run your own pickleball arena."
+      footer={
+        <>
+          <AuthCrossLink prompt="Already have an account?" href={loginHref} action="Sign in" />
+          <div className="flex justify-center">
+            <BackPill fallbackHref="/arenas" label="Back to arenas" />
           </div>
-          <span className="text-lg font-extrabold tracking-tight text-slate-800">DINKMASTER</span>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <input
+            type="text"
+            required
+            autoComplete="given-name"
+            placeholder="First name"
+            aria-label="First name"
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+            className={AUTH_FIELD_CLASS}
+          />
+          <input
+            type="text"
+            required
+            autoComplete="family-name"
+            placeholder="Last name"
+            aria-label="Last name"
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            className={AUTH_FIELD_CLASS}
+          />
         </div>
+        <input
+          type="email"
+          required
+          autoComplete="email"
+          placeholder="Email"
+          aria-label="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className={AUTH_FIELD_CLASS}
+        />
+        <input
+          type="password"
+          required
+          autoComplete="new-password"
+          placeholder="Password (min. 8 characters)"
+          aria-label="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className={AUTH_FIELD_CLASS}
+        />
 
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6">
-          <h1 className="text-base font-extrabold text-slate-900">Create your account</h1>
-          <p className="text-xs text-slate-400 mt-1 mb-5">Run your own pickleball arena.</p>
-
-          <form onSubmit={handleSubmit} className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <input
-                type="text"
-                required
-                placeholder="First name"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                className={FIELD_CLASS}
-              />
-              <input
-                type="text"
-                required
-                placeholder="Last name"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                className={FIELD_CLASS}
-              />
-            </div>
-            <input
-              type="email"
-              required
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className={FIELD_CLASS}
-            />
-            <input
-              type="password"
-              required
-              placeholder="Password (min. 8 characters)"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className={FIELD_CLASS}
-            />
-            <input
-              type="tel"
-              required
-              placeholder="Phone number"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              className={FIELD_CLASS}
-            />
-            <input
-              type="text"
-              required
-              placeholder="Address"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              className={FIELD_CLASS}
-            />
-            <div>
-              <label className="text-[11px] font-semibold text-slate-400 ml-1">Birthday</label>
-              <input
-                type="date"
-                required
-                value={birthday}
-                onChange={(e) => setBirthday(e.target.value)}
-                className={`${FIELD_CLASS} mt-1`}
-              />
-            </div>
-            <select
-              required
-              value={gender}
-              onChange={(e) => setGender(e.target.value)}
-              className={`${FIELD_CLASS} ${gender ? '' : 'text-slate-400'}`}
+        {/* Optional profile details, collapsed by default to reduce sign-up
+            friction. Users can expand to share a phone, address, birthday, and
+            gender — all stored as nullable columns. */}
+        <div className="rounded-xl border border-slate-200/80 bg-slate-50/50">
+          <button
+            type="button"
+            onClick={() => setShowMore((v) => !v)}
+            aria-expanded={showMore}
+            aria-controls="optional-details"
+            className="flex w-full items-center justify-between rounded-xl px-4 py-2.5
+              text-sm font-semibold text-slate-600 transition hover:text-emerald-700"
+          >
+            <span className="flex items-center gap-2">
+              <svg className="h-4 w-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              Add more details
+              <span className="text-xs font-medium text-slate-400">(optional)</span>
+            </span>
+            <svg
+              className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${showMore ? 'rotate-180' : ''}`}
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
             >
-              <option value="" disabled>
-                Gender
-              </option>
-              {GENDER_OPTIONS.map((option) => (
-                <option key={option} value={option} className="text-slate-800">
-                  {option}
-                </option>
-              ))}
-            </select>
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
 
-            {error && (
-              <div role="alert" data-testid="auth-error" className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">
-                {error}
+          {showMore && (
+            <div id="optional-details" className="animate-fade-in space-y-3 px-3 pb-3">
+              <input
+                type="tel"
+                autoComplete="tel"
+                placeholder="Phone number"
+                aria-label="Phone number"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className={`${AUTH_FIELD_CLASS} bg-white`}
+              />
+              <input
+                type="text"
+                autoComplete="street-address"
+                placeholder="Address"
+                aria-label="Address"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                className={`${AUTH_FIELD_CLASS} bg-white`}
+              />
+              <div>
+                <label htmlFor="birthday" className="ml-1 text-[11px] font-semibold text-slate-400">
+                  Birthday
+                </label>
+                <input
+                  id="birthday"
+                  type="date"
+                  aria-label="Birthday"
+                  value={birthday}
+                  onChange={(e) => setBirthday(e.target.value)}
+                  className={`${AUTH_FIELD_CLASS} mt-1 bg-white`}
+                />
               </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold px-5 py-2.5 rounded-xl transition duration-150 shadow-sm"
-            >
-              {loading ? 'Creating account…' : 'Create account'}
-            </button>
-          </form>
+              <select
+                aria-label="Gender"
+                value={gender}
+                onChange={(e) => setGender(e.target.value)}
+                className={`${AUTH_FIELD_CLASS} bg-white ${gender ? '' : 'text-slate-400'}`}
+              >
+                <option value="">Gender</option>
+                {GENDER_OPTIONS.map((option) => (
+                  <option key={option} value={option} className="text-slate-800">
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
-        <p className="text-xs text-slate-400 text-center mt-4">
-          Already have an account?{' '}
-          <Link href={loginHref} className="text-emerald-600 font-semibold hover:text-emerald-700">
-            Sign in
-          </Link>
-        </p>
-        <div className="flex justify-center mt-3">
-          <BackPill fallbackHref="/arenas" label="Back to arenas" />
-        </div>
-      </div>
-    </div>
+        {error && <AuthError>{error}</AuthError>}
+
+        <AuthSubmit loading={loading} label="Create account" loadingLabel="Creating account…" />
+      </form>
+    </AuthShell>
   );
 }

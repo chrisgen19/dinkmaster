@@ -2,16 +2,25 @@
  * Required text fields collected at sign-up. Each must be a present,
  * non-whitespace string before a user row is persisted.
  */
-export const REQUIRED_PROFILE_FIELDS = ['firstName', 'lastName', 'phone', 'address', 'gender'];
+export const REQUIRED_PROFILE_FIELDS = ['firstName', 'lastName'];
+
+/**
+ * Optional text fields collected under "Add more details" on the register
+ * form. When present they're trimmed; blank/whitespace-only values normalize
+ * to `null` so the nullable columns stay clean rather than storing "".
+ */
+export const OPTIONAL_PROFILE_FIELDS = ['phone', 'address', 'gender'];
 
 /**
  * Validate and normalize the profile fields on a user-create payload.
  *
- * Trims every required text field, rejects whitespace-only values, recomputes
- * `name` as "First Last" from the trimmed parts, and coerces `birthday` to a
- * valid Date. Pure and side-effect free, so it can be unit tested directly and
- * reused by the Better Auth `databaseHooks.user.create.before` hook — the
- * server-side counterpart to the register form's client-side checks.
+ * Trims the required first/last name (rejecting whitespace-only values) and
+ * recomputes `name` as "First Last". Optional text fields are trimmed when
+ * present and coerced to `null` when blank. `birthday` is optional: absent or
+ * blank normalizes to `null`, but a present value must parse to a valid Date.
+ * Pure and side-effect free, so it can be unit tested directly and reused by
+ * the Better Auth `databaseHooks.user.create.before` hook — the server-side
+ * counterpart to the register form's client-side checks.
  *
  * @param {Record<string, unknown>} data - the user-create payload
  * @returns {{data: Record<string, unknown>} | {error: string}}
@@ -28,17 +37,24 @@ export function normalizeUserProfile(data) {
   // Keep Better Auth's core `name` consistent with the trimmed first/last name.
   normalized.name = `${normalized.firstName} ${normalized.lastName}`;
 
-  // Reject empty/null up front: `new Date(null)` is the epoch (a valid Date),
-  // which would otherwise slip a missing birthday through.
+  // Optional text fields: trim when present, drop blanks to null.
+  for (const field of OPTIONAL_PROFILE_FIELDS) {
+    const value = typeof normalized[field] === 'string' ? normalized[field].trim() : '';
+    normalized[field] = value || null;
+  }
+
+  // Optional birthday: blank/absent → null. A provided value must be a valid
+  // Date. `new Date(null)` is the epoch (a valid Date), so guard nullish first.
   const rawBirthday = normalized.birthday;
   if (rawBirthday === null || rawBirthday === undefined || rawBirthday === '') {
-    return { error: 'A valid birthday is required.' };
+    normalized.birthday = null;
+  } else {
+    const birthday = rawBirthday instanceof Date ? rawBirthday : new Date(rawBirthday);
+    if (Number.isNaN(birthday.getTime())) {
+      return { error: 'Please enter a valid birthday.' };
+    }
+    normalized.birthday = birthday;
   }
-  const birthday = rawBirthday instanceof Date ? rawBirthday : new Date(rawBirthday);
-  if (Number.isNaN(birthday.getTime())) {
-    return { error: 'A valid birthday is required.' };
-  }
-  normalized.birthday = birthday;
 
   return { data: normalized };
 }

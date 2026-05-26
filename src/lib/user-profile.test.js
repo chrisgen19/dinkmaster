@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeUserProfile, REQUIRED_PROFILE_FIELDS } from '@/lib/user-profile';
+import {
+  normalizeUserProfile,
+  REQUIRED_PROFILE_FIELDS,
+  OPTIONAL_PROFILE_FIELDS,
+} from '@/lib/user-profile';
 
 /** A well-formed payload with deliberate surrounding whitespace to exercise trimming. */
 const validPayload = () => ({
@@ -14,7 +18,7 @@ const validPayload = () => ({
 });
 
 describe('normalizeUserProfile — registration profile contract', () => {
-  it('trims required text fields and recomputes name from first/last', () => {
+  it('trims fields and recomputes name from first/last', () => {
     const result = normalizeUserProfile(validPayload());
     expect(result.error).toBeUndefined();
     expect(result.data).toMatchObject({
@@ -53,9 +57,42 @@ describe('normalizeUserProfile — registration profile contract', () => {
     expect(result.error).toContain(field);
   });
 
-  it.each([null, undefined, '', 'not-a-date'])('rejects an invalid birthday (%s)', (birthday) => {
-    const result = normalizeUserProfile({ ...validPayload(), birthday });
+  it('rejects a provided but unparseable birthday', () => {
+    const result = normalizeUserProfile({ ...validPayload(), birthday: 'not-a-date' });
     expect(result.data).toBeUndefined();
     expect(result.error).toMatch(/birthday/i);
+  });
+
+  describe('optional fields', () => {
+    /** Only the required fields present — the minimal valid sign-up. */
+    const minimalPayload = () => ({
+      name: 'stale name',
+      email: 'min@example.com',
+      firstName: 'Min',
+      lastName: 'User',
+    });
+
+    it('succeeds with only first/last name supplied', () => {
+      const result = normalizeUserProfile(minimalPayload());
+      expect(result.error).toBeUndefined();
+      expect(result.data).toMatchObject({ name: 'Min User' });
+    });
+
+    it.each(OPTIONAL_PROFILE_FIELDS)('normalizes a missing %s to null', (field) => {
+      const result = normalizeUserProfile(minimalPayload());
+      expect(result.data[field]).toBeNull();
+    });
+
+    it.each(OPTIONAL_PROFILE_FIELDS)('normalizes a whitespace-only %s to null', (field) => {
+      const result = normalizeUserProfile({ ...minimalPayload(), [field]: '   ' });
+      expect(result.error).toBeUndefined();
+      expect(result.data[field]).toBeNull();
+    });
+
+    it.each([null, undefined, ''])('normalizes a blank birthday (%s) to null', (birthday) => {
+      const result = normalizeUserProfile({ ...minimalPayload(), birthday });
+      expect(result.error).toBeUndefined();
+      expect(result.data.birthday).toBeNull();
+    });
   });
 });
