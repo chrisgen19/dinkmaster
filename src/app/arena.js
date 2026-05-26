@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef, useTransition } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -1016,8 +1017,11 @@ export default function Arena({
 
       {/* Cancel-Fill Confirm Modal — guards the destructive "return to deck"
           action so it can't fire on a stray click. Confirming sends the four
-          back to their original rack spots without recording a match. */}
-      {courtToCancel && (
+          back to their original rack spots without recording a match.
+          Rendered via portal to document.body so no ancestor's
+          overflow/transform/filter can clip this fixed overlay (the project's
+          PWA-safe modal rule, mirroring ArenaMobileSheet). */}
+      {mounted && courtToCancel && createPortal(
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
           onClick={(e) => {
@@ -1062,7 +1066,8 @@ export default function Arena({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* Score Entry Modal — matches the CourtCard's visual language: slate-900
