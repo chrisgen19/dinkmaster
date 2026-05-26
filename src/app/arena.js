@@ -20,6 +20,7 @@ import {
 import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT } from '@/lib/matchmaking';
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE } from '@/lib/match-defaults';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
+import { computeSessionStats } from '@/lib/session-stats';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
 import { formatShortName } from '@/lib/player-display';
 import { AuthStatus } from './auth-status';
@@ -171,6 +172,12 @@ export default function Arena({
   const [courts, setCourts] = useState(initialState.courts);
   const [matchHistory, setMatchHistory] = useState(initialState.matchHistory);
   const [history, setHistory] = useState(initialState.history);
+  // Local copy of the session-prep server state so the banner reflects a
+  // just-fired `prepareNextSession` without waiting for a server refetch.
+  // Declared up here (rather than alongside the other modal/UI state below)
+  // because the prop-refresh resync block right after this needs to call
+  // `setLastSessionResetAt` — declaring it later would TDZ-throw on render.
+  const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
   // Resync local rack state when the server refetches (e.g. after a child
   // component's `router.refresh()`). Without this, actions that only refresh
   // — link approvals, member removals — leave the rack UI showing the pre-
@@ -186,6 +193,12 @@ export default function Arena({
     setCourts(initialState.courts);
     setMatchHistory(initialState.matchHistory);
     setHistory(initialState.history);
+    // `lastSessionResetAt` is now the server-authoritative cutoff for the
+    // session-scoped overlay. Resync it alongside the other fields so a
+    // `router.refresh()` that doesn't flow through `applyResult` (e.g. a
+    // child component refreshing after a link approval) still surfaces a
+    // concurrent reset that happened on the server.
+    setLastSessionResetAt(initialState.lastSessionResetAt);
   }
 
   const [isPending, startTransition] = useTransition();
@@ -234,9 +247,6 @@ export default function Arena({
   // here (rather than inside the banner) so the modal renders at the page
   // root, outside the banner.
   const [rosterModalOpen, setRosterModalOpen] = useState(false);
-  // Local copy of the session-prep server state so the banner reflects a
-  // just-fired `prepareNextSession` without waiting for a server refetch.
-  const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
 
   // Persist the dismissal for the browser session, per arena, so a router
   // refresh (e.g. after requesting to join) or reload keeps it hidden.
@@ -319,9 +329,42 @@ export default function Arena({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [courtToCancel, isPending]);
 
+  // Session-scoped overlay of games / wins / losses. The DB `Player` row holds
+  // lifetime counters (incremented on every `endMatch` and surfaced on
+  // /profile), but inside the arena view those numbers stop matching what the
+  // This Week leaderboard shows after a manager hits "Reset session now". We
+  // recompute games/W/L from `matchHistory` since `lastSessionResetAt` and
+  // overlay them onto the players array so the Paddle Rack tile and the My
+  // Stats tab (both derived from `players` / `myPlayer`) read off the same
+  // truth the leaderboard does. A null reset timestamp means "no reset yet"
+  // and the tally falls through to lifetime equivalence (every recorded
+  // match counts), so a never-reset arena looks identical to before.
+  const sessionStats = useMemo(
+    () => computeSessionStats(matchHistory, lastSessionResetAt),
+    [matchHistory, lastSessionResetAt],
+  );
+  // Preserve the lifetime `gamesPlayed` under `lifetimeGamesPlayed` so the My
+  // Stats tab's "show rating" / "play a few matches" gates can keep asking
+  // "have they ever played?" rather than "have they played this session?" —
+  // otherwise a Reset Session would hide a rated player's rating until they
+  // finished their first game in the new session.
+  const displayPlayers = useMemo(
+    () =>
+      players.map((p) => {
+        const s = sessionStats.get(p.id);
+        return {
+          ...p,
+          lifetimeGamesPlayed: p.gamesPlayed,
+          gamesPlayed: s?.games ?? 0,
+          wins: s?.wins ?? 0,
+          losses: s?.losses ?? 0,
+        };
+      }),
+    [players, sessionStats],
+  );
   // The viewer's own linked player in this arena (null for guests / non-players).
   const myPlayer = viewerUserId
-    ? players.find((p) => p.userId === viewerUserId) ?? null
+    ? displayPlayers.find((p) => p.userId === viewerUserId) ?? null
     : null;
   // Courts with a match in progress — surfaced in the header stats and the
   // tab badge, so compute it once.
@@ -355,6 +398,13 @@ export default function Arena({
       setCourts(result.state.courts);
       setMatchHistory(result.state.matchHistory);
       setHistory(result.state.history);
+      // Server-authoritative reset boundary: kept in sync on every action
+      // so session-scoped tallies (rack tile, My Stats) never key off a
+      // client-stamped timestamp that could disagree with `Match.createdAt`
+      // for a match finishing right around a reset.
+      if ('lastSessionResetAt' in result.state) {
+        setLastSessionResetAt(result.state.lastSessionResetAt);
+      }
     }
   };
 
@@ -448,10 +498,10 @@ export default function Arena({
         const result = await prepareNextSession(arenaId);
         applyResult(result);
         if (!result?.error) {
-          // Stamp locally so the banner re-renders as "prepared" right away,
-          // without waiting for the next server read. The next router.refresh
-          // (e.g. on tab switch) will replace this with the server value.
-          setLastSessionResetAt(new Date().toISOString());
+          // `applyResult` already pulled the server-persisted
+          // `lastSessionResetAt` out of `result.state`, so the banner and the
+          // session-scoped overlays re-render against the same timestamp the
+          // server stored — no client clock involved.
           setRosterModalOpen(true);
         }
       } catch {
@@ -748,7 +798,7 @@ export default function Arena({
         >
           <PaddleRackStack
             queue={queue}
-            players={players}
+            players={displayPlayers}
             canManage={canManage}
             viewerUserId={viewerUserId}
             autoMix={autoMix}
@@ -779,7 +829,7 @@ export default function Arena({
           {activeTab === 'courts' && (
             <ArenaCourtsPanel
               courts={courts}
-              players={players}
+              players={displayPlayers}
               canManage={canManage}
               isPending={isPending}
               queueLength={queue.length}
@@ -911,6 +961,7 @@ export default function Arena({
             <ArenaMyStats
               myPlayer={myPlayer}
               matchHistory={matchHistory}
+              sessionStart={lastSessionResetAt}
               queue={queue}
               courts={courts}
               formatTimestamp={formatTimestamp}
@@ -941,7 +992,7 @@ export default function Arena({
         <ArenaPrepRosterModal
           arenaId={arenaId}
           members={members}
-          players={players}
+          players={displayPlayers}
           queue={queue}
           pendingRequests={pendingRequests}
           pendingLinkRequests={pendingLinkRequests}

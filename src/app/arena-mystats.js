@@ -26,6 +26,11 @@ import { MatchHistory } from './match-history';
  * @param {object} props
  * @param {object} props.myPlayer - viewer's player record in this arena
  * @param {object[]} props.matchHistory - arena-shape match records
+ * @param {string|Date|null} [props.sessionStart] - ISO timestamp / Date of the
+ *   last `prepareNextSession` reset, or null if the arena has never been
+ *   reset. Insight cards, the feed, and the ribbon all filter to matches
+ *   at/after this so this tab never disagrees with the Paddle Rack and
+ *   This Week leaderboard about how much play counted "this session".
  * @param {string[]} props.queue - player ids in rack order
  * @param {{team1: string[], team2: string[]}[]} props.courts - active courts
  * @param {(iso: string) => string} props.formatTimestamp - SSR-safe formatter
@@ -34,6 +39,7 @@ import { MatchHistory } from './match-history';
 export function ArenaMyStats({
   myPlayer,
   matchHistory,
+  sessionStart = null,
   queue,
   courts,
   formatTimestamp,
@@ -43,10 +49,23 @@ export function ArenaMyStats({
     : myPlayer.firstName;
 
   // Convert arena matches to the matchPlayer-row shape used by user-insights
-  // helpers. Filter drops matches the viewer wasn't in.
+  // helpers. Drops matches the viewer wasn't in AND matches that finished
+  // before the latest session reset — so the insight cards, the streak in
+  // the ribbon, and the match feed never disagree with the Paddle Rack tile
+  // (also session-scoped) about how much play counted "this session". A
+  // null `sessionStart` means the arena was never reset, and every match
+  // counts (same as before this change).
+  const sessionStartMs = useMemo(
+    () => (sessionStart ? new Date(sessionStart).getTime() : null),
+    [sessionStart],
+  );
   const rows = useMemo(
-    () => matchHistory.map((m) => arenaMatchToRow(m, myPlayer.id)).filter(Boolean),
-    [matchHistory, myPlayer.id],
+    () =>
+      matchHistory
+        .filter((m) => sessionStartMs === null || new Date(m.timestamp).getTime() >= sessionStartMs)
+        .map((m) => arenaMatchToRow(m, myPlayer.id))
+        .filter(Boolean),
+    [matchHistory, myPlayer.id, sessionStartMs],
   );
 
   const insights = useMemo(
@@ -66,10 +85,13 @@ export function ArenaMyStats({
   }, [rows, myPlayer.id]);
 
   const decided = myPlayer.wins + myPlayer.losses;
-  // SummaryRow draws from this so the ribbon reads as arena-lifetime instead
-  // of just the visible feed; streak comes from `insights` so it agrees with
-  // the Insights card above. Same pattern used on /profile.
-  const lifetimeSummary = {
+  // SummaryRow ribbon. `myPlayer.gamesPlayed / wins / losses` are session-
+  // scoped here (overlaid by Arena's `displayPlayers` memo) so the ribbon
+  // mirrors the Paddle Rack tile and the This Week leaderboard — the three
+  // surfaces never disagree on the same player's W/L during normal play or
+  // after a Reset Session. /profile's ribbon uses the same component but is
+  // fed lifetime totals by the server loader.
+  const sessionSummary = {
     total: myPlayer.gamesPlayed,
     wins: myPlayer.wins,
     losses: myPlayer.losses,
@@ -85,10 +107,14 @@ export function ArenaMyStats({
     ? `In the rack · #${queueIndex + 1}`
     : onCourt ? 'On a court' : 'Not in the rack';
   const queueTone = queueIndex >= 0 ? 'emerald' : onCourt ? 'sky' : 'slate';
-  const ratingLabel = myPlayer.gamesPlayed > 0
-    ? eloToDupr(myPlayer.rating).toFixed(3)
-    : '—';
-  const hasGames = myPlayer.gamesPlayed > 0;
+  // Rating + "play a few matches" hint gate on whether the player has ever
+  // played in this arena — not just this session — so a Reset Session
+  // doesn't hide a rated player's rating until they finish their first
+  // game in the new session. `lifetimeGamesPlayed` is overlaid alongside
+  // the session-scoped `gamesPlayed` by Arena's displayPlayers memo.
+  const everPlayed = (myPlayer.lifetimeGamesPlayed ?? myPlayer.gamesPlayed) > 0;
+  const ratingLabel = everPlayed ? eloToDupr(myPlayer.rating).toFixed(3) : '—';
+  const hasGames = everPlayed;
 
   return (
     <div
@@ -170,7 +196,7 @@ export function ArenaMyStats({
             matches={matches}
             perspective="player"
             maxHeight="640px"
-            summaryStats={lifetimeSummary}
+            summaryStats={sessionSummary}
             formatTimestamp={formatTimestamp}
             emptyState={{
               icon: '🎾',

@@ -10,7 +10,8 @@ import { prisma } from '@/lib/prisma';
  *   queue: string[],
  *   courts: Array<{id:string,name:string,status:string,team1:string[],team2:string[]}>,
  *   matchHistory: Array<{id:string,courtName:string,team1:Array<{id:string,firstName:string,lastName:string|null}>,team2:Array<{id:string,firstName:string,lastName:string|null}>,score1:number,score2:number,timestamp:string}>,
- *   history: Record<string, Record<string, number>>
+ *   history: Record<string, Record<string, number>>,
+ *   lastSessionResetAt: string|null
  * }>}
  */
 export async function getState(arenaId) {
@@ -18,7 +19,7 @@ export async function getState(arenaId) {
   // entirely, which would read every arena's data instead of one.
   if (!arenaId) throw new Error('getState requires an arenaId');
 
-  const [players, courts, matches, partnerships] = await Promise.all([
+  const [players, courts, matches, partnerships, arena] = await Promise.all([
     // Active players only: a departed member's row is kept (leftAt set) for
     // history but must not appear on the rack, matrix, or player count.
     prisma.player.findMany({ where: { arenaId, leftAt: null }, orderBy: { createdAt: 'asc' } }),
@@ -33,6 +34,11 @@ export async function getState(arenaId) {
       include: { players: true },
     }),
     prisma.partnership.findMany({ where: { arenaId } }),
+    // Session boundary lives on Arena. We surface it on every refresh so the
+    // client can key session-scoped stats (rack tile, My Stats) off the
+    // server-persisted timestamp instead of a client-stamped `new Date()`,
+    // which would drift under clock skew / network latency around a reset.
+    prisma.arena.findUnique({ where: { id: arenaId }, select: { lastSessionResetAt: true } }),
   ]);
 
   const queue = players
@@ -88,5 +94,6 @@ export async function getState(arenaId) {
     courts: courtState,
     matchHistory,
     history,
+    lastSessionResetAt: arena?.lastSessionResetAt ? arena.lastSessionResetAt.toISOString() : null,
   };
 }

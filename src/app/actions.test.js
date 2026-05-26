@@ -914,7 +914,11 @@ describe('arena server actions — authorization', () => {
       },
       arenaMembership: { findUnique: vi.fn().mockResolvedValue(member) },
       courtSlot: { findFirst: vi.fn().mockResolvedValue(onCourt) },
-      matchPlayer: { updateMany: vi.fn() },
+      matchPlayer: {
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+        updateMany: vi.fn(),
+      },
       partnership: { deleteMany: vi.fn() },
       linkRequest: { deleteMany: vi.fn() },
     });
@@ -948,12 +952,45 @@ describe('arena server actions — authorization', () => {
         data: { playerId: 'temp1' },
       });
       expect(tx.player.deleteMany).toHaveBeenCalledWith({ where: { id: 'own1', arenaId: ARENA } });
+      // The matches `temp1` is already in are looked up so colliding `own1`
+      // rows can be dropped before the re-point — otherwise the re-point would
+      // violate the (matchId, playerId) unique constraint.
+      expect(tx.matchPlayer.findMany).toHaveBeenCalledWith({
+        where: { playerId: 'temp1' },
+        select: { matchId: true },
+      });
       // Order matters: the walk-in `update` claims (arenaId, userId), so the
       // existing `ownPlayer` must be deleted FIRST or the @@unique constraint
       // fires with P2002. Lock the ordering here so a future reorder is loud.
       const deleteOrder = tx.player.deleteMany.mock.invocationCallOrder[0];
       const updateOrder = tx.player.update.mock.invocationCallOrder[0];
       expect(deleteOrder).toBeLessThan(updateOrder);
+    });
+
+    it('linkPlayerToMember() drops colliding MatchPlayer rows before re-pointing', async () => {
+      // Both players already appear in match `m1` (the walk-in and the member's
+      // auto-player shared a court before linking). Re-pointing `own1` onto
+      // `temp1` there would violate the (matchId, playerId) unique constraint,
+      // so the colliding `own1` row must be deleted first.
+      const tx = linkTx({
+        temp: { id: 'temp1', userId: null, gamesPlayed: 1, rating: 1100 },
+        member: { role: ROLES.MEMBER },
+        ownPlayer: { id: 'own1', gamesPlayed: 3, wins: 2, losses: 1, rating: 1300 },
+        onCourt: null,
+      });
+      tx.matchPlayer.findMany.mockResolvedValue([{ matchId: 'm1' }]);
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.linkPlayerToMember(ARENA, 'temp1', 'u2');
+      expect(result.error).toBeUndefined();
+      expect(tx.matchPlayer.deleteMany).toHaveBeenCalledWith({
+        where: { playerId: 'own1', matchId: { in: ['m1'] } },
+      });
+      // The collision drop must run before the re-point, or `updateMany` would
+      // recreate the duplicate the delete just removed.
+      const dropOrder = tx.matchPlayer.deleteMany.mock.invocationCallOrder[0];
+      const repointOrder = tx.matchPlayer.updateMany.mock.invocationCallOrder[0];
+      expect(dropOrder).toBeLessThan(repointOrder);
     });
 
     it('linkPlayerToMember() just links when the member has no player yet', async () => {
@@ -1170,7 +1207,11 @@ describe('arena server actions — authorization', () => {
       },
       arenaMembership: { findUnique: vi.fn().mockResolvedValue(member) },
       courtSlot: { findFirst: vi.fn().mockResolvedValue(onCourt) },
-      matchPlayer: { updateMany: vi.fn() },
+      matchPlayer: {
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+        updateMany: vi.fn(),
+      },
       partnership: { deleteMany: vi.fn() },
     });
 
