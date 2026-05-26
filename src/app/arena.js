@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useTransition } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import {
   removePlayer,
@@ -778,7 +779,15 @@ export default function Arena({
 
               {!leaderboard.hasData ? (
                 <div className="py-12 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/20">
-                  <p className="text-2xl mb-2">🏓</p>
+                  <div className="relative mx-auto mb-2 h-12 w-12 overflow-hidden rounded-xl ring-1 ring-inset ring-slate-200/80">
+                    <Image
+                      src="/icons/icon-192.png"
+                      alt="DinkMaster logo"
+                      fill
+                      sizes="48px"
+                      className="object-cover"
+                    />
+                  </div>
                   <p className="text-sm font-semibold text-slate-500">No matches yet this week</p>
                   <p className="text-xs mt-1">Play some games to claim the top spot!</p>
                 </div>

@@ -1,9 +1,9 @@
-# pnpm 11+ requires explicit approval before running install-time build scripts.
-# These four are legitimate: Prisma's engine binaries, sharp's native build,
-# and unrs-resolver's native module. Listed here once instead of running
-# `pnpm approve-builds` on every fresh checkout.
 allowBuilds:
   '@prisma/engines': true
+  '@swc/core': true
+  esbuild: true
   prisma: true
   sharp: true
   unrs-resolver: true
+
+enablePrePostScripts: true

@@ -1,0 +1,41 @@
+import Image from "next/image";
+import { RetryButton } from "./retry-button";
+
+export const metadata = {
+  title: "Offline — DinkMaster",
+};
+
+/**
+ * Fallback shown by the service worker when a document request can't be served
+ * from the network or cache (e.g. a route the user has never visited while
+ * offline). Kept fully static so it precaches cleanly.
+ */
+export default function OfflinePage() {
+  return (
+    <main className="min-h-screen flex flex-col items-center justify-center gap-6 px-6 text-center bg-slate-50">
+      <div className="relative h-16 w-16 overflow-hidden rounded-2xl ring-1 ring-inset ring-slate-200/80 shadow-sm">
+        {/* unoptimized so the request hits the raw /icons/icon-192.png path,
+            which the service worker precaches — the optimizer route (/_next/image)
+            isn't available offline. */}
+        <Image
+          src="/icons/icon-192.png"
+          alt="DinkMaster logo"
+          fill
+          sizes="64px"
+          className="object-cover"
+          unoptimized
+        />
+      </div>
+      <div className="space-y-2">
+        <h1 className="font-display text-2xl font-bold text-slate-900">
+          You&apos;re offline
+        </h1>
+        <p className="max-w-sm text-sm text-slate-500">
+          This page hasn&apos;t been saved for offline use yet. Reconnect to the
+          internet to keep stacking the rack.
+        </p>
+      </div>
+      <RetryButton />
+    </main>
+  );
+}

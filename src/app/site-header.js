@@ -1,9 +1,10 @@
 import Link from 'next/link';
+import Image from 'next/image';
 
 /**
- * The DinkMaster brand tile — a gradient paddle-court mark with a soft glow and
- * inner sheen. Presentational only; wrap it in a link where navigation is
- * wanted. Lives in `.group` so the parent can drive the hover lift.
+ * The DinkMaster brand tile — the pickleball logo in a rounded badge with a soft
+ * glow. Presentational only; wrap it in a link where navigation is wanted. Lives
+ * in `.group` so the parent can drive the hover lift.
  *
  * @param {object} props
  * @param {string} [props.className] - Sizing/extra classes for the tile.
@@ -12,18 +13,20 @@ export function BrandMark({ className = 'h-11 w-11' }) {
   return (
     <span
       aria-hidden="true"
-      className={`relative grid place-items-center shrink-0 rounded-2xl
-        bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-600
-        shadow-lg shadow-emerald-500/30 ring-1 ring-inset ring-white/30
+      className={`relative block shrink-0 overflow-hidden rounded-2xl
+        ring-1 ring-inset ring-slate-200/80 shadow-lg shadow-emerald-500/20
         transition-[transform,box-shadow] duration-300
-        group-hover:scale-105 group-hover:shadow-emerald-500/45
-        before:absolute before:inset-0 before:rounded-2xl
-        before:bg-gradient-to-b before:from-white/35 before:to-transparent before:opacity-80
+        group-hover:scale-105 group-hover:shadow-emerald-500/35
         ${className}`}
     >
-      <svg className="relative w-[58%] h-[58%] text-white drop-shadow-sm" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm-3 5c.83 0 1.5.67 1.5 1.5S9.83 10 9 10s-1.5-.67-1.5-1.5S8.17 7 9 7zm-2 6.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm6 5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1-5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm3.5-3.5c-.83 0-1.5-.67-1.5-1.5S16.17 7 17 7s1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm0 5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm-5-10c-.83 0-1.5-.67-1.5-1.5S12.17 3 13 3s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z" />
-      </svg>
+      <Image
+        src="/icons/icon-192.png"
+        alt="DinkMaster logo"
+        fill
+        sizes="48px"
+        className="object-cover"
+        priority
+      />
     </span>
   );
 }
