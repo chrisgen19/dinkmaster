@@ -34,6 +34,18 @@ export function SwUpdatePrompt() {
     serwist.addEventListener('waiting', onWaiting);
     serwist.addEventListener('controlling', onControlling);
 
+    // A worker may already be waiting at page load (installed during an earlier
+    // visit), in which case the 'waiting' event can fire before this listener
+    // attaches. Check the current registration so the banner still shows.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker
+        .getRegistration()
+        .then((registration) => {
+          if (registration?.waiting) setUpdateReady(true);
+        })
+        .catch(() => {});
+    }
+
     return () => {
       serwist.removeEventListener('waiting', onWaiting);
       serwist.removeEventListener('controlling', onControlling);
