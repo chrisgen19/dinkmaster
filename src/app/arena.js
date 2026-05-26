@@ -187,6 +187,12 @@ export default function Arena({
     setCourts(initialState.courts);
     setMatchHistory(initialState.matchHistory);
     setHistory(initialState.history);
+    // `lastSessionResetAt` is now the server-authoritative cutoff for the
+    // session-scoped overlay. Resync it alongside the other fields so a
+    // `router.refresh()` that doesn't flow through `applyResult` (e.g. a
+    // child component refreshing after a link approval) still surfaces a
+    // concurrent reset that happened on the server.
+    setLastSessionResetAt(initialState.lastSessionResetAt);
   }
 
   const [isPending, startTransition] = useTransition();
