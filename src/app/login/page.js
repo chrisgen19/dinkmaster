@@ -37,13 +37,19 @@ function LoginForm() {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const { error: signInError } = await signIn.email({ email, password });
-    setLoading(false);
-    if (signInError) {
-      setError(signInError.message || 'Invalid email or password.');
-      return;
+    try {
+      const { error: signInError } = await signIn.email({ email, password });
+      if (signInError) {
+        setError(signInError.message || 'Invalid email or password.');
+        return;
+      }
+      router.push(next);
+    } catch (err) {
+      // Network or unexpected failure — surface it instead of hanging on "Signing in…".
+      setError(err?.message || 'Could not sign in.');
+    } finally {
+      setLoading(false);
     }
-    router.push(next);
   };
 
   const registerHref = next !== '/arenas' ? `/register?next=${encodeURIComponent(next)}` : '/register';

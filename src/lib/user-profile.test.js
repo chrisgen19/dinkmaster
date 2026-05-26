@@ -3,6 +3,7 @@ import {
   normalizeUserProfile,
   REQUIRED_PROFILE_FIELDS,
   OPTIONAL_PROFILE_FIELDS,
+  GENDER_OPTIONS,
 } from '@/lib/user-profile';
 
 /** A well-formed payload with deliberate surrounding whitespace to exercise trimming. */
@@ -93,6 +94,18 @@ describe('normalizeUserProfile — registration profile contract', () => {
       const result = normalizeUserProfile({ ...minimalPayload(), birthday });
       expect(result.error).toBeUndefined();
       expect(result.data.birthday).toBeNull();
+    });
+
+    it.each(GENDER_OPTIONS)('accepts the known gender option %s', (gender) => {
+      const result = normalizeUserProfile({ ...minimalPayload(), gender });
+      expect(result.error).toBeUndefined();
+      expect(result.data.gender).toBe(gender);
+    });
+
+    it('rejects a gender outside the allowlist', () => {
+      const result = normalizeUserProfile({ ...minimalPayload(), gender: 'Wizard' });
+      expect(result.data).toBeUndefined();
+      expect(result.error).toMatch(/gender/i);
     });
   });
 });

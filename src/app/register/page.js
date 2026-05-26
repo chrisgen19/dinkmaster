@@ -4,6 +4,7 @@ import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { signUp } from '@/lib/auth-client';
 import { safeNext } from '@/lib/safe-next';
+import { GENDER_OPTIONS } from '@/lib/user-profile';
 import {
   AuthShell,
   AuthSubmit,
@@ -12,8 +13,6 @@ import {
   AUTH_FIELD_CLASS,
   BackPill,
 } from '../auth-shell';
-
-const GENDER_OPTIONS = ['Male', 'Female', 'Other', 'Prefer not to say'];
 
 export default function RegisterPage() {
   // `useSearchParams` (inside `RegisterForm`) requires a Suspense boundary so
@@ -73,7 +72,10 @@ function RegisterForm() {
         lastName: lastNameTrimmed,
         phone: phone.trim() || undefined,
         address: address.trim() || undefined,
-        birthday: birthday ? new Date(birthday) : undefined,
+        // Parse the YYYY-MM-DD value at local noon, not the default UTC
+        // midnight — otherwise the stored instant can roll back to the
+        // previous calendar day in negative-offset timezones.
+        birthday: birthday ? new Date(`${birthday}T12:00:00`) : undefined,
         gender: gender || undefined,
       });
       if (signUpError) {

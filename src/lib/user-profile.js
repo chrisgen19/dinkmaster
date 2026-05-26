@@ -12,6 +12,13 @@ export const REQUIRED_PROFILE_FIELDS = ['firstName', 'lastName'];
 export const OPTIONAL_PROFILE_FIELDS = ['phone', 'address', 'gender'];
 
 /**
+ * Accepted values for the optional `gender` field. Single source of truth,
+ * shared with the register form's <select>, and enforced server-side so a
+ * direct API call can't persist an arbitrary string.
+ */
+export const GENDER_OPTIONS = ['Male', 'Female', 'Other', 'Prefer not to say'];
+
+/**
  * Validate and normalize the profile fields on a user-create payload.
  *
  * Trims the required first/last name (rejecting whitespace-only values) and
@@ -41,6 +48,12 @@ export function normalizeUserProfile(data) {
   for (const field of OPTIONAL_PROFILE_FIELDS) {
     const value = typeof normalized[field] === 'string' ? normalized[field].trim() : '';
     normalized[field] = value || null;
+  }
+
+  // When a gender is provided, it must be one of the known options — the UI
+  // restricts this, but a direct API call could otherwise persist any string.
+  if (normalized.gender !== null && !GENDER_OPTIONS.includes(normalized.gender)) {
+    return { error: 'Please choose a valid gender option.' };
   }
 
   // Optional birthday: blank/absent → null. A provided value must be a valid

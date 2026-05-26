@@ -42,8 +42,9 @@ export function AuthShell({ title, subtitle, children, footer }) {
       </div>
 
       <div className="relative w-full max-w-sm animate-fade-in">
-        {/* Brand — links home, consistent with the app header. */}
-        <Link href="/" className="group mb-6 flex items-center justify-center gap-3">
+        {/* Brand — links to the arena directory, matching SiteHeader's in-app
+            convention (post-auth surfaces default to /arenas, not the marketing /). */}
+        <Link href="/arenas" className="group mb-6 flex items-center justify-center gap-3">
           <BrandMark className="h-11 w-11" />
           <Wordmark className="text-xl" />
         </Link>

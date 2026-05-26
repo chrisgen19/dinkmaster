@@ -51,7 +51,7 @@ test.describe('login', () => {
     // Seed an account directly through the Better Auth API, then test the UI.
     const email = uniqueEmail();
     const res = await request.post('/api/auth/sign-up/email', {
-      data: { name: 'E2E Login', email, password: PASSWORD },
+      data: { name: 'E2E Login', email, password: PASSWORD, firstName: 'E2E', lastName: 'Login' },
     });
     expect(res.ok()).toBeTruthy();
 
@@ -78,7 +78,7 @@ test.describe('login', () => {
     // Seed an account via the API so this test exercises just the redirect flow.
     const email = uniqueEmail();
     await request.post('/api/auth/sign-up/email', {
-      data: { name: 'E2E Deep Link', email, password: PASSWORD },
+      data: { name: 'E2E Deep Link', email, password: PASSWORD, firstName: 'E2E', lastName: 'DeepLink' },
     });
 
     // Hitting the auth-gated page as a guest should send us to /login with `next`.
