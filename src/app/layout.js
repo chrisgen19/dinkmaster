@@ -54,7 +54,17 @@ export default function RootLayout({ children }) {
       className={`${geistSans.variable} ${geistMono.variable} ${bricolage.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <SerwistProvider swUrl="/serwist/sw.js" disable={swDisabled}>
+        <SerwistProvider
+          swUrl="/serwist/sw.js"
+          disable={swDisabled}
+          // Don't force a full-page reload when the network reconnects — a flap
+          // mid-session would drop in-progress UI state. Updates go through the
+          // explicit SwUpdatePrompt flow instead.
+          reloadOnOnline={false}
+          // Most navigations are NetworkOnly (personalized), so cache-on-navigation
+          // would only fire redundant background fetches that cache nothing.
+          cacheOnNavigation={false}
+        >
           <NavTracker />
           {children}
           {/* Shared stack so the install and update prompts never overlap when
