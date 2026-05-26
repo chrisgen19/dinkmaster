@@ -411,11 +411,17 @@ export default function Arena({
   };
 
   // Confirmed: return the four to the rack and undo the fill (no match recorded).
+  // Keeps the modal open until the action resolves (both buttons are already
+  // disabled by isPending), so a race/no-op error doesn't manifest as the modal
+  // disappearing followed by a context-free banner.
   const handleConfirmCancelFill = () => {
     if (!courtToCancel) return;
     const courtId = courtToCancel.id;
-    setCourtToCancel(null);
-    run(() => cancelFill(arenaId, courtId), { sound: false });
+    startTransition(async () => {
+      const result = await cancelFill(arenaId, courtId);
+      applyResult(result);
+      setCourtToCancel(null);
+    });
   };
 
   const handleEndMatchWithScore = (courtId, score1, score2) => {

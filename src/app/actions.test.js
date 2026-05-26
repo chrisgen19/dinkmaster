@@ -1367,6 +1367,91 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
   });
 });
 
+describe('fillCourt() — snapshot rack state for cancelFill', () => {
+  // The snapshot writes (CourtSlot.prevQueueOrder/prevWaitRounds and
+  // Court.fillBumpedPlayerIds) are the INPUT contract that cancelFill relies on.
+  // A regression here turns every future cancel into a silent NO_SNAPSHOT no-op,
+  // so this asserts the writes happen exactly as cancelFill expects.
+  const COURT = 'court-1';
+
+  // The four about to be stacked, in queueOrder order (positions 1..4 with no
+  // waiting at fill time). Plus two players still behind them in the rack —
+  // those are the ones whose waitRounds get bumped by the fill.
+  const TOP_FOUR = [
+    { id: 'p1', queueOrder: 1, waitRounds: 0 },
+    { id: 'p2', queueOrder: 2, waitRounds: 0 },
+    { id: 'p3', queueOrder: 3, waitRounds: 0 },
+    { id: 'p4', queueOrder: 4, waitRounds: 0 },
+  ];
+  const BEHIND = [{ id: 'p5' }, { id: 'p6' }];
+
+  function makeTx() {
+    return {
+      $executeRaw: vi.fn(),
+      court: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }), // atomic claim succeeds
+        update: vi.fn(),
+      },
+      player: {
+        // Two findMany calls in fillCourt: first the top 4, then the rack
+        // behind them (the "bumped" set captured for cancelFill).
+        findMany: vi.fn()
+          .mockResolvedValueOnce(TOP_FOUR)
+          .mockResolvedValueOnce(BEHIND),
+        updateMany: vi.fn().mockResolvedValue({ count: 4 }), // dequeue succeeds
+      },
+      partnership: {
+        findMany: vi.fn().mockResolvedValue([]), // no prior partnerships
+        upsert: vi.fn(),
+      },
+      courtSlot: {
+        createMany: vi.fn(),
+      },
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireArenaManager.mockResolvedValue({
+      user: { id: 'u1' },
+      arena: { id: ARENA, ownerId: 'u1' },
+      role: ROLES.OWNER,
+    });
+  });
+
+  it('writes prevQueueOrder/prevWaitRounds onto every CourtSlot it creates', async () => {
+    const tx = makeTx();
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.fillCourt(ARENA, COURT);
+
+    // Every slot must carry the player's pre-fill rack state; cancelFill needs
+    // both fields non-null or it refuses with NO_SNAPSHOT.
+    const [{ data }] = tx.courtSlot.createMany.mock.calls[0];
+    expect(data).toHaveLength(4);
+    for (const slot of data) {
+      const source = TOP_FOUR.find((p) => p.id === slot.playerId);
+      expect(slot.prevQueueOrder).toBe(source.queueOrder);
+      expect(slot.prevWaitRounds).toBe(source.waitRounds);
+      expect([1, 2]).toContain(slot.team);
+    }
+  });
+
+  it('records the exact bumped player ids on the court for cancelFill to reverse', async () => {
+    const tx = makeTx();
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.fillCourt(ARENA, COURT);
+
+    // cancelFill scopes its waitRounds decrement to EXACTLY these ids — anyone
+    // recycled into the queue by a later finish must not be touched.
+    expect(tx.court.update).toHaveBeenCalledWith({
+      where: { id: COURT },
+      data: { fillBumpedPlayerIds: ['p5', 'p6'] },
+    });
+  });
+});
+
 describe('cancelFill() — return four players to the rack without recording a match', () => {
   const COURT = 'court-1';
 

@@ -798,7 +798,9 @@ export async function cancelFill(arenaId, courtId) {
 
       const slots = await tx.courtSlot.findMany({ where: { courtId } });
       // fillCourt always writes four slots — anything else means the court row
-      // is corrupt and a partial restore would unbump the wrong teams.
+      // is corrupt and a partial restore would unbump the wrong teams. Throwing
+      // here aborts the transaction, so the atomic `playing -> vacant` claim
+      // above rolls back along with it and the court returns to `playing`.
       if (slots.length !== 4) throw new Error('INVALID_COURT');
       // Need both snapshot fields to restore order + wait fairness exactly;
       // a partial/absent snapshot (pre-feature slot) is non-cancellable.
