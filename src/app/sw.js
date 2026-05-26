@@ -56,20 +56,19 @@ const serwist = new Serwist({
       matcher: ({ url }) => url.pathname.startsWith("/api/"),
       handler: new NetworkFirst({ cacheName: "api", networkTimeoutSeconds: 10 }),
     },
-    // Public, non-personalized page navigations: network-first for fresh
-    // content, with the cache backing offline revisits.
+    // Static, non-personalized page navigations: network-first for fresh
+    // content, with the cache backing offline revisits. Note `/` is excluded —
+    // it reads the session and renders different CTAs per user.
     {
       matcher: ({ request, url }) =>
         request.mode === "navigate" &&
-        (url.pathname === "/" ||
-          url.pathname === "/login" ||
-          url.pathname === "/register"),
+        (url.pathname === "/login" || url.pathname === "/register"),
       handler: new NetworkFirst({ cacheName: "pages", networkTimeoutSeconds: 10 }),
     },
-    // All other (authenticated) navigations: never persist user-specific HTML to
-    // a shared cache — on a shared device that could replay one user's page to
-    // the next. Always hit the network; the document fallback below serves the
-    // offline page when there's no connection.
+    // All other (personalized/authenticated) navigations: never persist
+    // user-specific HTML to a shared cache — on a shared device that could
+    // replay one user's page to the next. Always hit the network; the document
+    // fallback below serves the offline page when there's no connection.
     {
       matcher: ({ request }) => request.mode === "navigate",
       handler: new NetworkOnly(),
