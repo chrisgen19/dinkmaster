@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef, useTransition } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -9,6 +10,7 @@ import {
   skipPlayer,
   shuffleQueue,
   fillCourt,
+  cancelFill,
   endMatch,
   addCourt,
   removeCourt,
@@ -201,6 +203,10 @@ export default function Arena({
   const [team1Score, setTeam1Score] = useState('');
   const [team2Score, setTeam2Score] = useState('');
 
+  // The court whose fill is pending cancellation, surfaced in a confirm modal
+  // so a destructive "return to deck" can't fire on a stray click. Null = closed.
+  const [courtToCancel, setCourtToCancel] = useState(null);
+
   const [errorMsg, setErrorMsg] = useState('');
   const [activeTab, setActiveTab] = useState('courts');
 
@@ -304,6 +310,21 @@ export default function Arena({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [scoreModalOpen]);
 
+  // Escape closes the cancel-fill confirm modal too (keyboard partner to the
+  // backdrop click and the "Keep Playing" button). Suppressed while the action
+  // is in flight: handleConfirmCancelFill keeps the modal open until the result
+  // lands so a NOT_PLAYING/INVALID_COURT race surfaces in context, and that
+  // promise would be broken if Esc could still dismiss mid-action. `isPending`
+  // is in the deps so the listener captures its current value, not a stale one.
+  useEffect(() => {
+    if (!courtToCancel) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape' && !isPending) setCourtToCancel(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [courtToCancel, isPending]);
+
   // The viewer's own linked player in this arena (null for guests / non-players).
   const myPlayer = viewerUserId
     ? players.find((p) => p.userId === viewerUserId) ?? null
@@ -385,6 +406,26 @@ export default function Arena({
     setTeam1Score('');
     setTeam2Score('');
     setScoreModalOpen(true);
+  };
+
+  // Open the confirm modal for a court's fill cancellation (manager-only).
+  const handleRequestCancelFill = (court) => {
+    if (!canManage) return;
+    setCourtToCancel(court);
+  };
+
+  // Confirmed: return the four to the rack and undo the fill (no match recorded).
+  // Keeps the modal open until the action resolves (both buttons are already
+  // disabled by isPending), so a race/no-op error doesn't manifest as the modal
+  // disappearing followed by a context-free banner.
+  const handleConfirmCancelFill = () => {
+    if (!courtToCancel) return;
+    const courtId = courtToCancel.id;
+    startTransition(async () => {
+      const result = await cancelFill(arenaId, courtId);
+      applyResult(result);
+      setCourtToCancel(null);
+    });
   };
 
   const handleEndMatchWithScore = (courtId, score1, score2) => {
@@ -750,6 +791,7 @@ export default function Arena({
               queueLength={queue.length}
               onAddCourt={handleAddCourt}
               onFinishCourt={handleTriggerScoreModal}
+              onCancelCourt={handleRequestCancelFill}
               onFillCourt={handleFillCourt}
               onRemoveCourt={handleRemoveCourt}
             />
@@ -981,6 +1023,64 @@ export default function Arena({
           onApplyResult={applyResult}
           onClose={() => setRosterModalOpen(false)}
         />
+      )}
+
+      {/* Cancel-Fill Confirm Modal — guards the destructive "return to deck"
+          action so it can't fire on a stray click. Confirming sends the four
+          back to their original rack spots without recording a match.
+          Rendered via portal to document.body so no ancestor's
+          overflow/transform/filter can clip this fixed overlay (the project's
+          PWA-safe modal rule, mirroring ArenaMobileSheet). */}
+      {mounted && courtToCancel && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
+          onClick={(e) => {
+            // Ignore backdrop dismiss while the cancel is in flight; both
+            // buttons are already disabled, and Esc is suppressed too, so the
+            // modal stays put until the result lands.
+            if (e.target === e.currentTarget && !isPending) setCourtToCancel(null);
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="cancel-fill-title"
+            aria-describedby="cancel-fill-desc"
+            className="bg-white rounded-2xl border border-slate-200 max-w-sm w-full shadow-xl animate-scale-up overflow-hidden"
+          >
+            <div className="px-5 py-5">
+              <h3 id="cancel-fill-title" className="font-extrabold text-slate-900 text-base">
+                Cancel this match?
+              </h3>
+              <p id="cancel-fill-desc" className="text-sm text-slate-600 mt-2 leading-relaxed">
+                The four players on{' '}
+                <span className="font-bold text-slate-800">{courtToCancel.name}</span>{' '}
+                go back to the front of the rack in their original order.{' '}
+                <span className="font-semibold">No game is recorded</span> — no scores, wins,
+                losses, or rating changes.
+              </p>
+            </div>
+            <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/60 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setCourtToCancel(null)}
+                disabled={isPending}
+                className="px-4 py-2.5 rounded-xl text-slate-600 hover:bg-slate-200/60 disabled:opacity-50 font-bold text-xs uppercase tracking-wide transition"
+              >
+                Keep Playing
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCancelFill}
+                disabled={isPending}
+                className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-wide transition shadow-sm shadow-red-600/20"
+              >
+                Cancel & Return to Deck
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
 
       {/* Score Entry Modal — matches the CourtCard's visual language: slate-900

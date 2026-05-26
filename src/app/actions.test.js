@@ -56,6 +56,7 @@ const PLAY = [
   ['removePlayer', () => actions.removePlayer(ARENA, 'p1')],
   ['shuffleQueue', () => actions.shuffleQueue(ARENA)],
   ['fillCourt', () => actions.fillCourt(ARENA, 'c1')],
+  ['cancelFill', () => actions.cancelFill(ARENA, 'c1')],
   ['endMatch', () => actions.endMatch(ARENA, 'c1', 11, 5, true)],
   ['addCourt', () => actions.addCourt(ARENA)],
   ['removeCourt', () => actions.removeCourt(ARENA, 'c1')],
@@ -1362,6 +1363,256 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
     prisma.$transaction.mockImplementation(async (cb) => cb(tx));
     const result = await actions.skipPlayer(ARENA, 'p1');
     expect(result.notification).toBe('');
+    expect(tx.player.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('fillCourt() — snapshot rack state for cancelFill', () => {
+  // The snapshot writes (CourtSlot.prevQueueOrder/prevWaitRounds and
+  // Court.fillBumpedPlayerIds) are the INPUT contract that cancelFill relies on.
+  // A regression here turns every future cancel into a silent NO_SNAPSHOT no-op,
+  // so this asserts the writes happen exactly as cancelFill expects.
+  const COURT = 'court-1';
+
+  // The four about to be stacked, in queueOrder order (positions 1..4 with no
+  // waiting at fill time). Plus two players still behind them in the rack —
+  // those are the ones whose waitRounds get bumped by the fill.
+  const TOP_FOUR = [
+    { id: 'p1', queueOrder: 1, waitRounds: 0 },
+    { id: 'p2', queueOrder: 2, waitRounds: 0 },
+    { id: 'p3', queueOrder: 3, waitRounds: 0 },
+    { id: 'p4', queueOrder: 4, waitRounds: 0 },
+  ];
+  const BEHIND = [{ id: 'p5' }, { id: 'p6' }];
+
+  function makeTx() {
+    return {
+      $executeRaw: vi.fn(),
+      court: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }), // atomic claim succeeds
+        update: vi.fn(),
+      },
+      player: {
+        // Two findMany calls in fillCourt: first the top 4, then the rack
+        // behind them (the "bumped" set captured for cancelFill).
+        findMany: vi.fn()
+          .mockResolvedValueOnce(TOP_FOUR)
+          .mockResolvedValueOnce(BEHIND),
+        updateMany: vi.fn().mockResolvedValue({ count: 4 }), // dequeue succeeds
+      },
+      partnership: {
+        findMany: vi.fn().mockResolvedValue([]), // no prior partnerships
+        upsert: vi.fn(),
+      },
+      courtSlot: {
+        createMany: vi.fn(),
+      },
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireArenaManager.mockResolvedValue({
+      user: { id: 'u1' },
+      arena: { id: ARENA, ownerId: 'u1' },
+      role: ROLES.OWNER,
+    });
+  });
+
+  it('writes prevQueueOrder/prevWaitRounds onto every CourtSlot it creates', async () => {
+    const tx = makeTx();
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.fillCourt(ARENA, COURT);
+
+    // Every slot must carry the player's pre-fill rack state; cancelFill needs
+    // both fields non-null or it refuses with NO_SNAPSHOT.
+    const [{ data }] = tx.courtSlot.createMany.mock.calls[0];
+    expect(data).toHaveLength(4);
+    for (const slot of data) {
+      const source = TOP_FOUR.find((p) => p.id === slot.playerId);
+      expect(slot.prevQueueOrder).toBe(source.queueOrder);
+      expect(slot.prevWaitRounds).toBe(source.waitRounds);
+      expect([1, 2]).toContain(slot.team);
+    }
+  });
+
+  it('records the exact bumped player ids on the court for cancelFill to reverse', async () => {
+    const tx = makeTx();
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.fillCourt(ARENA, COURT);
+
+    // cancelFill scopes its waitRounds decrement to EXACTLY these ids — anyone
+    // recycled into the queue by a later finish must not be touched.
+    expect(tx.court.update).toHaveBeenCalledWith({
+      where: { id: COURT },
+      data: { fillBumpedPlayerIds: ['p5', 'p6'] },
+    });
+  });
+});
+
+describe('cancelFill() — return four players to the rack without recording a match', () => {
+  const COURT = 'court-1';
+
+  // Build a fresh tx mock for cancelFill: covers every prisma call the action
+  // makes inside the transaction. court.updateMany returns count: 1 by default
+  // (the happy "atomic claim" path); each test overrides specifics.
+  function makeTx({ slots, bumpedIds = [], others = [], courtClaimCount = 1 } = {}) {
+    return {
+      $executeRaw: vi.fn(),
+      court: {
+        findFirst: vi.fn().mockResolvedValue({ fillBumpedPlayerIds: bumpedIds }),
+        updateMany: vi.fn().mockResolvedValue({ count: courtClaimCount }),
+      },
+      courtSlot: {
+        findMany: vi.fn().mockResolvedValue(slots),
+        deleteMany: vi.fn(),
+      },
+      player: {
+        update: vi.fn(),
+        updateMany: vi.fn(),
+        findMany: vi.fn().mockResolvedValue(others.map((id) => ({ id }))),
+      },
+      partnership: {
+        updateMany: vi.fn(),
+      },
+    };
+  }
+
+  // A complete 4-slot court with snapshot data filled in. Players were at
+  // queue positions 1..4 with no waiting (waitRounds: 0) at fill time.
+  const FULL_SLOTS = [
+    { playerId: 'p1', team: 1, prevQueueOrder: 1, prevWaitRounds: 0 },
+    { playerId: 'p2', team: 1, prevQueueOrder: 2, prevWaitRounds: 0 },
+    { playerId: 'p3', team: 2, prevQueueOrder: 3, prevWaitRounds: 0 },
+    { playerId: 'p4', team: 2, prevQueueOrder: 4, prevWaitRounds: 0 },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireArenaManager.mockResolvedValue({
+      user: { id: 'u1' },
+      arena: { id: ARENA, ownerId: 'u1' },
+      role: ROLES.OWNER,
+    });
+  });
+
+  it('restores waitRounds, decrements gamesPlayed with a floor, and renumbers 1..N with the four first', async () => {
+    const tx = makeTx({
+      slots: FULL_SLOTS,
+      bumpedIds: ['p5'],
+      others: ['p5', 'p6'], // already queued behind the four
+    });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    const result = await actions.cancelFill(ARENA, COURT);
+    expect(result.error).toBeUndefined();
+
+    // Court flipped vacant AND bookkeeping cleared on the same claim.
+    expect(tx.court.updateMany).toHaveBeenCalledWith({
+      where: { id: COURT, arenaId: ARENA, status: 'playing' },
+      data: { status: 'vacant', fillBumpedPlayerIds: [] },
+    });
+
+    // waitRounds restored via plain update; gamesPlayed decremented via
+    // updateMany with `gt: 0` guard so it can never go negative.
+    for (const s of FULL_SLOTS) {
+      expect(tx.player.update).toHaveBeenCalledWith({
+        where: { id: s.playerId },
+        data: { waitRounds: s.prevWaitRounds },
+      });
+      expect(tx.player.updateMany).toHaveBeenCalledWith({
+        where: { id: s.playerId, gamesPlayed: { gt: 0 } },
+        data: { gamesPlayed: { decrement: 1 } },
+      });
+    }
+
+    // Renumber: cancelled four come first in their original relative order,
+    // then the rest of the rack, densely 1..N.
+    const renumberCalls = tx.player.update.mock.calls
+      .map(([arg]) => arg)
+      .filter((arg) => 'queueOrder' in (arg.data ?? {}));
+    expect(renumberCalls.map((c) => [c.where.id, c.data.queueOrder])).toEqual([
+      ['p1', 1], ['p2', 2], ['p3', 3], ['p4', 4], ['p5', 5], ['p6', 6],
+    ]);
+
+    // Slots deleted last so the snapshot is readable throughout the action.
+    expect(tx.courtSlot.deleteMany).toHaveBeenCalledWith({ where: { courtId: COURT } });
+  });
+
+  it('reverses the wait-round bump for only the players the fill actually bumped, not whoever is queued now', async () => {
+    const tx = makeTx({
+      slots: FULL_SLOTS,
+      bumpedIds: ['p5', 'p6'], // exactly who fillCourt bumped
+      others: ['p5', 'p6', 'p7'], // p7 joined later, must NOT be decremented
+    });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.cancelFill(ARENA, COURT);
+
+    // The wait-round decrement uses { in: bumpedIds }, not a blanket scan of
+    // currently-queued players — so p7 (who joined after the fill) is safe.
+    expect(tx.player.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ['p5', 'p6'] },
+        arenaId: ARENA,
+        leftAt: null,
+        queueOrder: { not: null },
+        waitRounds: { gt: 0 },
+      },
+      data: { waitRounds: { decrement: 1 } },
+    });
+  });
+
+  it('decrements the two partnership counts (one per team) with the gt:0 guard', async () => {
+    const tx = makeTx({ slots: FULL_SLOTS });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.cancelFill(ARENA, COURT);
+
+    // unbumpPartnership floors at 0 via `count: { gt: 0 }`. Pair ids are
+    // canonical (sorted), so [p1,p2] and [p3,p4] in this fixture.
+    expect(tx.partnership.updateMany).toHaveBeenCalledWith({
+      where: { playerA: 'p1', playerB: 'p2', count: { gt: 0 } },
+      data: { count: { decrement: 1 } },
+    });
+    expect(tx.partnership.updateMany).toHaveBeenCalledWith({
+      where: { playerA: 'p3', playerB: 'p4', count: { gt: 0 } },
+      data: { count: { decrement: 1 } },
+    });
+  });
+
+  it('returns a user-visible error and writes nothing when the court is already vacant (NOT_PLAYING)', async () => {
+    const tx = makeTx({ slots: FULL_SLOTS, courtClaimCount: 0 });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    const result = await actions.cancelFill(ARENA, COURT);
+    expect(result.error).toMatch(/no longer active/i);
+    // The atomic claim failed — nothing else should have been mutated.
+    expect(tx.courtSlot.deleteMany).not.toHaveBeenCalled();
+    expect(tx.player.update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['prevQueueOrder', { ...FULL_SLOTS[0], prevQueueOrder: null }],
+    ['prevWaitRounds', { ...FULL_SLOTS[0], prevWaitRounds: null }],
+  ])('refuses with a clear error when %s is null on any slot (NO_SNAPSHOT)', async (_label, bad) => {
+    const tx = makeTx({ slots: [bad, FULL_SLOTS[1], FULL_SLOTS[2], FULL_SLOTS[3]] });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    const result = await actions.cancelFill(ARENA, COURT);
+    expect(result.error).toMatch(/started before cancel/i);
+    expect(tx.courtSlot.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses with a clear error when the court does not have exactly four slots (INVALID_COURT)', async () => {
+    const tx = makeTx({ slots: FULL_SLOTS.slice(0, 3) });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    const result = await actions.cancelFill(ARENA, COURT);
+    expect(result.error).toMatch(/unexpected state/i);
+    expect(tx.courtSlot.deleteMany).not.toHaveBeenCalled();
     expect(tx.player.update).not.toHaveBeenCalled();
   });
 });

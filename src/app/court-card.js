@@ -16,6 +16,7 @@ import { formatShortName } from '@/lib/player-display';
  * @param {boolean} props.isPending - A mutation is in flight (disables the actions).
  * @param {number} props.queueLength - Rack size; gates the "stack 4" button.
  * @param {(court: object) => void} props.onFinish - Open the score modal for this court.
+ * @param {(court: object) => void} props.onCancel - Cancel this fill and send the four back to the rack.
  * @param {(courtId: string) => void} props.onFill - Stack the next four paddles onto this court.
  * @param {(courtId: string) => void} props.onRemove - Close this (vacant) court.
  */
@@ -26,6 +27,7 @@ export function CourtCard({
   isPending,
   queueLength,
   onFinish,
+  onCancel,
   onFill,
   onRemove,
 }) {
@@ -137,13 +139,25 @@ export function CourtCard({
       {/* Footer — primary action */}
       <div className="px-3 py-3 border-t border-slate-100 bg-slate-50/40">
         {isPlaying ? (
-          <button
-            onClick={() => onFinish(court)}
-            disabled={isPending || !canManage}
-            className="w-full py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-[11px] uppercase tracking-[0.14em] transition shadow-sm shadow-red-600/20"
-          >
-            Finish Game & Record Score
-          </button>
+          <div className="space-y-2">
+            <button
+              onClick={() => onFinish(court)}
+              disabled={isPending || !canManage}
+              className="w-full py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-[11px] uppercase tracking-[0.14em] transition shadow-sm shadow-red-600/20"
+            >
+              Finish Game & Record Score
+            </button>
+            {canManage && (
+              <button
+                onClick={() => onCancel(court)}
+                disabled={isPending}
+                title="Send these four back to the rack without recording a game"
+                className="w-full py-2 rounded-xl text-slate-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-[10px] uppercase tracking-[0.14em] transition"
+              >
+                Cancel & Return to Deck
+              </button>
+            )}
+          </div>
         ) : (
           <button
             onClick={() => onFill(court.id)}

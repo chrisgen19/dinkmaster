@@ -15,6 +15,7 @@ import { CourtCard } from './court-card';
  * @param {number} props.queueLength - Rack size; gates each card's "stack 4" button.
  * @param {() => void} props.onAddCourt - Create a new court.
  * @param {(court: object) => void} props.onFinishCourt - Open the score modal for a court.
+ * @param {(court: object) => void} props.onCancelCourt - Cancel a fill and return its four to the rack.
  * @param {(courtId: string) => void} props.onFillCourt - Stack the next four onto a court.
  * @param {(courtId: string) => void} props.onRemoveCourt - Close a vacant court.
  */
@@ -26,6 +27,7 @@ export function ArenaCourtsPanel({
   queueLength,
   onAddCourt,
   onFinishCourt,
+  onCancelCourt,
   onFillCourt,
   onRemoveCourt,
 }) {
@@ -81,6 +83,7 @@ export function ArenaCourtsPanel({
             isPending={isPending}
             queueLength={queueLength}
             onFinish={onFinishCourt}
+            onCancel={onCancelCourt}
             onFill={onFillCourt}
             onRemove={onRemoveCourt}
           />
