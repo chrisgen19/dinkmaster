@@ -17,6 +17,7 @@ import {
   linkPlayerToMember,
 } from './actions';
 import { ROLES } from '@/lib/roles';
+import { monogram } from '@/lib/user-insights';
 import { ArenaRequestsList } from './arena-requests-list';
 
 /** Locale-aware case-insensitive name compare for sorting people lists. */
@@ -348,16 +349,6 @@ function summariseRequests(joinCount, linkCount) {
   return `${parts.join(' + ')} ${label}`;
 }
 
-/** First two letters of a display name, used for the avatar disc. */
-function initials(name) {
-  const trimmed = (name ?? '').trim();
-  if (!trimmed) return '·';
-  const parts = trimmed.split(/\s+/);
-  const first = parts[0]?.[0] ?? '';
-  const second = parts.length > 1 ? parts[parts.length - 1][0] : (parts[0]?.[1] ?? '');
-  return (first + second).toUpperCase();
-}
-
 function Avatar({ name, tone = 'slate' }) {
   const palette = {
     slate: 'bg-slate-100 text-slate-600 ring-slate-200',
@@ -368,7 +359,7 @@ function Avatar({ name, tone = 'slate' }) {
       aria-hidden
       className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-black tracking-wide ring-1 shrink-0 ${palette}`}
     >
-      {initials(name)}
+      {monogram(name)}
     </span>
   );
 }
