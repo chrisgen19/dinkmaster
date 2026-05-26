@@ -28,9 +28,22 @@ const byDisplayName = (a, b) =>
   );
 
 const ROLE_BADGE = {
-  OWNER: 'bg-emerald-50 text-emerald-700',
-  ORGANIZER: 'bg-sky-50 text-sky-700',
-  MEMBER: 'bg-slate-100 text-slate-600',
+  OWNER: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100',
+  ORGANIZER: 'bg-sky-50 text-sky-700 ring-1 ring-sky-100',
+  MEMBER: 'bg-slate-50 text-slate-600 ring-1 ring-slate-200',
+};
+
+// Shared button vocabulary — keeps every action row in lockstep without
+// hoisting a Tailwind plugin or a new component. Focus rings are explicit
+// so keyboard navigation stays visible across all four button flavours.
+const BTN_BASE =
+  'text-[11px] font-bold px-2.5 py-1 rounded-lg transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1';
+const BTN = {
+  neutral: `${BTN_BASE} bg-slate-50 hover:bg-slate-100 text-slate-700 ring-1 ring-slate-200 focus-visible:ring-slate-300`,
+  danger: `${BTN_BASE} bg-white hover:bg-red-50 hover:text-red-600 text-slate-600 ring-1 ring-slate-200 focus-visible:ring-red-300`,
+  primary: `${BTN_BASE} bg-sky-600 hover:bg-sky-700 text-white focus-visible:ring-sky-300`,
+  promote: `${BTN_BASE} bg-sky-50 hover:bg-sky-100 text-sky-700 ring-1 ring-sky-100 focus-visible:ring-sky-300`,
+  accent: `${BTN_BASE} bg-emerald-50 hover:bg-emerald-100 text-emerald-700 ring-1 ring-emerald-100 focus-visible:ring-emerald-300`,
 };
 
 /**
@@ -157,13 +170,16 @@ export function ArenaMembers({
   ];
 
   return (
-    <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-5 animate-fade-in">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-extrabold uppercase tracking-widest text-slate-400">
+    <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in">
+      <header className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
             People
+          </p>
+          <h3 className="font-display text-xl font-semibold text-slate-900 mt-0.5">
+            Who&apos;s in this arena
           </h3>
-          <p className="text-xs text-slate-500 mt-1.5">
+          <p className="text-xs text-slate-500 mt-1.5 max-w-md">
             Members have an account and a role. Walk-ins are temporary — link them to a member to keep their stats.
           </p>
         </div>
@@ -171,16 +187,20 @@ export function ArenaMembers({
           <button
             onClick={leave}
             disabled={isPending}
-            className="text-xs bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg font-bold transition disabled:opacity-50"
+            className={`${BTN.danger} shrink-0`}
           >
             Leave arena
           </button>
         )}
-      </div>
+      </header>
 
       {error && (
-        <div role="alert" className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">
-          {error}
+        <div
+          role="alert"
+          className="px-3 py-2.5 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-start gap-2"
+        >
+          <span aria-hidden className="mt-0.5 inline-block h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" />
+          <span className="leading-relaxed">{error}</span>
         </div>
       )}
 
@@ -188,18 +208,25 @@ export function ArenaMembers({
         <button
           type="button"
           onClick={() => setActivePill('requests')}
-          className="w-full text-left rounded-xl border border-amber-200 bg-amber-50/60 hover:bg-amber-50 px-4 py-2.5 flex items-center justify-between gap-3 transition"
+          className="group w-full text-left rounded-xl border border-amber-200/80 bg-amber-50/50 hover:bg-amber-50 hover:border-amber-300 pl-3 pr-4 py-2.5 flex items-center justify-between gap-3 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
         >
-          <span className="text-xs font-semibold text-amber-800">
-            {summariseRequests(pendingRequests.length, pendingLinkRequests.length)} pending
+          <span className="flex items-center gap-2.5 min-w-0">
+            <span aria-hidden className="h-6 w-1 rounded-full bg-amber-400 shrink-0" />
+            <span className="text-xs font-semibold text-amber-900 truncate">
+              {summariseRequests(pendingRequests.length, pendingLinkRequests.length)} pending
+            </span>
           </span>
-          <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider">
+          <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider shrink-0 transition group-hover:translate-x-0.5">
             Review →
           </span>
         </button>
       )}
 
-      <div role="tablist" aria-label="People pills" className="inline-flex gap-1 p-1 bg-slate-100 rounded-xl">
+      <div
+        role="tablist"
+        aria-label="People pills"
+        className="inline-flex gap-1 p-1 bg-slate-50 ring-1 ring-slate-200/70 rounded-xl"
+      >
         {pills.map((p) => {
           const active = activePill === p.id;
           return (
@@ -208,14 +235,16 @@ export function ArenaMembers({
               role="tab"
               aria-selected={active}
               onClick={() => setActivePill(p.id)}
-              className={`text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
-                active ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              className={`text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 ${
+                active
+                  ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/60'
+                  : 'text-slate-500 hover:text-slate-800'
               }`}
             >
               {p.label}
               <span
-                className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${
-                  active ? 'bg-slate-100 text-slate-600' : 'bg-slate-200/70 text-slate-500'
+                className={`text-[10px] font-black tabular-nums px-1.5 py-0.5 rounded-full ${
+                  active ? 'bg-slate-100 text-slate-700' : 'bg-slate-200/70 text-slate-500'
                 }`}
               >
                 {p.count}
@@ -226,7 +255,7 @@ export function ArenaMembers({
       </div>
 
       {activePill === 'members' && (
-        <div className="space-y-4">
+        <div className="space-y-4 animate-fade-in">
           {showSelfLink && (
             <SelfLinkPanel
               pendingRequest={viewerLinkContext.pendingRequest}
@@ -248,25 +277,29 @@ export function ArenaMembers({
       )}
 
       {activePill === 'walkins' && (
-        <WalkInsList
-          orphans={sortedOrphans}
-          canManage={canManage}
-          isPending={isPending}
-          onLink={(p) => setManagerLinkFor(p)}
-          onRemove={removeWalkIn}
-        />
+        <div className="animate-fade-in">
+          <WalkInsList
+            orphans={sortedOrphans}
+            canManage={canManage}
+            isPending={isPending}
+            onLink={(p) => setManagerLinkFor(p)}
+            onRemove={removeWalkIn}
+          />
+        </div>
       )}
 
       {activePill === 'requests' && canManage && (
-        <ArenaRequestsList
-          pendingLinkRequests={pendingLinkRequests}
-          pendingRequests={pendingRequests}
-          isPending={isPending}
-          onApproveLink={approveLink}
-          onRejectLink={rejectLink}
-          onApproveJoin={approve}
-          onRejectJoin={reject}
-        />
+        <div className="animate-fade-in">
+          <ArenaRequestsList
+            pendingLinkRequests={pendingLinkRequests}
+            pendingRequests={pendingRequests}
+            isPending={isPending}
+            onApproveLink={approveLink}
+            onRejectLink={rejectLink}
+            onApproveJoin={approve}
+            onRejectJoin={reject}
+          />
+        </div>
       )}
 
       {selfLinkOpen && (
@@ -315,36 +348,53 @@ function summariseRequests(joinCount, linkCount) {
   return `${parts.join(' + ')} ${label}`;
 }
 
+/** First two letters of a display name, used for the avatar disc. */
+function initials(name) {
+  const trimmed = (name ?? '').trim();
+  if (!trimmed) return '·';
+  const parts = trimmed.split(/\s+/);
+  const first = parts[0]?.[0] ?? '';
+  const second = parts.length > 1 ? parts[parts.length - 1][0] : (parts[0]?.[1] ?? '');
+  return (first + second).toUpperCase();
+}
+
+function Avatar({ name, tone = 'slate' }) {
+  const palette = {
+    slate: 'bg-slate-100 text-slate-600 ring-slate-200',
+    sky: 'bg-sky-50 text-sky-700 ring-sky-100',
+  }[tone];
+  return (
+    <span
+      aria-hidden
+      className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-black tracking-wide ring-1 shrink-0 ${palette}`}
+    >
+      {initials(name)}
+    </span>
+  );
+}
+
 function SelfLinkPanel({ pendingRequest, onOpenModal, onCancel, disabled }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
-      <h4 className="text-xs font-extrabold uppercase tracking-widest text-slate-500 mb-2">
+    <div className="rounded-xl border border-slate-200 bg-gradient-to-b from-slate-50/80 to-white p-4">
+      <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-500 mb-2">
         Link your account
-      </h4>
+      </p>
       {pendingRequest ? (
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-slate-600">
             Pending approval — claimed as{' '}
-            <span className="font-semibold text-slate-800">{pendingRequest.playerName}</span>.
+            <span className="font-semibold text-slate-900">{pendingRequest.playerName}</span>.
           </p>
-          <button
-            onClick={onCancel}
-            disabled={disabled}
-            className="text-[11px] bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-600 border border-slate-200 px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
-          >
+          <button onClick={onCancel} disabled={disabled} className={BTN.danger}>
             Cancel
           </button>
         </div>
       ) : (
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-slate-600 max-w-sm leading-relaxed">
             If a walk-in row in the rack is really you, request to claim it so your stats carry over.
           </p>
-          <button
-            onClick={onOpenModal}
-            disabled={disabled}
-            className="text-[11px] bg-sky-600 hover:bg-sky-700 text-white px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
-          >
+          <button onClick={onOpenModal} disabled={disabled} className={BTN.primary}>
             Link Player
           </button>
         </div>
@@ -355,91 +405,101 @@ function SelfLinkPanel({ pendingRequest, onOpenModal, onCancel, disabled }) {
 
 function MembersList({ members, viewerUserId, isOwner, isPending, onPromoteToggle, onTransfer, onRemove }) {
   if (members.length === 0) {
-    return <p className="text-xs text-slate-500 py-2">No members yet.</p>;
+    return (
+      <div className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center">
+        <p className="text-xs text-slate-500">No members yet.</p>
+      </div>
+    );
   }
   return (
     <ul className="divide-y divide-slate-100">
-      {members.map((m) => (
-        <li key={m.membershipId} className="flex items-center justify-between gap-3 py-3">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-800 truncate">
-              {m.name}
-              {m.userId === viewerUserId && <span className="text-slate-400 font-normal"> (you)</span>}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span
-              className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${ROLE_BADGE[m.role]}`}
-            >
-              {m.role}
-            </span>
-            {isOwner && m.role !== ROLES.OWNER && (
-              <>
-                <button
-                  onClick={() => onPromoteToggle(m)}
-                  disabled={isPending}
-                  className="text-[11px] bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-100 px-2 py-1 rounded-lg font-bold transition disabled:opacity-50"
+      {members.map((m) => {
+        const isViewer = m.userId === viewerUserId;
+        return (
+          <li
+            key={m.membershipId}
+            className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-3"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <Avatar name={m.name} tone={isViewer ? 'sky' : 'slate'} />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900 truncate">
+                  {m.name}
+                  {isViewer && <span className="text-slate-400 font-normal"> (you)</span>}
+                </p>
+                <span
+                  className={`inline-flex mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider ${ROLE_BADGE[m.role]}`}
                 >
+                  {m.role}
+                </span>
+              </div>
+            </div>
+            {isOwner && m.role !== ROLES.OWNER && (
+              <div className="flex items-center gap-1.5 shrink-0 sm:pl-3">
+                <button onClick={() => onPromoteToggle(m)} disabled={isPending} className={BTN.promote}>
                   {m.role === ROLES.ORGANIZER ? 'Demote' : 'Make organizer'}
                 </button>
-                <button
-                  onClick={() => onTransfer(m)}
-                  disabled={isPending}
-                  className="text-[11px] bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-100 px-2 py-1 rounded-lg font-bold transition disabled:opacity-50"
-                >
+                <button onClick={() => onTransfer(m)} disabled={isPending} className={BTN.accent}>
                   Make owner
                 </button>
-                <button
-                  onClick={() => onRemove(m)}
-                  disabled={isPending}
-                  className="text-[11px] bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 px-2 py-1 rounded-lg font-bold transition disabled:opacity-50"
-                >
+                <button onClick={() => onRemove(m)} disabled={isPending} className={BTN.danger}>
                   Remove
                 </button>
-              </>
+              </div>
             )}
-          </div>
-        </li>
-      ))}
+          </li>
+        );
+      })}
     </ul>
   );
 }
 
 function WalkInsList({ orphans, canManage, isPending, onLink, onRemove }) {
   if (orphans.length === 0) {
-    return <p className="text-xs text-slate-500 py-2">No walk-in players right now.</p>;
+    return (
+      <div className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center">
+        <p className="text-xs text-slate-500">No walk-in players right now.</p>
+        {canManage && (
+          <p className="text-[11px] text-slate-400 mt-1">
+            Walk-ins appear here when a manager adds an unlinked player to the rack.
+          </p>
+        )}
+      </div>
+    );
   }
   return (
     <ul className="divide-y divide-slate-100">
       {orphans.map((p) => (
-        <li key={p.id} className="flex items-center justify-between gap-3 py-2.5">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-sm font-semibold text-slate-800 truncate">{p.displayName}</span>
-            <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-600">
-              walk-in
-            </span>
-            {p.hasPendingRequest && (
-              <span
-                className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700"
-                title="A member has requested to claim this walk-in. Review in the Requests pill."
-              >
-                claim pending
+        <li
+          key={p.id}
+          className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 py-2.5"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <Avatar name={p.displayName} />
+            <div className="min-w-0 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="text-sm font-semibold text-slate-900 truncate">{p.displayName}</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 ring-1 ring-slate-200">
+                walk-in
               </span>
-            )}
+              {p.hasPendingRequest && (
+                <span
+                  className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 ring-1 ring-sky-100"
+                  title="A member has requested to claim this walk-in. Review in the Requests pill."
+                >
+                  claim pending
+                </span>
+              )}
+            </div>
           </div>
           {canManage && (
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                onClick={() => onLink(p)}
-                disabled={isPending}
-                className="text-[11px] bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-100 px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
-              >
+            <div className="flex items-center gap-1.5 shrink-0 sm:pl-3">
+              <button onClick={() => onLink(p)} disabled={isPending} className={BTN.promote}>
                 Link Player
               </button>
               <button
                 onClick={() => onRemove(p)}
                 disabled={isPending}
-                className="text-[11px] bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
+                className={BTN.danger}
                 title="Delete this walk-in permanently"
               >
                 Delete
@@ -478,23 +538,30 @@ function LinkPlayerModal({ title, description, submitLabel, options, onCancel, o
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 animate-fade-in"
       onClick={(e) => {
         if (e.target === e.currentTarget && !disabled) onCancel();
       }}
     >
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4">
+      <div className="bg-white rounded-2xl shadow-xl ring-1 ring-slate-200 w-full max-w-sm p-6 space-y-4 animate-scale-up">
         <div>
-          <h3 className="text-base font-extrabold text-slate-800">{title}</h3>
-          <p className="text-xs text-slate-500 mt-1.5">{description}</p>
+          <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
+            Link player
+          </p>
+          <h3 className="font-display text-lg font-semibold text-slate-900 mt-0.5 leading-snug">
+            {title}
+          </h3>
+          <p className="text-xs text-slate-500 mt-2 leading-relaxed">{description}</p>
         </div>
         {options.length === 0 ? (
-          <p className="text-xs text-slate-500">No options available.</p>
+          <div className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-center">
+            <p className="text-xs text-slate-500">No options available.</p>
+          </div>
         ) : (
           <select
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-sky-200"
+            className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-300 transition"
           >
             <option value="" disabled>
               Select…
@@ -506,18 +573,14 @@ function LinkPlayerModal({ title, description, submitLabel, options, onCancel, o
             ))}
           </select>
         )}
-        <div className="flex items-center justify-end gap-2">
-          <button
-            onClick={onCancel}
-            disabled={disabled}
-            className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 px-3 py-1.5 rounded-lg font-bold transition disabled:opacity-50"
-          >
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <button onClick={onCancel} disabled={disabled} className={BTN.neutral}>
             Cancel
           </button>
           <button
             onClick={() => canSubmit && onSubmit(value)}
             disabled={!canSubmit}
-            className="text-xs bg-sky-600 hover:bg-sky-700 text-white px-3 py-1.5 rounded-lg font-bold transition disabled:opacity-50"
+            className={BTN.primary}
           >
             {submitLabel}
           </button>
