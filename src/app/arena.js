@@ -172,6 +172,12 @@ export default function Arena({
   const [courts, setCourts] = useState(initialState.courts);
   const [matchHistory, setMatchHistory] = useState(initialState.matchHistory);
   const [history, setHistory] = useState(initialState.history);
+  // Local copy of the session-prep server state so the banner reflects a
+  // just-fired `prepareNextSession` without waiting for a server refetch.
+  // Declared up here (rather than alongside the other modal/UI state below)
+  // because the prop-refresh resync block right after this needs to call
+  // `setLastSessionResetAt` — declaring it later would TDZ-throw on render.
+  const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
   // Resync local rack state when the server refetches (e.g. after a child
   // component's `router.refresh()`). Without this, actions that only refresh
   // — link approvals, member removals — leave the rack UI showing the pre-
@@ -241,9 +247,6 @@ export default function Arena({
   // here (rather than inside the banner) so the modal renders at the page
   // root, outside the banner.
   const [rosterModalOpen, setRosterModalOpen] = useState(false);
-  // Local copy of the session-prep server state so the banner reflects a
-  // just-fired `prepareNextSession` without waiting for a server refetch.
-  const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
 
   // Persist the dismissal for the browser session, per arena, so a router
   // refresh (e.g. after requesting to join) or reload keeps it hidden.
