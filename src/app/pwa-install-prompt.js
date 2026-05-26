@@ -22,13 +22,20 @@ function useIsStandalone() {
   );
 }
 
-/** `true` on iOS Safari, which has no beforeinstallprompt event. */
+/** `true` on iOS/iPadOS Safari, which has no beforeinstallprompt event. */
 function useIsIOS() {
   return useSyncExternalStore(
     noop,
-    () =>
-      /ipad|iphone|ipod/.test(window.navigator.userAgent.toLowerCase()) &&
-      !window.MSStream,
+    () => {
+      const nav = window.navigator;
+      const iPhone =
+        /ipad|iphone|ipod/.test(nav.userAgent.toLowerCase()) &&
+        !window.MSStream;
+      // iPadOS Safari reports a desktop "Macintosh" UA, so detect it via the
+      // touch-capable Mac platform (real Macs have no touchscreen).
+      const iPadOS = nav.platform === 'MacIntel' && nav.maxTouchPoints > 1;
+      return iPhone || iPadOS;
+    },
     () => false,
   );
 }
