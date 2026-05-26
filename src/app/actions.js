@@ -558,6 +558,21 @@ async function applyLinkPlayerToMember(tx, arenaId, playerId, userId) {
     // `ownPlayer` before we set `userId` on the walk-in. `MatchPlayer` is
     // a snapshot (no FK), so re-pointing it before the delete is safe;
     // `Partnership` likewise has no FK to Player.
+    //
+    // Both players could already appear in the same finished match (the
+    // walk-in and the member's auto-player were on the same court before
+    // linking). Re-pointing `ownPlayer`'s row there would collide with
+    // `temp`'s existing row on the `(matchId, playerId)` unique constraint,
+    // so drop `ownPlayer`'s row in those matches and re-point only the rest.
+    const tempMatchIds = (
+      await tx.matchPlayer.findMany({
+        where: { playerId: temp.id },
+        select: { matchId: true },
+      })
+    ).map((mp) => mp.matchId);
+    await tx.matchPlayer.deleteMany({
+      where: { playerId: ownPlayer.id, matchId: { in: tempMatchIds } },
+    });
     await tx.matchPlayer.updateMany({
       where: { playerId: ownPlayer.id },
       data: { playerId: temp.id },

@@ -914,7 +914,11 @@ describe('arena server actions — authorization', () => {
       },
       arenaMembership: { findUnique: vi.fn().mockResolvedValue(member) },
       courtSlot: { findFirst: vi.fn().mockResolvedValue(onCourt) },
-      matchPlayer: { updateMany: vi.fn() },
+      matchPlayer: {
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+        updateMany: vi.fn(),
+      },
       partnership: { deleteMany: vi.fn() },
       linkRequest: { deleteMany: vi.fn() },
     });
@@ -948,6 +952,13 @@ describe('arena server actions — authorization', () => {
         data: { playerId: 'temp1' },
       });
       expect(tx.player.deleteMany).toHaveBeenCalledWith({ where: { id: 'own1', arenaId: ARENA } });
+      // The matches `temp1` is already in are looked up so colliding `own1`
+      // rows can be dropped before the re-point — otherwise the re-point would
+      // violate the (matchId, playerId) unique constraint.
+      expect(tx.matchPlayer.findMany).toHaveBeenCalledWith({
+        where: { playerId: 'temp1' },
+        select: { matchId: true },
+      });
       // Order matters: the walk-in `update` claims (arenaId, userId), so the
       // existing `ownPlayer` must be deleted FIRST or the @@unique constraint
       // fires with P2002. Lock the ordering here so a future reorder is loud.
@@ -1170,7 +1181,11 @@ describe('arena server actions — authorization', () => {
       },
       arenaMembership: { findUnique: vi.fn().mockResolvedValue(member) },
       courtSlot: { findFirst: vi.fn().mockResolvedValue(onCourt) },
-      matchPlayer: { updateMany: vi.fn() },
+      matchPlayer: {
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+        updateMany: vi.fn(),
+      },
       partnership: { deleteMany: vi.fn() },
     });
 

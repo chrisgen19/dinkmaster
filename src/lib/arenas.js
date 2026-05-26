@@ -375,11 +375,24 @@ export async function getUserPlayerStats(userId) {
       })
     : [];
 
-  const recentMatches = enrichRecentMatches(matchPlayers.slice(0, 20), playerIdSet);
+  // A viewer has at most one Player per arena and a match belongs to a single
+  // arena, so legitimately there is at most one of the viewer's MatchPlayer
+  // rows per match. A historic link/merge could leave two rows for the same
+  // match (the same playerId on both teams); collapse to one row per match so
+  // the feed's React keys stay unique and the aggregations don't double-count.
+  // The DB now enforces uniqueness, so this only guards already-corrupt data.
+  const seenMatchIds = new Set();
+  const uniqueMatchPlayers = matchPlayers.filter((mp) => {
+    if (seenMatchIds.has(mp.matchId)) return false;
+    seenMatchIds.add(mp.matchId);
+    return true;
+  });
+
+  const recentMatches = enrichRecentMatches(uniqueMatchPlayers.slice(0, 20), playerIdSet);
   const insights = {
-    bestPartner: bestPartner(matchPlayers, playerIdSet),
-    favoriteCourt: favoriteCourt(matchPlayers),
-    streak: currentStreak(matchPlayers),
+    bestPartner: bestPartner(uniqueMatchPlayers, playerIdSet),
+    favoriteCourt: favoriteCourt(uniqueMatchPlayers),
+    streak: currentStreak(uniqueMatchPlayers),
   };
 
   return {
