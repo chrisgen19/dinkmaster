@@ -6,6 +6,14 @@ import {
   Serwist,
   StaleWhileRevalidate,
 } from "serwist";
+import {
+  isApiRequest,
+  isFontRequest,
+  isImageRequest,
+  isNavigation,
+  isPublicNavigation,
+  isStaticAsset,
+} from "../lib/sw-routing.js";
 
 // `self.__SW_MANIFEST` is replaced at build time with the list of precached
 // build assets (the app shell). Everything else is handled at runtime below.
@@ -17,16 +25,24 @@ const serwist = new Serwist({
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching: [
+    // API routes (auth/session and everything else): never cache. Responses are
+    // user-specific, so persisting them risks replaying one user's data to
+    // another on a shared device. Listed FIRST so it wins over the image rule —
+    // an `<img src="/api/...">` is destination "image" but must stay network-only.
+    {
+      matcher: isApiRequest,
+      handler: new NetworkOnly(),
+    },
     // _next/static: filenames are content-hashed and immutable, so a given URL's
     // bytes never change — serve from cache and skip the network entirely.
     {
-      matcher: /\/_next\/static\/.*/i,
+      matcher: isStaticAsset,
       handler: new CacheFirst({ cacheName: "next-static" }),
     },
-    // Images: same immutable-per-URL logic, but capped so the cache can't grow
-    // without bound.
+    // Images (same-origin only): immutable-per-URL, capped so the cache can't
+    // grow without bound. Cross-origin/opaque and API images are excluded.
     {
-      matcher: ({ request }) => request.destination === "image",
+      matcher: isImageRequest,
       handler: new CacheFirst({
         cacheName: "images",
         plugins: [
@@ -40,23 +56,14 @@ const serwist = new Serwist({
     // Fonts: rarely change but aren't always hashed — serve instantly from cache
     // and refresh in the background.
     {
-      matcher: ({ request }) => request.destination === "font",
+      matcher: isFontRequest,
       handler: new StaleWhileRevalidate({ cacheName: "fonts" }),
-    },
-    // API routes (auth/session and everything else): never cache. Responses are
-    // user-specific, so persisting them risks replaying one user's data to
-    // another on a shared device — always hit the network.
-    {
-      matcher: ({ url }) => url.pathname.startsWith("/api/"),
-      handler: new NetworkOnly(),
     },
     // Static, non-personalized page navigations: network-first for fresh
     // content, with the cache backing offline revisits. Note `/` is excluded —
     // it reads the session and renders different CTAs per user.
     {
-      matcher: ({ request, url }) =>
-        request.mode === "navigate" &&
-        (url.pathname === "/login" || url.pathname === "/register"),
+      matcher: isPublicNavigation,
       handler: new NetworkFirst({
         cacheName: "pages",
         networkTimeoutSeconds: 10,
@@ -70,7 +77,7 @@ const serwist = new Serwist({
     // replay one user's page to the next. Always hit the network; the document
     // fallback below serves the offline page when there's no connection.
     {
-      matcher: ({ request }) => request.mode === "navigate",
+      matcher: isNavigation,
       handler: new NetworkOnly(),
     },
   ],
