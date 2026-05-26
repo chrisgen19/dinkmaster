@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import useEmblaCarousel from 'embla-carousel-react';
 import { AnimatePresence, motion, useDragControls } from 'motion/react';
 import { TabIcon, TabBadge as Badge } from './arena-tab-icons';
@@ -87,8 +88,14 @@ function ArenaMobileTabStrip({ navTabs, activeTab, onSelectTab }) {
  */
 function ArenaMobileSheet({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
   const [open, setOpen] = useState(false);
+  // Portal target (document.body) is only available after mount; gate the
+  // portal on this so the server render and first client render agree.
+  const [mounted, setMounted] = useState(false);
   const sheetRef = useRef(null);
   const triggerRef = useRef(null);
+  // Remembers the scroll offset captured when we locked the body, so we can
+  // restore it on unlock (see lockScroll/unlockScroll).
+  const scrollLock = useRef({ y: 0, locked: false });
   const dragControls = useDragControls();
   const titleId = useId();
   const descId = useId();
@@ -98,6 +105,38 @@ function ArenaMobileSheet({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
     onSelectTab(id);
     setOpen(false);
   }, [onSelectTab]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount flag so createPortal only runs client-side (document.body is unavailable during SSR)
+  useEffect(() => setMounted(true), []);
+
+  // Lock background scroll with the iOS-safe pattern: a plain
+  // `overflow: hidden` on <body> does NOT stop rubber-band scrolling in iOS
+  // Safari / standalone PWA, so pin the body with `position: fixed` and offset
+  // it by the current scroll position, then restore that position on unlock.
+  const lockScroll = useCallback(() => {
+    if (scrollLock.current.locked) return;
+    const y = window.scrollY;
+    scrollLock.current = { y, locked: true };
+    const { style } = document.body;
+    style.position = 'fixed';
+    style.top = `-${y}px`;
+    style.left = '0';
+    style.right = '0';
+    style.width = '100%';
+  }, []);
+
+  const unlockScroll = useCallback(() => {
+    if (!scrollLock.current.locked) return;
+    const { y } = scrollLock.current;
+    scrollLock.current.locked = false;
+    const { style } = document.body;
+    style.position = '';
+    style.top = '';
+    style.left = '';
+    style.right = '';
+    style.width = '';
+    window.scrollTo(0, y);
+  }, []);
 
   // The desktop tablist takes over at `md`, so a sheet left open while the
   // viewport crosses 768px (tablet rotation, desktop dev-tools resize) would
@@ -112,13 +151,17 @@ function ArenaMobileSheet({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
     return () => mql.removeEventListener?.('change', update);
   }, []);
 
+  // Safety net: if the component unmounts while still open (e.g. navigating
+  // away), `onExitComplete` never fires — make sure body scroll is restored.
+  useEffect(() => unlockScroll, [unlockScroll]);
+
   // While open: lock body scroll, trap focus inside the sheet, close on
-  // Escape, and restore focus to the trigger on close. Mirrors the affordances
-  // vaul gave us for free.
+  // Escape, and restore focus to the trigger on close. Body scroll is NOT
+  // unlocked here — that's deferred to AnimatePresence's `onExitComplete` so
+  // the page behind the scrim can't scroll during the exit animation.
   useEffect(() => {
     if (!open) return undefined;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    lockScroll();
     // Capture the trigger now so the cleanup restores focus to the element that
     // was present when the sheet opened, not whatever the ref holds later.
     const trigger = triggerRef.current;
@@ -153,13 +196,114 @@ function ArenaMobileSheet({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
     });
 
     return () => {
-      document.body.style.overflow = previousOverflow;
       document.removeEventListener('keydown', handleKeyDown);
       cancelAnimationFrame(raf);
       // Return focus to the pill so keyboard users aren't dropped at the top.
       trigger?.focus();
     };
-  }, [open]);
+  }, [open, lockScroll]);
+
+  // Overlay + sheet, portaled to <body> so no ancestor `overflow`/`transform`/
+  // `filter` can clip or mis-anchor the fixed-position sheet (vaul did this via
+  // Drawer.Portal). `onExitComplete` unlocks scroll only after the close
+  // animation finishes.
+  const overlayAndSheet = (
+    <AnimatePresence onExitComplete={unlockScroll}>
+      {open && (
+        <motion.div
+          key="overlay"
+          aria-hidden="true"
+          onClick={close}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="md:hidden fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-[2px]"
+        />
+      )}
+      {open && (
+        <motion.div
+          key="sheet"
+          ref={sheetRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={descId}
+          tabIndex={-1}
+          initial={{ y: '100%' }}
+          animate={{ y: 0 }}
+          exit={{ y: '100%' }}
+          transition={{ type: 'spring', stiffness: 380, damping: 38 }}
+          // Drag-to-dismiss is started only from the handle (below) so a tap
+          // on a nav button never gets read as a drag — the failure mode we
+          // are deliberately leaving behind with vaul.
+          drag="y"
+          dragListener={false}
+          dragControls={dragControls}
+          dragConstraints={{ top: 0, bottom: 0 }}
+          dragElastic={{ top: 0, bottom: 0.5 }}
+          onDragEnd={(_e, info) => {
+            if (info.offset.y > 120 || info.velocity.y > 500) close();
+          }}
+          className="md:hidden fixed bottom-0 left-0 right-0 z-50 outline-none
+            bg-white rounded-t-[28px]
+            shadow-[0_-20px_50px_-12px_rgba(15,23,42,0.25)]"
+        >
+          {/* Drag handle — the only drag-initiating surface. */}
+          <div
+            onPointerDown={(e) => dragControls.start(e)}
+            className="touch-none cursor-grab pt-3 pb-1 active:cursor-grabbing"
+          >
+            <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" aria-hidden="true" />
+          </div>
+          <h2 id={titleId} className="sr-only">Arena views</h2>
+          <p id={descId} className="sr-only">
+            Pick which arena view to show. The current view is {activeTabLabel}.
+          </p>
+          <div className="px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 px-2 mb-2">
+              Arena views
+            </p>
+            <nav className="space-y-1">
+              {navTabs.map((tab, index) => {
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => handleSelect(tab.id)}
+                    aria-pressed={isActive}
+                    data-autofocus={index === 0 ? '' : undefined}
+                    className={`w-full flex items-center gap-3 px-3 py-3.5 rounded-2xl
+                      text-left transition
+                      ${isActive
+                        ? 'bg-slate-900 text-white shadow-md shadow-slate-900/20'
+                        : 'text-slate-700 hover:bg-slate-100 active:bg-slate-100'
+                      }`}
+                  >
+                    <span className={`shrink-0 grid place-items-center w-9 h-9 rounded-xl ${
+                      isActive ? 'bg-white/10 text-emerald-300' : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      <TabIcon id={tab.id} className="w-5 h-5" />
+                    </span>
+                    <span className="flex-1 font-display font-extrabold tracking-tight text-[15px]">
+                      {tab.label}
+                    </span>
+                    <Badge value={tab.badge} active={isActive} />
+                    {isActive && (
+                      <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-300">
+                        Open
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
 
   return (
     <>
@@ -191,104 +335,7 @@ function ArenaMobileSheet({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
         </motion.span>
       </button>
 
-      {/* The overlay and sheet are kept as two *direct* children of
-          AnimatePresence — wrapping them in a Fragment makes AnimatePresence
-          see a single opaque child and silently drops the exit animations. */}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            key="overlay"
-            aria-hidden="true"
-            onClick={close}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="md:hidden fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-[2px]"
-          />
-        )}
-        {open && (
-            <motion.div
-              key="sheet"
-              ref={sheetRef}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby={titleId}
-              aria-describedby={descId}
-              tabIndex={-1}
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', stiffness: 380, damping: 38 }}
-              // Drag-to-dismiss is started only from the handle (below) so a tap
-              // on a nav button never gets read as a drag — the failure mode we
-              // are deliberately leaving behind with vaul.
-              drag="y"
-              dragListener={false}
-              dragControls={dragControls}
-              dragConstraints={{ top: 0, bottom: 0 }}
-              dragElastic={{ top: 0, bottom: 0.5 }}
-              onDragEnd={(_e, info) => {
-                if (info.offset.y > 120 || info.velocity.y > 500) close();
-              }}
-              className="md:hidden fixed bottom-0 left-0 right-0 z-50 outline-none
-                bg-white rounded-t-[28px]
-                shadow-[0_-20px_50px_-12px_rgba(15,23,42,0.25)]"
-            >
-              {/* Drag handle — the only drag-initiating surface. */}
-              <div
-                onPointerDown={(e) => dragControls.start(e)}
-                className="touch-none cursor-grab pt-3 pb-1 active:cursor-grabbing"
-              >
-                <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" aria-hidden="true" />
-              </div>
-              <h2 id={titleId} className="sr-only">Arena views</h2>
-              <p id={descId} className="sr-only">
-                Pick which arena view to show. The current view is {activeTabLabel}.
-              </p>
-              <div className="px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
-                <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 px-2 mb-2">
-                  Arena views
-                </p>
-                <nav className="space-y-1">
-                  {navTabs.map((tab, index) => {
-                    const isActive = activeTab === tab.id;
-                    return (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => handleSelect(tab.id)}
-                        aria-pressed={isActive}
-                        data-autofocus={index === 0 ? '' : undefined}
-                        className={`w-full flex items-center gap-3 px-3 py-3.5 rounded-2xl
-                          text-left transition
-                          ${isActive
-                            ? 'bg-slate-900 text-white shadow-md shadow-slate-900/20'
-                            : 'text-slate-700 hover:bg-slate-100 active:bg-slate-100'
-                          }`}
-                      >
-                        <span className={`shrink-0 grid place-items-center w-9 h-9 rounded-xl ${
-                          isActive ? 'bg-white/10 text-emerald-300' : 'bg-slate-100 text-slate-500'
-                        }`}>
-                          <TabIcon id={tab.id} className="w-5 h-5" />
-                        </span>
-                        <span className="flex-1 font-display font-extrabold tracking-tight text-[15px]">
-                          {tab.label}
-                        </span>
-                        <Badge value={tab.badge} active={isActive} />
-                        {isActive && (
-                          <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-300">
-                            Open
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </nav>
-              </div>
-            </motion.div>
-        )}
-      </AnimatePresence>
+      {mounted ? createPortal(overlayAndSheet, document.body) : null}
     </>
   );
 }
@@ -298,7 +345,7 @@ function ArenaMobileSheet({ navTabs, activeTab, activeTabLabel, onSelectTab }) {
  *
  * 1. A sticky horizontal tab strip just under the SiteHeader (always visible,
  *    swipe to scrub through tabs, tap to switch).
- * 2. A floating "current view" pill above the thumb zone that opens a vaul
+ * 2. A floating "current view" pill above the thumb zone that opens a motion
  *    bottom sheet with the full tab list, descriptions, and badges.
  *
  * Both write to the same `onSelectTab` callback, so the parent owns the
