@@ -32,6 +32,16 @@ describe('computeSessionStats', () => {
     expect(out.get('d')).toEqual({ games: 2, wins: 1, losses: 1 });
   });
 
+  it('treats undefined sessionStart the same as null (default arg path)', () => {
+    const matches = [
+      m({ team1: ['a'], team2: ['b'], score1: 11, score2: 7, t: -60 }),
+      m({ team1: ['a'], team2: ['b'], score1: 11, score2: 9, t: 10 }),
+    ];
+    const out = computeSessionStats(matches, undefined);
+    expect(out.get('a')).toEqual({ games: 2, wins: 2, losses: 0 });
+    expect(out.get('b')).toEqual({ games: 2, wins: 0, losses: 2 });
+  });
+
   it('drops matches that finished before the session boundary', () => {
     const matches = [
       m({ team1: ['a', 'b'], team2: ['c', 'd'], score1: 11, score2: 7, t: -60 }), // pre-reset
