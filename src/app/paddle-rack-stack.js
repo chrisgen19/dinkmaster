@@ -140,16 +140,6 @@ export function PaddleRackStack({
     setExpandedPlayerId((prev) => (prev === playerId ? null : playerId));
   };
 
-  const handleSkipAndCollapse = (playerId) => {
-    setExpandedPlayerId(null);
-    onSkipPlayer(playerId);
-  };
-
-  const handleUnrackAndCollapse = (playerId) => {
-    setExpandedPlayerId(null);
-    onUnrackPlayer(playerId);
-  };
-
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       {/* Header */}
@@ -354,6 +344,8 @@ export function PaddleRackStack({
                   {hasActions && isExpanded && (
                     <div
                       id={panelId}
+                      role="region"
+                      aria-label={`Actions for ${name}`}
                       className={`flex gap-2 border-t px-2.5 pb-2.5 pt-2 sm:px-3 sm:pb-3 ${
                         isOnDeck ? 'border-emerald-200/70' : 'border-slate-200/70'
                       }`}
@@ -361,7 +353,7 @@ export function PaddleRackStack({
                       {canSkip && (
                         <button
                           type="button"
-                          onClick={() => handleSkipAndCollapse(player.id)}
+                          onClick={() => onSkipPlayer(player.id)}
                           disabled={isPending}
                           className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
                           title={isYou ? 'Take a rest — send your paddle to the back of the rack' : 'Skip — send to the back of the rack'}
@@ -374,14 +366,14 @@ export function PaddleRackStack({
                       {canManage && (
                         <button
                           type="button"
-                          onClick={() => handleUnrackAndCollapse(player.id)}
+                          onClick={() => onUnrackPlayer(player.id)}
                           disabled={isPending}
                           className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
                           title="Take off the rack (re-add from the roster). Delete permanently in the Members tab."
                           aria-label={`Take ${name} off the rack`}
                         >
                           <IconX className="h-3.5 w-3.5" />
-                          <span>Remove</span>
+                          <span>Off rack</span>
                         </button>
                       )}
                     </div>
