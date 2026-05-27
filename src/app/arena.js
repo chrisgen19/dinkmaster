@@ -370,6 +370,27 @@ export default function Arena({
   // tab badge, so compute it once.
   const liveCourtCount = courts.filter((c) => c.status === 'playing').length;
 
+  // Who is mid-match right now. The Members tab uses these to disable the
+  // Delete / Remove actions (the server refuses to delete an on-court player),
+  // so a manager sees the action gated up front instead of hitting an error
+  // after confirming. Derived from the live local `courts` state — not a
+  // server prop — so it stays correct as matches start/finish without a refetch.
+  const onCourtPlayerIds = useMemo(() => {
+    const ids = new Set();
+    for (const c of courts) {
+      if (c.status !== 'playing') continue;
+      for (const id of [...c.team1, ...c.team2]) ids.add(id);
+    }
+    return ids;
+  }, [courts]);
+  const onCourtUserIds = useMemo(() => {
+    const ids = new Set();
+    for (const p of displayPlayers) {
+      if (p.userId && onCourtPlayerIds.has(p.id)) ids.add(p.userId);
+    }
+    return ids;
+  }, [displayPlayers, onCourtPlayerIds]);
+
   // Player of the Week — recomputed from match history (refreshed after every
   // finish), the schedule, and the arena's match defaults, so the board updates
   // live as scores land. Same pure ranking the /profile read uses, so client
@@ -963,6 +984,8 @@ export default function Arena({
                 pendingRequests={pendingRequests}
                 pendingLinkRequests={pendingLinkRequests}
                 viewerLinkContext={viewerLinkContext}
+                onCourtPlayerIds={onCourtPlayerIds}
+                onCourtUserIds={onCourtUserIds}
               />
             </div>
           )}
