@@ -5,6 +5,8 @@
 // to these values so existing arenas are unchanged.
 //
 // Auto-mix ordering bands (see endMatch in app/actions.js):
+//   skipBoosted              -> next-line: skipped paddles returning from away,
+//                               strictly longest-first (above emergency)
 //   wait >= emergencyWait    -> emergency: strictly longest-first
 //   wait >= starveThreshold  -> protected (the ⏳ badge): always ahead of fresh
 //   otherwise                -> fresh
@@ -33,6 +35,7 @@ export const MAX_WAIT_THRESHOLD = 50;
 
 /**
  * Compute the auto-mix priority band for a given wait count.
+ *   3 — next-line (skipBoosted; strictly longest-first, above emergency)
  *   2 — emergency (strictly longest-first)
  *   1 — protected (the ⏳ badge; fewest-games-first)
  *   0 — fresh
@@ -40,9 +43,10 @@ export const MAX_WAIT_THRESHOLD = 50;
  * `endMatch` in `app/actions.js`.
  *
  * @param {number} waitRounds
- * @param {{starveThreshold: number, emergencyWait: number}} thresholds
+ * @param {{starveThreshold: number, emergencyWait: number, skipBoosted?: boolean}} thresholds
  */
-export function bandOf(waitRounds, { starveThreshold, emergencyWait }) {
+export function bandOf(waitRounds, { starveThreshold, emergencyWait, skipBoosted = false }) {
+  if (skipBoosted) return 3;
   if (waitRounds >= emergencyWait) return 2;
   if (waitRounds >= starveThreshold) return 1;
   return 0;

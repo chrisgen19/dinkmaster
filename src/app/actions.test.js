@@ -29,7 +29,7 @@ vi.mock('@/lib/prisma', () => ({
       update: vi.fn(),
     },
     court: { findMany: vi.fn() },
-    player: { count: vi.fn(), findFirst: vi.fn() },
+    player: { count: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
     joinRequest: { upsert: vi.fn(), deleteMany: vi.fn(), findUnique: vi.fn() },
     linkRequest: {
       upsert: vi.fn(),
@@ -63,7 +63,7 @@ const PLAY = [
   ['resetArena', () => actions.resetArena(ARENA)],
   ['updateArenaGeneral', () => actions.updateArenaGeneral(ARENA, { name: 'New' })],
   ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
-  ['updateArenaMatchmaking', () => actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4 })],
+  ['updateArenaMatchmaking', () => actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true })],
   ['updateArenaMatchDefaults', () => actions.updateArenaMatchDefaults(ARENA, { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true })],
   ['updateArenaSessions', () => actions.updateArenaSessions(ARENA, { autoResetOnSession: true })],
   ['prepareNextSession', () => actions.prepareNextSession(ARENA)],
@@ -233,28 +233,53 @@ describe('arena server actions — authorization', () => {
       });
 
       it('persists valid thresholds and coerces numeric strings', async () => {
-        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: '3', emergencyWait: '6' });
+        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: '3', emergencyWait: '6', skipRestoresPriority: true });
         expect(result.error).toBeUndefined();
         expect(prisma.arena.updateMany).toHaveBeenCalledWith({
           where: { id: ARENA },
-          data: { starveThreshold: 3, emergencyWait: 6 },
+          data: { starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true },
         });
-        expect(result.matchmaking).toEqual({ starveThreshold: 3, emergencyWait: 6 });
+        expect(result.matchmaking).toEqual({ starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true });
+      });
+
+      it('coerces "true"/"false" string values for skipRestoresPriority', async () => {
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: 'false' });
+        expect(prisma.arena.updateMany).toHaveBeenLastCalledWith({
+          where: { id: ARENA },
+          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false },
+        });
+      });
+
+      it('wipes lingering skipBoosted flags when toggling off', async () => {
+        // After persisting `skipRestoresPriority: false`, the action must also
+        // clear `Player.skipBoosted` for the arena so the next auto-mix can't
+        // elevate paddles that were boosted while the setting was on.
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false });
+        expect(prisma.player.updateMany).toHaveBeenCalledWith({
+          where: { arenaId: ARENA, skipBoosted: true },
+          data: { skipBoosted: false },
+        });
+      });
+
+      it('does NOT wipe skipBoosted when the setting is being turned on', async () => {
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true });
+        expect(prisma.player.updateMany).not.toHaveBeenCalled();
       });
 
       it('reports a clean error when the arena no longer exists', async () => {
         prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
-        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4 });
+        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true });
         expect(result.error).toMatch(/no longer exists/i);
       });
 
       it.each([
-        ['a zero starve threshold', { starveThreshold: 0, emergencyWait: 4 }],
-        ['a fractional starve threshold', { starveThreshold: 2.5, emergencyWait: 4 }],
-        ['a non-numeric starve threshold', { starveThreshold: 'lots', emergencyWait: 4 }],
-        ['an emergency wait below the starve threshold', { starveThreshold: 4, emergencyWait: 2 }],
-        ['an out-of-range starve threshold', { starveThreshold: MAX_WAIT_THRESHOLD + 1, emergencyWait: 4 }],
-        ['an out-of-range emergency wait', { starveThreshold: 2, emergencyWait: MAX_WAIT_THRESHOLD + 1 }],
+        ['a zero starve threshold', { starveThreshold: 0, emergencyWait: 4, skipRestoresPriority: true }],
+        ['a fractional starve threshold', { starveThreshold: 2.5, emergencyWait: 4, skipRestoresPriority: true }],
+        ['a non-numeric starve threshold', { starveThreshold: 'lots', emergencyWait: 4, skipRestoresPriority: true }],
+        ['an emergency wait below the starve threshold', { starveThreshold: 4, emergencyWait: 2, skipRestoresPriority: true }],
+        ['an out-of-range starve threshold', { starveThreshold: MAX_WAIT_THRESHOLD + 1, emergencyWait: 4, skipRestoresPriority: true }],
+        ['an out-of-range emergency wait', { starveThreshold: 2, emergencyWait: MAX_WAIT_THRESHOLD + 1, skipRestoresPriority: true }],
+        ['a non-boolean skipRestoresPriority', { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: 'maybe' }],
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaMatchmaking(ARENA, input);
         expect(result.error).toBeTruthy();
@@ -356,10 +381,11 @@ describe('arena server actions — authorization', () => {
 
         // Partnership matrix wiped for this arena only.
         expect(tx.partnership.deleteMany).toHaveBeenCalledWith({ where: { arenaId: ARENA } });
-        // Every active player pulled off the rack with waitRounds reset.
+        // Every active player pulled off the rack with waitRounds reset
+        // and any pending skip-boost cleared.
         expect(tx.player.updateMany).toHaveBeenCalledWith({
           where: { arenaId: ARENA, leftAt: null },
-          data: { queueOrder: null, waitRounds: 0 },
+          data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
         });
         // Reset stamped via updateMany (count-guarded) so a concurrent delete
         // is a clean error, not an uncaught P2025.
@@ -398,9 +424,9 @@ describe('arena server actions — authorization', () => {
 
         expect(tx.match.deleteMany).not.toHaveBeenCalled();
         expect(tx.courtSlot.deleteMany).not.toHaveBeenCalled();
-        // The player update sets only queue/wait fields — never wins/losses/rating/gamesPlayed.
+        // The player update sets only queue/wait/boost fields — never wins/losses/rating/gamesPlayed.
         const data = tx.player.updateMany.mock.calls[0][0].data;
-        expect(data).toEqual({ queueOrder: null, waitRounds: 0 });
+        expect(data).toEqual({ queueOrder: null, waitRounds: 0, skipBoosted: false });
       });
     });
 
@@ -427,7 +453,7 @@ describe('arena server actions — authorization', () => {
 
         expect(tx.player.update).toHaveBeenCalledWith({
           where: { id: 'p1' },
-          data: { queueOrder: 4, waitRounds: 0, gamesOffset: 6 },
+          data: { queueOrder: 4, waitRounds: 0, skipBoosted: false, gamesOffset: 6 },
         });
       });
 
@@ -474,7 +500,7 @@ describe('arena server actions — authorization', () => {
         // the rack (or on a court) matches zero rows — a safe no-op.
         expect(tx.player.updateMany).toHaveBeenCalledWith({
           where: { id: 'p1', arenaId: ARENA, leftAt: null, queueOrder: { not: null } },
-          data: { queueOrder: null, waitRounds: 0 },
+          data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
         });
       });
     });
@@ -1351,26 +1377,56 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
   });
 
   // Helper: a tx stub whose ordered rack is `rackIds`, used to drive the
-  // eligibility checks inside the transaction.
-  const txWithRack = (rackIds, maxOrder = rackIds.length) => ({
+  // eligibility checks inside the transaction. `skipRestoresPriority` toggles
+  // between the new "Next in Line" behavior (default) and the legacy
+  // back-of-rack reset.
+  const txWithRack = (rackIds, { maxOrder = rackIds.length, skipRestoresPriority = true } = {}) => ({
     $executeRaw: vi.fn(),
+    arena: {
+      findUnique: vi.fn().mockResolvedValue({ skipRestoresPriority }),
+    },
     player: {
-      findMany: vi.fn().mockResolvedValue(rackIds.map((id) => ({ id }))),
+      findMany: vi
+        .fn()
+        .mockResolvedValue(rackIds.map((id, i) => ({ id, queueOrder: i + 1 }))),
       aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: maxOrder } }),
       update: vi.fn(),
     },
   });
 
-  it('confirms with a notification and moves an on-deck paddle to the back', async () => {
+  it('On (default): stamps Next-in-Line and pushes the paddle just past on-deck', async () => {
     getCurrentUser.mockResolvedValue({ id: 'u-me' });
     prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
-    const tx = txWithRack(['p1', 'p2', 'p3', 'p4', 'p5'], 5); // p1 on deck, 5 > ON_DECK_SIZE
+    // p1 on deck (index 0); rack of 6 means someone waits behind on-deck.
+    const tx = txWithRack(['p1', 'p2', 'p3', 'p4', 'p5', 'p6']);
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+    const result = await actions.skipPlayer(ARENA, 'p1');
+    expect(result.notification).toBe('Marked Next in Line — top priority on the next mix.');
+    // p1 lands at position ON_DECK_SIZE+1 (5); the four bumped-up players take 1..4.
+    // Last write is the skipBoosted flag on the skipped paddle.
+    const updates = tx.player.update.mock.calls.map((c) => c[0]);
+    expect(updates).toContainEqual({ where: { id: 'p2' }, data: { queueOrder: 1 } });
+    expect(updates).toContainEqual({ where: { id: 'p3' }, data: { queueOrder: 2 } });
+    expect(updates).toContainEqual({ where: { id: 'p4' }, data: { queueOrder: 3 } });
+    expect(updates).toContainEqual({ where: { id: 'p5' }, data: { queueOrder: 4 } });
+    expect(updates).toContainEqual({ where: { id: 'p1' }, data: { queueOrder: 5 } });
+    expect(updates).toContainEqual({ where: { id: 'p1' }, data: { skipBoosted: true } });
+    // p6 was already at position 6 — no rewrite needed.
+    expect(updates).not.toContainEqual(expect.objectContaining({ where: { id: 'p6' } }));
+  });
+
+  it('Off (legacy): moves the on-deck paddle to the back and resets waitRounds', async () => {
+    getCurrentUser.mockResolvedValue({ id: 'u-me' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
+    const tx = txWithRack(['p1', 'p2', 'p3', 'p4', 'p5'], { maxOrder: 5, skipRestoresPriority: false });
     prisma.$transaction.mockImplementation(async (cb) => cb(tx));
     const result = await actions.skipPlayer(ARENA, 'p1');
     expect(result.notification).toBe('Paddle sent to the back of the rack.');
+    // `skipBoosted: false` is also written so a stale flag from a prior
+    // on-mode skip can't survive into the next mix once the arena toggles off.
     expect(tx.player.update).toHaveBeenCalledWith({
       where: { id: 'p1' },
-      data: { queueOrder: 6, waitRounds: 0 },
+      data: { queueOrder: 6, waitRounds: 0, skipBoosted: false },
     });
   });
 
@@ -1389,7 +1445,7 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
     getCurrentUser.mockResolvedValue({ id: 'u-me' });
     prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
     // p1 sits at index 5 — past the on-deck group — so a direct POST can't move
-    // it (and can't reset waitRounds) despite passing self-auth.
+    // it (and can't dodge the fairness rules) despite passing self-auth.
     const tx = txWithRack(['a', 'b', 'c', 'd', 'e', 'p1', 'g', 'h']);
     prisma.$transaction.mockImplementation(async (cb) => cb(tx));
     const result = await actions.skipPlayer(ARENA, 'p1');

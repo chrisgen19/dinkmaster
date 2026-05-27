@@ -148,7 +148,7 @@ export default function Arena({
   arenaName,
   description = '',
   schedule: initialSchedule = { days: [], start: null, end: null, timezone: 'Asia/Manila' },
-  matchmaking: matchmakingProp = { starveThreshold: DEFAULT_STARVE_THRESHOLD, emergencyWait: DEFAULT_EMERGENCY_WAIT },
+  matchmaking: matchmakingProp = { starveThreshold: DEFAULT_STARVE_THRESHOLD, emergencyWait: DEFAULT_EMERGENCY_WAIT, skipRestoresPriority: true },
   matchDefaults = {
     targetScore: DEFAULT_TARGET_SCORE,
     autoMixDefault: DEFAULT_AUTO_MIX,
@@ -841,6 +841,7 @@ export default function Arena({
             isPending={isPending}
             starveThreshold={matchmakingProp.starveThreshold}
             emergencyWait={matchmakingProp.emergencyWait}
+            skipRestoresPriority={matchmakingProp.skipRestoresPriority}
             errorMsg={errorMsg}
           />
         </div>
