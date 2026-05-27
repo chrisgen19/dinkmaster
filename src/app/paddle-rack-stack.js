@@ -230,9 +230,9 @@ export function PaddleRackStack({
                 )}
 
                 <div
-                  className={`group relative flex items-center gap-3 rounded-xl border p-3 transition ${
+                  className={`group relative flex items-center gap-2 sm:gap-3 rounded-xl border p-2.5 sm:p-3 transition ${
                     isOnDeck
-                      ? 'border-emerald-200 bg-emerald-50/50 pl-4'
+                      ? 'border-emerald-200 bg-emerald-50/50 pl-3 sm:pl-4'
                       : 'border-slate-200 bg-white hover:bg-slate-50'
                   }`}
                 >
@@ -249,7 +249,7 @@ export function PaddleRackStack({
 
                   {/* Avatar */}
                   <span
-                    className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-bold ${
+                    className={`hidden sm:grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-bold ${
                       isOnDeck ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
                     } ${isYou ? 'ring-2 ring-emerald-400' : isOnDeck ? 'ring-1 ring-emerald-200' : 'ring-1 ring-slate-200'}`}
                     aria-hidden="true"
@@ -259,8 +259,8 @@ export function PaddleRackStack({
 
                   {/* Identity */}
                   <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-slate-800">
-                      <span className="truncate">{name}</span>
+                    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm font-semibold text-slate-800 sm:flex-nowrap">
+                      <span className="w-full min-w-0 truncate sm:w-auto sm:max-w-full">{name}</span>
                       {isYou && (
                         <span className="shrink-0 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
                           You
