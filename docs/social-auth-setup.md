@@ -79,13 +79,29 @@ This app does **not** currently verify emails (password sign-ups have
 - New users via Google/Facebook → works.
 - Users who only ever use Google/Facebook → works.
 - An **existing email/password user** whose email matches a social login will
-  **not** be auto-linked and Better Auth returns an error. They should keep
-  signing in with their password.
+  **not** be auto-linked — Better Auth redirects to
+  `/api/auth/error?error=account_not_linked`. They should keep signing in with
+  their password.
 
-If you later want existing password users to attach a social login, the safe
-path is an authenticated "Link Google/Facebook" action (from `/profile`, using
-`authClient.linkSocial`) and/or enabling email verification — both tracked as
-follow-ups.
+### Unblocking an existing account (`account_not_linked`)
+
+Because the gate checks the **local** account's `emailVerified`, the safe way
+to let a specific existing password account link to Google/Facebook is to mark
+that account's email verified, then sign in with the provider:
+
+```sh
+# one-off, per account — keeps requireLocalEmailVerified secure for everyone else
+psql "$DATABASE_URL" -c \
+  "UPDATE \"User\" SET \"emailVerified\" = true WHERE email = 'you@example.com';"
+```
+
+On the next social sign-in Better Auth links the provider into that account
+(and leaves `emailVerified` true).
+
+If you later want this to be self-service, the proper paths are an
+authenticated "Link Google/Facebook" action (from `/profile`, using
+`authClient.linkSocial`) and/or a real email-verification flow — both tracked
+as follow-ups.
 
 ---
 
