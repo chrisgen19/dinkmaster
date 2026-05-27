@@ -1,6 +1,7 @@
 'use client';
 
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
+import { ChevronRight } from 'lucide-react';
 import { deriveRackRow, ON_DECK_SIZE } from './paddle-rack-stack-state';
 
 // --- Inline Lucide icons -------------------------------------------------
@@ -124,6 +125,27 @@ export function PaddleRackStack({
   emergencyWait,
   errorMsg,
 }) {
+  // Which row's action panel is open. Only one open at a time; `null` = all collapsed.
+  // Derive the *effective* id during render so a player leaving the queue (matched
+  // into a court, unracked elsewhere) auto-collapses without a sync effect.
+  const [expandedPlayerIdRaw, setExpandedPlayerId] = useState(null);
+  const expandedPlayerId =
+    expandedPlayerIdRaw && queue.includes(expandedPlayerIdRaw) ? expandedPlayerIdRaw : null;
+
+  const handleToggleRow = (playerId) => {
+    setExpandedPlayerId((prev) => (prev === playerId ? null : playerId));
+  };
+
+  const handleSkipAndCollapse = (playerId) => {
+    setExpandedPlayerId(null);
+    onSkipPlayer(playerId);
+  };
+
+  const handleUnrackAndCollapse = (playerId) => {
+    setExpandedPlayerId(null);
+    onUnrackPlayer(playerId);
+  };
+
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       {/* Header */}
@@ -229,96 +251,142 @@ export function PaddleRackStack({
                   <GroupLabel className="pt-2">Waiting · {queue.length - ON_DECK_SIZE}</GroupLabel>
                 )}
 
-                <div
-                  className={`group relative flex items-center gap-2 sm:gap-3 rounded-xl border p-2.5 sm:p-3 transition ${
-                    isOnDeck
-                      ? 'border-emerald-200 bg-emerald-50/50 pl-3 sm:pl-4'
-                      : 'border-slate-200 bg-white hover:bg-slate-50'
-                  }`}
-                >
-                  {isOnDeck && <span className="absolute inset-y-2 left-0 w-1 rounded-full bg-emerald-500" aria-hidden="true" />}
-
-                  {/* Rank */}
-                  <span
-                    className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-xs font-bold tabular-nums ${
-                      isOnDeck ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500'
-                    }`}
-                  >
-                    {rank}
-                  </span>
-
-                  {/* Avatar */}
-                  <span
-                    className={`hidden sm:grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-bold ${
-                      isOnDeck ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
-                    } ${isYou ? 'ring-2 ring-emerald-400' : isOnDeck ? 'ring-1 ring-emerald-200' : 'ring-1 ring-slate-200'}`}
-                    aria-hidden="true"
-                  >
-                    {initials}
-                  </span>
-
-                  {/* Identity */}
-                  <div className="min-w-0 flex-1">
-                    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm font-semibold text-slate-800 sm:flex-nowrap">
-                      <span className="w-full min-w-0 truncate sm:w-auto sm:max-w-full">{name}</span>
-                      {isYou && (
-                        <span className="shrink-0 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
-                          You
-                        </span>
-                      )}
-                      {isWalkIn && (
+                {(() => {
+                  const hasActions = canSkip || canManage;
+                  const isExpanded = expandedPlayerId === player.id;
+                  const panelId = `rack-row-panel-${player.id}`;
+                  return (
+                    <div
+                      className={`group relative rounded-xl border transition ${
+                        isOnDeck
+                          ? 'border-emerald-200 bg-emerald-50/50'
+                          : 'border-slate-200 bg-white hover:bg-slate-50'
+                      }`}
+                    >
+                      {isOnDeck && (
                         <span
-                          className="shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500"
-                          title="Walk-in player — no linked account. Link them from the Members tab."
-                        >
-                          Walk-in
-                        </span>
+                          className="absolute inset-y-2 left-0 w-1 rounded-full bg-emerald-500"
+                          aria-hidden="true"
+                        />
                       )}
-                      {starving && (
+
+                      <div
+                        className={`flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3 ${
+                          isOnDeck ? 'pl-3 sm:pl-4' : ''
+                        }`}
+                      >
+                        {/* Rank */}
                         <span
-                          className={`inline-flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
-                            emergency ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                          className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-xs font-bold tabular-nums ${
+                            isOnDeck ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500'
                           }`}
-                          title={`Waiting ${waitRounds} rounds`}
                         >
-                          <IconClock className="h-3 w-3" />
-                          {waitRounds}
+                          {rank}
                         </span>
-                      )}
-                    </p>
-                    <p className="mt-0.5 text-[11px] font-medium tabular-nums text-slate-400">
-                      {player.gamesPlayed} games · {player.wins || 0}W · {player.losses || 0}L
-                    </p>
-                  </div>
 
-                  {/* Actions */}
-                  <div className="flex shrink-0 items-center gap-1">
-                    {canSkip && (
-                      <button
-                        type="button"
-                        onClick={() => onSkipPlayer(player.id)}
-                        disabled={isPending}
-                        className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-700 active:scale-95 disabled:opacity-40"
-                        title={isYou ? 'Take a rest — send your paddle to the back of the rack' : 'Skip — send to the back of the rack'}
-                        aria-label={`Skip ${name} to the back of the rack`}
-                      >
-                        <IconArrowDownToLine className="h-4 w-4" />
-                      </button>
-                    )}
-                    {canManage && (
-                      <button
-                        type="button"
-                        onClick={() => onUnrackPlayer(player.id)}
-                        disabled={isPending}
-                        className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 opacity-100 transition hover:bg-red-50 hover:text-red-600 active:scale-95 disabled:pointer-events-none disabled:opacity-40 lg:opacity-0 lg:group-hover:opacity-100"
-                        title="Take off the rack (re-add from the roster). Delete permanently in the Members tab."
-                        aria-label={`Take ${name} off the rack`}
-                      >
-                        <IconX className="h-4 w-4" />
-                      </button>
-                    )}
-                  </div>
-                </div>
+                        {/* Avatar */}
+                        <span
+                          className={`hidden sm:grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-bold ${
+                            isOnDeck ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                          } ${isYou ? 'ring-2 ring-emerald-400' : isOnDeck ? 'ring-1 ring-emerald-200' : 'ring-1 ring-slate-200'}`}
+                          aria-hidden="true"
+                        >
+                          {initials}
+                        </span>
+
+                        {/* Identity */}
+                        <div className="min-w-0 flex-1">
+                          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm font-semibold text-slate-800 sm:flex-nowrap">
+                            <span className="w-full min-w-0 truncate sm:w-auto sm:max-w-full">{name}</span>
+                            {isYou && (
+                              <span className="shrink-0 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
+                                You
+                              </span>
+                            )}
+                            {isWalkIn && (
+                              <span
+                                className="shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500"
+                                title="Walk-in player — no linked account. Link them from the Members tab."
+                              >
+                                Walk-in
+                              </span>
+                            )}
+                            {starving && (
+                              <span
+                                className={`inline-flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
+                                  emergency ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                                }`}
+                                title={`Waiting ${waitRounds} rounds`}
+                              >
+                                <IconClock className="h-3 w-3" />
+                                {waitRounds}
+                              </span>
+                            )}
+                          </p>
+                          <p className="mt-0.5 text-[11px] font-medium tabular-nums text-slate-400">
+                            {player.gamesPlayed} games · {player.wins || 0}W · {player.losses || 0}L
+                          </p>
+                        </div>
+
+                        {/* Toggle */}
+                        {hasActions && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleRow(player.id)}
+                            disabled={isPending}
+                            aria-expanded={isExpanded}
+                            aria-controls={panelId}
+                            aria-label={isExpanded ? `Hide actions for ${name}` : `Show actions for ${name}`}
+                            title={isExpanded ? 'Hide actions' : 'Show actions'}
+                            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 active:scale-95 disabled:opacity-40"
+                          >
+                            <ChevronRight
+                              className={`h-4 w-4 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
+                              aria-hidden="true"
+                            />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Action panel */}
+                      {hasActions && isExpanded && (
+                        <div
+                          id={panelId}
+                          className={`flex gap-2 border-t px-2.5 pb-2.5 pt-2 sm:px-3 sm:pb-3 ${
+                            isOnDeck ? 'border-emerald-200/70' : 'border-slate-200/70'
+                          }`}
+                        >
+                          {canSkip && (
+                            <button
+                              type="button"
+                              onClick={() => handleSkipAndCollapse(player.id)}
+                              disabled={isPending}
+                              className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+                              title={isYou ? 'Take a rest — send your paddle to the back of the rack' : 'Skip — send to the back of the rack'}
+                              aria-label={`Skip ${name} to the back of the rack`}
+                            >
+                              <IconArrowDownToLine className="h-3.5 w-3.5" />
+                              <span>{isYou ? 'Rest' : 'Skip to back'}</span>
+                            </button>
+                          )}
+                          {canManage && (
+                            <button
+                              type="button"
+                              onClick={() => handleUnrackAndCollapse(player.id)}
+                              disabled={isPending}
+                              className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+                              title="Take off the rack (re-add from the roster). Delete permanently in the Members tab."
+                              aria-label={`Take ${name} off the rack`}
+                            >
+                              <IconX className="h-3.5 w-3.5" />
+                              <span>Remove</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </Fragment>
             );
           })

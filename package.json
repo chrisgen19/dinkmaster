@@ -29,6 +29,7 @@
     "better-auth": "^1.6.11",
     "embla-carousel-react": "^8.6.0",
     "esbuild": "^0.28.0",
+    "lucide-react": "^1.16.0",
     "motion": "^12.40.0",
     "next": "16.2.6",
     "prisma": "^7.8.0",
