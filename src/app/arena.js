@@ -17,7 +17,7 @@ import {
   updateArenaSchedule,
   prepareNextSession,
 } from './actions';
-import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT } from '@/lib/matchmaking';
+import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT, ON_DECK_SIZE } from '@/lib/matchmaking';
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE } from '@/lib/match-defaults';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
 import { computeSessionStats } from '@/lib/session-stats';
@@ -503,7 +503,7 @@ export default function Arena({
   // modal renders at the page root, consistent with the score / cancel-fill
   // modals.
   const handleSkipPlayer = (id) => {
-    if (canManage && matchmakingProp.skipPickReplacement && queue.length > 4) {
+    if (canManage && matchmakingProp.skipPickReplacement && queue.length > ON_DECK_SIZE) {
       setSkipPickerSkippedId(id);
       setSelectedReplacementId(null);
       return;
@@ -1170,7 +1170,7 @@ export default function Arena({
         // just shifted off-deck, though deriveRackRow's canSkip blocks that
         // case today). queue.length > ON_DECK_SIZE is already guaranteed by
         // handleSkipPlayer's open-condition, so waitingIds is non-empty.
-        const waitingIds = queue.slice(4).filter((id) => id !== skipPickerSkippedId);
+        const waitingIds = queue.slice(ON_DECK_SIZE).filter((id) => id !== skipPickerSkippedId);
         const waitingPlayers = waitingIds
           .map((id) => players.find((p) => p.id === id))
           .filter(Boolean);
