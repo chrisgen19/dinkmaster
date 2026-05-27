@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  removePlayer,
+  checkOutPlayer,
   skipPlayer,
   shuffleQueue,
   fillCourt,
@@ -432,9 +432,12 @@ export default function Arena({
     run(() => fillCourt(arenaId, courtId));
   };
 
-  const handleRemovePlayer = (id) => {
+  // The rack X takes a player off the rack (reversible) rather than deleting
+  // them. Works for walk-ins and linked members alike; re-add via the Prep
+  // Roster modal's check-in. Permanent deletion lives in the Members tab.
+  const handleUnrackPlayer = (id) => {
     if (!canManage) return;
-    run(() => removePlayer(arenaId, id));
+    run(() => checkOutPlayer(arenaId, id));
   };
 
   // No canManage gate: skip is self-service (a member can rest their own
@@ -805,7 +808,7 @@ export default function Arena({
             onToggleAutoMix={setAutoMix}
             onAddPlayers={() => setRosterModalOpen(true)}
             onShuffle={handleShuffleQueue}
-            onRemovePlayer={handleRemovePlayer}
+            onUnrackPlayer={handleUnrackPlayer}
             onSkipPlayer={handleSkipPlayer}
             isPending={isPending}
             starveThreshold={matchmakingProp.starveThreshold}
