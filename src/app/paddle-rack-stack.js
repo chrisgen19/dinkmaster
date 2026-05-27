@@ -34,7 +34,7 @@ function GroupLabel({ children, accent = false, className = '' }) {
  *
  * @param {object} props
  * @param {string[]} props.queue - ordered player ids (index 0 = front of rack)
- * @param {Array<{id:string,userId:string|null,firstName:string,lastName:string|null,gamesPlayed:number,wins:number,losses:number,waitRounds:number}>} props.players
+ * @param {Array<{id:string,userId:string|null,firstName:string,lastName:string|null,gamesPlayed:number,wins:number,losses:number,waitRounds:number,skipBoosted?:boolean}>} props.players
  * @param {boolean} props.canManage - gates the manager-only actions
  * @param {string|null} props.viewerUserId - to flag the "you" row
  * @param {boolean} props.autoMix - re-shuffle the rack after every finished game
@@ -337,7 +337,9 @@ export function PaddleRackStack({
                           }
                         >
                           <ArrowDownToLine className="h-3.5 w-3.5" />
-                          <span>{isYou ? 'Rest' : 'Skip'}</span>
+                          <span>
+                            {isYou ? (skipRestoresPriority ? 'Step away' : 'Rest') : 'Skip'}
+                          </span>
                         </button>
                       )}
                       {canManage && (
