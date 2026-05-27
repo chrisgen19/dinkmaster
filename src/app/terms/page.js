@@ -33,7 +33,7 @@ export default function TermsPage() {
           <li>You must provide accurate information and keep it up to date.</li>
           <li>
             You are responsible for activity under your account and for keeping your login
-            credentials (including any connected Google or Facebook account) secure.
+            credentials (including any connected Google account) secure.
           </li>
           <li>You must be old enough to form a binding agreement in your country of residence.</li>
         </ul>

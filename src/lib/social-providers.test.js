@@ -9,22 +9,11 @@ describe('visibleSocialProviders — server→client provider gating', () => {
 
   it('returns only the enabled providers', () => {
     expect(visibleSocialProviders(['google']).map((p) => p.id)).toEqual(['google']);
-    expect(visibleSocialProviders(['facebook']).map((p) => p.id)).toEqual(['facebook']);
-    expect(visibleSocialProviders(['google', 'facebook']).map((p) => p.id)).toEqual([
-      'google',
-      'facebook',
-    ]);
-  });
-
-  it('preserves display order regardless of input order', () => {
-    expect(visibleSocialProviders(['facebook', 'google']).map((p) => p.id)).toEqual([
-      'google',
-      'facebook',
-    ]);
   });
 
   it('ignores unknown provider ids', () => {
-    expect(visibleSocialProviders(['google', 'twitter']).map((p) => p.id)).toEqual(['google']);
+    expect(visibleSocialProviders(['google', 'facebook']).map((p) => p.id)).toEqual(['google']);
+    expect(visibleSocialProviders(['twitter']).map((p) => p.id)).toEqual([]);
   });
 
   it('every provider has a label', () => {

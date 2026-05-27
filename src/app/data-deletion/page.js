@@ -28,18 +28,14 @@ export default function DataDeletionPage() {
         <p>This removes your profile details, login credentials, and any linked social accounts.</p>
       </LegalSection>
 
-      <LegalSection heading="If you signed in with Facebook or Google">
+      <LegalSection heading="If you signed in with Google">
         <p>
-          You can also disconnect DinkMaster from the provider directly:
+          You can also disconnect DinkMaster from Google directly:
         </p>
         <ul className="list-disc space-y-1.5 pl-5">
           <li>
-            <strong>Facebook:</strong> Settings &amp; Privacy → Settings → Apps and Websites →
-            select <em>DinkMaster</em> → Remove.
-          </li>
-          <li>
-            <strong>Google:</strong> Google Account → Security → Your connections to third-party
-            apps → select <em>DinkMaster</em> → Remove access.
+            Google Account → Security → Your connections to third-party apps → select{' '}
+            <em>DinkMaster</em> → Remove access.
           </li>
         </ul>
         <p>
