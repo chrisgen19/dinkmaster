@@ -486,7 +486,7 @@ export async function removePlayer(arenaId, playerId) {
   }
   if (blockedReason === 'PLAYING') {
     return {
-      error: 'Cannot remove a player currently playing on court! Finish their match first.',
+      error: "Can't delete this player while they're on an active court. Finish their match first.",
       state: await getState(arenaId),
     };
   }
@@ -1680,7 +1680,7 @@ export async function removeMember(arenaId, userId) {
     removed = await removeArenaMember(tx, arenaId, userId);
   });
   if (!removed) {
-    return { error: 'That member is on a court. Finish their match first.' };
+    return { error: "Can't remove this member while they're on an active court. Finish their match first." };
   }
   return { ok: true };
 }
