@@ -107,12 +107,18 @@ export function ArenaPrepRosterModal({
   // `handleRequest`) because they mutate membership rows that live on
   // server-rendered props. The two paths are deliberately separate; both
   // converge once arena.js re-syncs from the next server read.
-  const run = (fn) => {
+  // `refresh` additionally re-fetches the server-rendered props (members /
+  // walk-ins / requests). Adding or removing a walk-in changes the Members
+  // tab's walk-in list, which is sourced from `viewerLinkContext` rather than
+  // the local rack state `onApplyResult` reconciles — so those paths must
+  // refresh or a just-added walk-in won't appear there until a reload.
+  const run = (fn, { refresh = false } = {}) => {
     startTransition(async () => {
       try {
         const result = await fn();
         setError(result?.error || '');
         if (result?.state) onApplyResult(result);
+        if (refresh && !result?.error) router.refresh();
       } catch {
         setError('Something went wrong. Please try again.');
       }
@@ -171,7 +177,7 @@ export function ArenaPrepRosterModal({
     const last = newLast;
     setNewFirst('');
     setNewLast('');
-    run(() => addPlayer(arenaId, first, last));
+    run(() => addPlayer(arenaId, first, last), { refresh: true });
   };
 
   return (
