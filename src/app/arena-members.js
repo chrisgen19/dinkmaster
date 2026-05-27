@@ -445,7 +445,7 @@ function MembersList({ members, viewerUserId, isOwner, isPending, onCourtUserIds
                   className={BTN.danger}
                   title={onCourt ? 'On an active court — finish their match first' : undefined}
                 >
-                  Remove
+                  {onCourt ? 'In Court' : 'Remove'}
                 </button>
               </div>
             )}
@@ -506,7 +506,7 @@ function WalkInsList({ orphans, canManage, isPending, onCourtPlayerIds, onLink, 
                 className={BTN.danger}
                 title={onCourt ? 'On an active court — finish their match first' : 'Delete this walk-in permanently'}
               >
-                Delete
+                {onCourt ? 'In Court' : 'Delete'}
               </button>
             </div>
           )}
