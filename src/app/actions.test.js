@@ -29,7 +29,7 @@ vi.mock('@/lib/prisma', () => ({
       update: vi.fn(),
     },
     court: { findMany: vi.fn() },
-    player: { count: vi.fn(), findFirst: vi.fn() },
+    player: { count: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
     joinRequest: { upsert: vi.fn(), deleteMany: vi.fn(), findUnique: vi.fn() },
     linkRequest: {
       upsert: vi.fn(),
@@ -248,6 +248,22 @@ describe('arena server actions — authorization', () => {
           where: { id: ARENA },
           data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false },
         });
+      });
+
+      it('wipes lingering skipBoosted flags when toggling off', async () => {
+        // After persisting `skipRestoresPriority: false`, the action must also
+        // clear `Player.skipBoosted` for the arena so the next auto-mix can't
+        // elevate paddles that were boosted while the setting was on.
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false });
+        expect(prisma.player.updateMany).toHaveBeenCalledWith({
+          where: { arenaId: ARENA, skipBoosted: true },
+          data: { skipBoosted: false },
+        });
+      });
+
+      it('does NOT wipe skipBoosted when the setting is being turned on', async () => {
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true });
+        expect(prisma.player.updateMany).not.toHaveBeenCalled();
       });
 
       it('reports a clean error when the arena no longer exists', async () => {

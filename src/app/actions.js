@@ -381,6 +381,20 @@ export async function updateArenaMatchmaking(
     data: { starveThreshold: starve, emergencyWait: emergency, skipRestoresPriority },
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
+
+  // When the setting transitions to off, also wipe any lingering boosts on
+  // queued paddles. Without this, the next auto-mix would still feed those
+  // stale flags into `bandOf` and elevate them into the Next-in-Line band
+  // even though the arena is now in legacy Skip mode — surprising the
+  // manager who just disabled the setting. Idempotent: a no-op when the
+  // setting was already off or when no paddles are boosted.
+  if (!skipRestoresPriority) {
+    await prisma.player.updateMany({
+      where: { arenaId, skipBoosted: true },
+      data: { skipBoosted: false },
+    });
+  }
+
   return { matchmaking: { starveThreshold: starve, emergencyWait: emergency, skipRestoresPriority } };
 }
 
