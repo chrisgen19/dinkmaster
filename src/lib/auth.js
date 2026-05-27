@@ -102,10 +102,12 @@ export const auth = betterAuth({
         before(user, context) {
           // The strict required-name guard exists to stop a direct
           // `/sign-up/email` call from persisting empty names. Social
-          // sign-ups arrive on a different endpoint with names already mapped
-          // from the provider (see `socialProviders` above), so we don't
-          // reject them when a provider supplies only a single name.
-          const requireNames = context?.path === '/sign-up/email';
+          // sign-ups arrive on a different endpoint (`/callback/<provider>`)
+          // with names already mapped from the provider (see `socialProviders`
+          // above), so we don't reject them when a provider supplies only a
+          // single name. `endsWith` (not `===`) so a future base-path prefix
+          // on the endpoint can't silently drop the guard for password sign-up.
+          const requireNames = context?.path?.endsWith('/sign-up/email') ?? false;
           const result = normalizeUserProfile(user, { requireNames });
           if (result.error) {
             throw new APIError('BAD_REQUEST', { message: result.error });

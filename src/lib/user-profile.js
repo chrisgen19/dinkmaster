@@ -49,6 +49,17 @@ export function normalizeUserProfile(data, { requireNames = true } = {}) {
     normalized[field] = value;
   }
 
+  // Lenient (social) floor: a provider can omit names entirely, which would
+  // otherwise persist a blank-named user (empty display name, "?" monogram).
+  // Guarantee a non-empty first name — fall back to the email local-part, then
+  // a neutral placeholder. Strict mode already rejected empties above, so this
+  // only affects social sign-ups.
+  if (!requireNames && !normalized.firstName) {
+    const emailLocal =
+      typeof normalized.email === 'string' ? normalized.email.split('@')[0].trim() : '';
+    normalized.firstName = emailLocal || 'Player';
+  }
+
   // Keep Better Auth's core `name` consistent with the trimmed first/last name.
   // `.trim()` drops the trailing space when a social sign-up has no last name.
   normalized.name = `${normalized.firstName} ${normalized.lastName}`.trim();

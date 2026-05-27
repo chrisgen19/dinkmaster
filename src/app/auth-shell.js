@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { signIn } from '@/lib/auth-client';
+import { visibleSocialProviders } from '@/lib/social-providers';
 import { BrandMark, Wordmark } from './site-header';
 import { BackPill } from './back-pill';
 
@@ -114,15 +115,10 @@ export function AuthCrossLink({ prompt, href, action }) {
   );
 }
 
-/**
- * Metadata for each supported social provider. Order here is the display order.
- * The actual button set is filtered to the providers the server has configured
- * (see `SocialAuthButtons`'s `providers` prop).
- */
-const SOCIAL_PROVIDERS = [
-  { id: 'google', label: 'Continue with Google', Icon: GoogleIcon },
-  { id: 'facebook', label: 'Continue with Facebook', Icon: FacebookIcon },
-];
+/** Maps a provider id to its brand icon. Provider list/labels + the selection
+ *  logic live in `@/lib/social-providers` (pure, unit-tested); icons stay here
+ *  since they're JSX. */
+const SOCIAL_PROVIDER_ICONS = { google: GoogleIcon, facebook: FacebookIcon };
 
 /**
  * Social sign-in block shared by `/login` and `/register`: an "or continue
@@ -143,7 +139,7 @@ export function SocialAuthButtons({ next, providers = [] }) {
   const [loading, setLoading] = useState(null); // provider id | null
   const [error, setError] = useState('');
 
-  const visibleProviders = SOCIAL_PROVIDERS.filter((p) => providers.includes(p.id));
+  const visibleProviders = visibleSocialProviders(providers);
   if (visibleProviders.length === 0) return null;
 
   const handleSocial = async (provider) => {
@@ -173,16 +169,19 @@ export function SocialAuthButtons({ next, providers = [] }) {
       {error && <AuthError>{error}</AuthError>}
 
       <div className="grid gap-2.5">
-        {visibleProviders.map(({ id, label, Icon }) => (
-          <SocialButton
-            key={id}
-            label={label}
-            loading={loading === id}
-            disabled={loading !== null}
-            onClick={() => handleSocial(id)}
-            icon={<Icon />}
-          />
-        ))}
+        {visibleProviders.map(({ id, label }) => {
+          const Icon = SOCIAL_PROVIDER_ICONS[id];
+          return (
+            <SocialButton
+              key={id}
+              label={label}
+              loading={loading === id}
+              disabled={loading !== null}
+              onClick={() => handleSocial(id)}
+              icon={<Icon />}
+            />
+          );
+        })}
       </div>
     </div>
   );

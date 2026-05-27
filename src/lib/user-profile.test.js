@@ -139,6 +139,24 @@ describe('normalizeUserProfile — registration profile contract', () => {
       expect(result.data).toBeUndefined();
       expect(result.error).toContain('lastName');
     });
+
+    it('falls back a blank first name to the email local-part', () => {
+      const result = normalizeUserProfile(
+        { name: '', email: 'jdoe@example.com', firstName: '', lastName: '' },
+        { requireNames: false },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.data).toMatchObject({ firstName: 'jdoe', lastName: '', name: 'jdoe' });
+    });
+
+    it('falls back to "Player" when neither a name nor an email is available', () => {
+      const result = normalizeUserProfile(
+        { name: '', email: '', firstName: '', lastName: '' },
+        { requireNames: false },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.data).toMatchObject({ firstName: 'Player', name: 'Player' });
+    });
   });
 });
 
