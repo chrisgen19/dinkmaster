@@ -273,6 +273,9 @@ export default async function LandingPage() {
             <Link href="/privacy" className="text-xs font-semibold text-slate-500 hover:text-emerald-700 transition">
               Privacy
             </Link>
+            <Link href="/terms" className="text-xs font-semibold text-slate-500 hover:text-emerald-700 transition">
+              Terms
+            </Link>
             <Link href="/data-deletion" className="text-xs font-semibold text-slate-500 hover:text-emerald-700 transition">
               Data deletion
             </Link>

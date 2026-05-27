@@ -46,6 +46,7 @@ export function LegalShell({ title, subtitle, updated, children }) {
           <span>© {new Date().getFullYear()} DinkMaster</span>
           <span className="flex items-center gap-4">
             <Link href="/privacy" className="hover:text-slate-600">Privacy</Link>
+            <Link href="/terms" className="hover:text-slate-600">Terms</Link>
             <Link href="/data-deletion" className="hover:text-slate-600">Data deletion</Link>
           </span>
         </div>
