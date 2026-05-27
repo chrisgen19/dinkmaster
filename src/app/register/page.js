@@ -10,6 +10,7 @@ import {
   AuthSubmit,
   AuthError,
   AuthCrossLink,
+  SocialAuthButtons,
   AUTH_FIELD_CLASS,
   BackPill,
 } from '../auth-shell';
@@ -229,6 +230,10 @@ function RegisterForm() {
 
         <AuthSubmit loading={loading} label="Create account" loadingLabel="Creating account…" />
       </form>
+
+      <div className="mt-4">
+        <SocialAuthButtons next={next} />
+      </div>
     </AuthShell>
   );
 }

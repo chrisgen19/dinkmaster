@@ -9,6 +9,7 @@ import {
   AuthSubmit,
   AuthError,
   AuthCrossLink,
+  SocialAuthButtons,
   AUTH_FIELD_CLASS,
   BackPill,
 } from '../auth-shell';
@@ -93,6 +94,10 @@ function LoginForm() {
 
         <AuthSubmit loading={loading} label="Sign in" loadingLabel="Signing in…" />
       </form>
+
+      <div className="mt-4">
+        <SocialAuthButtons next={next} />
+      </div>
     </AuthShell>
   );
 }

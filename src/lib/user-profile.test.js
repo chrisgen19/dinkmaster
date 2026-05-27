@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   normalizeUserProfile,
+  deriveNameParts,
   REQUIRED_PROFILE_FIELDS,
   OPTIONAL_PROFILE_FIELDS,
   GENDER_OPTIONS,
@@ -107,5 +108,69 @@ describe('normalizeUserProfile — registration profile contract', () => {
       expect(result.data).toBeUndefined();
       expect(result.error).toMatch(/gender/i);
     });
+  });
+
+  describe('lenient mode (social sign-ups)', () => {
+    /** Minimal social payload — a single name token, no last name. */
+    const socialPayload = (overrides = {}) => ({
+      name: 'stale',
+      email: 'social@example.com',
+      firstName: 'Madonna',
+      lastName: '',
+      ...overrides,
+    });
+
+    it('tolerates an empty last name and trims the name', () => {
+      const result = normalizeUserProfile(socialPayload(), { requireNames: false });
+      expect(result.error).toBeUndefined();
+      expect(result.data).toMatchObject({ firstName: 'Madonna', lastName: '', name: 'Madonna' });
+    });
+
+    it('still trims first/last when both present', () => {
+      const result = normalizeUserProfile(
+        socialPayload({ firstName: ' Jane ', lastName: ' Doe ' }),
+        { requireNames: false },
+      );
+      expect(result.data).toMatchObject({ firstName: 'Jane', lastName: 'Doe', name: 'Jane Doe' });
+    });
+
+    it('keeps the strict guard by default (requireNames omitted)', () => {
+      const result = normalizeUserProfile(socialPayload());
+      expect(result.data).toBeUndefined();
+      expect(result.error).toContain('lastName');
+    });
+  });
+});
+
+describe('deriveNameParts — OAuth name mapping', () => {
+  it('prefers explicit first/last and trims them', () => {
+    expect(deriveNameParts({ firstName: ' Jane ', lastName: ' Doe ', name: 'ignored' })).toEqual({
+      firstName: 'Jane',
+      lastName: 'Doe',
+    });
+  });
+
+  it('splits the full name when no structured parts are given', () => {
+    expect(deriveNameParts({ name: 'Jane Mary Doe' })).toEqual({
+      firstName: 'Jane',
+      lastName: 'Mary Doe',
+    });
+  });
+
+  it('backfills only the missing part from the full name', () => {
+    expect(deriveNameParts({ firstName: 'Jane', name: 'Jane Doe' })).toEqual({
+      firstName: 'Jane',
+      lastName: 'Doe',
+    });
+  });
+
+  it('returns an empty last name for a mononymous profile', () => {
+    expect(deriveNameParts({ name: 'Madonna' })).toEqual({ firstName: 'Madonna', lastName: '' });
+  });
+
+  it('returns empty strings when nothing usable is supplied', () => {
+    expect(deriveNameParts({})).toEqual({ firstName: '', lastName: '' });
+    expect(deriveNameParts()).toEqual({ firstName: '', lastName: '' });
+    expect(deriveNameParts({ name: '   ' })).toEqual({ firstName: '', lastName: '' });
   });
 });
