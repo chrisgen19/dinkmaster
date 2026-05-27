@@ -101,7 +101,7 @@ function GroupLabel({ children, accent = false, className = '' }) {
  * @param {(next:boolean) => void} props.onToggleAutoMix
  * @param {() => void} props.onAddPlayers - open the Prep Roster modal
  * @param {() => void} props.onShuffle - shuffle the waiting queue
- * @param {(id:string) => void} props.onRemovePlayer
+ * @param {(id:string) => void} props.onUnrackPlayer - take a player off the rack (reversible; not a delete)
  * @param {(id:string) => void} props.onSkipPlayer - send an on-deck paddle to the back of the rack
  * @param {boolean} props.isPending - disable actions during a server write
  * @param {number} props.starveThreshold - wait rounds before the amber wait badge
@@ -117,7 +117,7 @@ export function PaddleRackStack({
   onToggleAutoMix,
   onAddPlayers,
   onShuffle,
-  onRemovePlayer,
+  onUnrackPlayer,
   onSkipPlayer,
   isPending,
   starveThreshold,
@@ -308,10 +308,11 @@ export function PaddleRackStack({
                     {canManage && (
                       <button
                         type="button"
-                        onClick={() => onRemovePlayer(player.id)}
-                        className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 opacity-100 transition hover:bg-red-50 hover:text-red-600 active:scale-95 lg:opacity-0 lg:group-hover:opacity-100"
-                        title="Remove player from the rack"
-                        aria-label={`Remove ${name} from the rack`}
+                        onClick={() => onUnrackPlayer(player.id)}
+                        disabled={isPending}
+                        className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 opacity-100 transition hover:bg-red-50 hover:text-red-600 active:scale-95 disabled:pointer-events-none disabled:opacity-40 lg:opacity-0 lg:group-hover:opacity-100"
+                        title="Take off the rack (re-add from the roster). Delete permanently in the Members tab."
+                        aria-label={`Take ${name} off the rack`}
                       >
                         <IconX className="h-4 w-4" />
                       </button>

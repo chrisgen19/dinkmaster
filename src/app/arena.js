@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  removePlayer,
+  checkOutPlayer,
   skipPlayer,
   shuffleQueue,
   fillCourt,
@@ -370,6 +370,27 @@ export default function Arena({
   // tab badge, so compute it once.
   const liveCourtCount = courts.filter((c) => c.status === 'playing').length;
 
+  // Who is mid-match right now. The Members tab uses these to disable the
+  // Delete / Remove actions (the server refuses to delete an on-court player),
+  // so a manager sees the action gated up front instead of hitting an error
+  // after confirming. Derived from the live local `courts` state — not a
+  // server prop — so it stays correct as matches start/finish without a refetch.
+  const onCourtPlayerIds = useMemo(() => {
+    const ids = new Set();
+    for (const c of courts) {
+      if (c.status !== 'playing') continue;
+      for (const id of [...c.team1, ...c.team2]) ids.add(id);
+    }
+    return ids;
+  }, [courts]);
+  const onCourtUserIds = useMemo(() => {
+    const ids = new Set();
+    for (const p of displayPlayers) {
+      if (p.userId && onCourtPlayerIds.has(p.id)) ids.add(p.userId);
+    }
+    return ids;
+  }, [displayPlayers, onCourtPlayerIds]);
+
   // Player of the Week — recomputed from match history (refreshed after every
   // finish), the schedule, and the arena's match defaults, so the board updates
   // live as scores land. Same pure ranking the /profile read uses, so client
@@ -409,11 +430,15 @@ export default function Arena({
   };
 
   // Run a server action inside a transition and reconcile the returned state.
-  const run = (action, { sound = true } = {}) => {
+  // `refresh` additionally re-fetches the server-rendered props (used when an
+  // action changes data the local `applyResult` state doesn't cover, e.g. the
+  // Members tab's walk-in list sourced from `viewerLinkContext`).
+  const run = (action, { sound = true, refresh = false } = {}) => {
     startTransition(async () => {
       const result = await action();
       applyResult(result);
       if (sound) playPaddleSound();
+      if (refresh && !result?.error) router.refresh();
     });
   };
 
@@ -432,9 +457,15 @@ export default function Arena({
     run(() => fillCourt(arenaId, courtId));
   };
 
-  const handleRemovePlayer = (id) => {
+  // The rack X takes a player off the rack (reversible) rather than deleting
+  // them. Works for walk-ins and linked members alike; re-add via the Prep
+  // Roster modal's check-in. Permanent deletion lives in the Members tab, so
+  // refresh server props after — a walk-in un-racked this session (including
+  // one added via Prep Roster after page load) must show up immediately in
+  // Members → Walk-ins, which reads from `viewerLinkContext`, not local state.
+  const handleUnrackPlayer = (id) => {
     if (!canManage) return;
-    run(() => removePlayer(arenaId, id));
+    run(() => checkOutPlayer(arenaId, id), { refresh: true });
   };
 
   // No canManage gate: skip is self-service (a member can rest their own
@@ -805,7 +836,7 @@ export default function Arena({
             onToggleAutoMix={setAutoMix}
             onAddPlayers={() => setRosterModalOpen(true)}
             onShuffle={handleShuffleQueue}
-            onRemovePlayer={handleRemovePlayer}
+            onUnrackPlayer={handleUnrackPlayer}
             onSkipPlayer={handleSkipPlayer}
             isPending={isPending}
             starveThreshold={matchmakingProp.starveThreshold}
@@ -953,6 +984,8 @@ export default function Arena({
                 pendingRequests={pendingRequests}
                 pendingLinkRequests={pendingLinkRequests}
                 viewerLinkContext={viewerLinkContext}
+                onCourtPlayerIds={onCourtPlayerIds}
+                onCourtUserIds={onCourtUserIds}
               />
             </div>
           )}

@@ -66,6 +66,8 @@ export function ArenaMembers({
   pendingRequests = [],
   pendingLinkRequests = [],
   viewerLinkContext = null,
+  onCourtPlayerIds = null,
+  onCourtUserIds = null,
 }) {
   const router = useRouter();
   const [error, setError] = useState('');
@@ -271,6 +273,7 @@ export function ArenaMembers({
             viewerUserId={viewerUserId}
             isOwner={isOwner}
             isPending={isPending}
+            onCourtUserIds={onCourtUserIds}
             onPromoteToggle={promoteToggle}
             onTransfer={transfer}
             onRemove={remove}
@@ -284,6 +287,7 @@ export function ArenaMembers({
             orphans={sortedOrphans}
             canManage={canManage}
             isPending={isPending}
+            onCourtPlayerIds={onCourtPlayerIds}
             onLink={(p) => setManagerLinkFor(p)}
             onRemove={removeWalkIn}
           />
@@ -395,7 +399,7 @@ function SelfLinkPanel({ pendingRequest, onOpenModal, onCancel, disabled }) {
   );
 }
 
-function MembersList({ members, viewerUserId, isOwner, isPending, onPromoteToggle, onTransfer, onRemove }) {
+function MembersList({ members, viewerUserId, isOwner, isPending, onCourtUserIds, onPromoteToggle, onTransfer, onRemove }) {
   if (members.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center">
@@ -407,6 +411,7 @@ function MembersList({ members, viewerUserId, isOwner, isPending, onPromoteToggl
     <ul className="divide-y divide-slate-100">
       {members.map((m) => {
         const isViewer = m.userId === viewerUserId;
+        const onCourt = onCourtUserIds?.has(m.userId) ?? false;
         return (
           <li
             key={m.membershipId}
@@ -434,8 +439,13 @@ function MembersList({ members, viewerUserId, isOwner, isPending, onPromoteToggl
                 <button onClick={() => onTransfer(m)} disabled={isPending} className={BTN.accent}>
                   Make owner
                 </button>
-                <button onClick={() => onRemove(m)} disabled={isPending} className={BTN.danger}>
-                  Remove
+                <button
+                  onClick={() => onRemove(m)}
+                  disabled={isPending || onCourt}
+                  className={BTN.danger}
+                  title={onCourt ? 'On an active court — finish their match first' : undefined}
+                >
+                  {onCourt ? 'In Court' : 'Remove'}
                 </button>
               </div>
             )}
@@ -446,7 +456,7 @@ function MembersList({ members, viewerUserId, isOwner, isPending, onPromoteToggl
   );
 }
 
-function WalkInsList({ orphans, canManage, isPending, onLink, onRemove }) {
+function WalkInsList({ orphans, canManage, isPending, onCourtPlayerIds, onLink, onRemove }) {
   if (orphans.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center">
@@ -461,7 +471,9 @@ function WalkInsList({ orphans, canManage, isPending, onLink, onRemove }) {
   }
   return (
     <ul className="divide-y divide-slate-100">
-      {orphans.map((p) => (
+      {orphans.map((p) => {
+        const onCourt = onCourtPlayerIds?.has(p.id) ?? false;
+        return (
         <li
           key={p.id}
           className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 py-2.5"
@@ -490,16 +502,17 @@ function WalkInsList({ orphans, canManage, isPending, onLink, onRemove }) {
               </button>
               <button
                 onClick={() => onRemove(p)}
-                disabled={isPending}
+                disabled={isPending || onCourt}
                 className={BTN.danger}
-                title="Delete this walk-in permanently"
+                title={onCourt ? 'On an active court — finish their match first' : 'Delete this walk-in permanently'}
               >
-                Delete
+                {onCourt ? 'In Court' : 'Delete'}
               </button>
             </div>
           )}
         </li>
-      ))}
+        );
+      })}
     </ul>
   );
 }
