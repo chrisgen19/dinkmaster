@@ -14,7 +14,7 @@ FACEBOOK_CLIENT_SECRET=""  # Facebook App Secret
 
 The OAuth **redirect (callback) URL** is fixed by Better Auth:
 
-```
+```text
 <BETTER_AUTH_URL>/api/auth/callback/<provider>
 ```
 

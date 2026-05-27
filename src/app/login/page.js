@@ -1,103 +1,15 @@
-'use client';
-
-import { Suspense, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { signIn } from '@/lib/auth-client';
-import { safeNext } from '@/lib/safe-next';
-import {
-  AuthShell,
-  AuthSubmit,
-  AuthError,
-  AuthCrossLink,
-  SocialAuthButtons,
-  AUTH_FIELD_CLASS,
-  BackPill,
-} from '../auth-shell';
+import { Suspense } from 'react';
+import { enabledSocialProviders } from '@/lib/auth';
+import { LoginForm } from './login-form';
 
 export default function LoginPage() {
+  // Server component: reads the configured social providers and hands them to
+  // the client form, so only providers the server can handle render a button.
   // `useSearchParams` (inside `LoginForm`) requires a Suspense boundary so the
-  // rest of the route can still prerender. The fallback is intentionally blank
-  // — the form renders almost instantly once hydrated.
+  // rest of the route can still prerender; the fallback is intentionally blank.
   return (
     <Suspense fallback={null}>
-      <LoginForm />
+      <LoginForm enabledProviders={enabledSocialProviders} />
     </Suspense>
-  );
-}
-
-function LoginForm() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const next = safeNext(searchParams.get('next'));
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-    try {
-      const { error: signInError } = await signIn.email({ email, password });
-      if (signInError) {
-        setError(signInError.message || 'Invalid email or password.');
-        return;
-      }
-      router.push(next);
-    } catch (err) {
-      // Network or unexpected failure — surface it instead of hanging on "Signing in…".
-      setError(err?.message || 'Could not sign in.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const registerHref = next !== '/arenas' ? `/register?next=${encodeURIComponent(next)}` : '/register';
-
-  return (
-    <AuthShell
-      title="Welcome back"
-      subtitle="Sign in to manage your arena."
-      footer={
-        <>
-          <AuthCrossLink prompt="No account?" href={registerHref} action="Create one" />
-          <div className="flex justify-center">
-            <BackPill fallbackHref="/arenas" label="Back to arenas" />
-          </div>
-        </>
-      }
-    >
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <input
-          type="email"
-          required
-          autoComplete="email"
-          placeholder="Email"
-          aria-label="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className={AUTH_FIELD_CLASS}
-        />
-        <input
-          type="password"
-          required
-          autoComplete="current-password"
-          placeholder="Password"
-          aria-label="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className={AUTH_FIELD_CLASS}
-        />
-
-        {error && <AuthError>{error}</AuthError>}
-
-        <AuthSubmit loading={loading} label="Sign in" loadingLabel="Signing in…" />
-      </form>
-
-      <div className="mt-4">
-        <SocialAuthButtons next={next} />
-      </div>
-    </AuthShell>
   );
 }

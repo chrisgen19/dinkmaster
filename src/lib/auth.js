@@ -42,6 +42,14 @@ if (process.env.FACEBOOK_CLIENT_ID && process.env.FACEBOOK_CLIENT_SECRET) {
 }
 
 /**
+ * Provider ids that are actually configured (both env vars present). The
+ * login/register pages read this so they only render buttons for providers
+ * the server can handle — a half-configured deployment never shows a button
+ * that would fail on click.
+ */
+export const enabledSocialProviders = Object.keys(socialProviders);
+
+/**
  * Better Auth server instance. Email + password and social (Google/Facebook)
  * auth backed by the existing PostgreSQL database via the Prisma adapter.
  *

@@ -115,18 +115,36 @@ export function AuthCrossLink({ prompt, href, action }) {
 }
 
 /**
+ * Metadata for each supported social provider. Order here is the display order.
+ * The actual button set is filtered to the providers the server has configured
+ * (see `SocialAuthButtons`'s `providers` prop).
+ */
+const SOCIAL_PROVIDERS = [
+  { id: 'google', label: 'Continue with Google', Icon: GoogleIcon },
+  { id: 'facebook', label: 'Continue with Facebook', Icon: FacebookIcon },
+];
+
+/**
  * Social sign-in block shared by `/login` and `/register`: an "or continue
- * with" divider above full-width Google and Facebook buttons. Both call
- * `signIn.social`, which redirects the browser to the provider and back to
- * `callbackURL` on success, so a successful click navigates away (the button
- * stays disabled meanwhile). Errors are surfaced inline via `AuthError`.
+ * with" divider above full-width provider buttons. Each calls `signIn.social`,
+ * which redirects the browser to the provider and back to `callbackURL` on
+ * success, so a successful click navigates away (the button stays disabled
+ * meanwhile). Errors are surfaced inline via `AuthError`.
+ *
+ * Only renders buttons for `providers` the server actually configured, so a
+ * deployment with just one provider (or none) never shows a button that would
+ * fail on click. Renders nothing when no providers are enabled.
  *
  * @param {object} props
  * @param {string} props.next - Post-auth destination (already run through `safeNext`).
+ * @param {string[]} [props.providers] - Enabled provider ids (e.g. ['google', 'facebook']).
  */
-export function SocialAuthButtons({ next }) {
-  const [loading, setLoading] = useState(null); // 'google' | 'facebook' | null
+export function SocialAuthButtons({ next, providers = [] }) {
+  const [loading, setLoading] = useState(null); // provider id | null
   const [error, setError] = useState('');
+
+  const visibleProviders = SOCIAL_PROVIDERS.filter((p) => providers.includes(p.id));
+  if (visibleProviders.length === 0) return null;
 
   const handleSocial = async (provider) => {
     setError('');
@@ -155,22 +173,16 @@ export function SocialAuthButtons({ next }) {
       {error && <AuthError>{error}</AuthError>}
 
       <div className="grid gap-2.5">
-        <SocialButton
-          provider="google"
-          label="Continue with Google"
-          loading={loading === 'google'}
-          disabled={loading !== null}
-          onClick={() => handleSocial('google')}
-          icon={<GoogleIcon />}
-        />
-        <SocialButton
-          provider="facebook"
-          label="Continue with Facebook"
-          loading={loading === 'facebook'}
-          disabled={loading !== null}
-          onClick={() => handleSocial('facebook')}
-          icon={<FacebookIcon />}
-        />
+        {visibleProviders.map(({ id, label, Icon }) => (
+          <SocialButton
+            key={id}
+            label={label}
+            loading={loading === id}
+            disabled={loading !== null}
+            onClick={() => handleSocial(id)}
+            icon={<Icon />}
+          />
+        ))}
       </div>
     </div>
   );
