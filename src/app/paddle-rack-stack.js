@@ -309,7 +309,8 @@ export function PaddleRackStack({
                       <button
                         type="button"
                         onClick={() => onUnrackPlayer(player.id)}
-                        className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 opacity-100 transition hover:bg-red-50 hover:text-red-600 active:scale-95 lg:opacity-0 lg:group-hover:opacity-100"
+                        disabled={isPending}
+                        className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 opacity-100 transition hover:bg-red-50 hover:text-red-600 active:scale-95 disabled:pointer-events-none disabled:opacity-40 lg:opacity-0 lg:group-hover:opacity-100"
                         title="Take off the rack (re-add from the roster). Delete permanently in the Members tab."
                         aria-label={`Take ${name} off the rack`}
                       >

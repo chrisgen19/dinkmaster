@@ -409,11 +409,15 @@ export default function Arena({
   };
 
   // Run a server action inside a transition and reconcile the returned state.
-  const run = (action, { sound = true } = {}) => {
+  // `refresh` additionally re-fetches the server-rendered props (used when an
+  // action changes data the local `applyResult` state doesn't cover, e.g. the
+  // Members tab's walk-in list sourced from `viewerLinkContext`).
+  const run = (action, { sound = true, refresh = false } = {}) => {
     startTransition(async () => {
       const result = await action();
       applyResult(result);
       if (sound) playPaddleSound();
+      if (refresh && !result?.error) router.refresh();
     });
   };
 
@@ -434,10 +438,13 @@ export default function Arena({
 
   // The rack X takes a player off the rack (reversible) rather than deleting
   // them. Works for walk-ins and linked members alike; re-add via the Prep
-  // Roster modal's check-in. Permanent deletion lives in the Members tab.
+  // Roster modal's check-in. Permanent deletion lives in the Members tab, so
+  // refresh server props after — a walk-in un-racked this session (including
+  // one added via Prep Roster after page load) must show up immediately in
+  // Members → Walk-ins, which reads from `viewerLinkContext`, not local state.
   const handleUnrackPlayer = (id) => {
     if (!canManage) return;
-    run(() => checkOutPlayer(arenaId, id));
+    run(() => checkOutPlayer(arenaId, id), { refresh: true });
   };
 
   // No canManage gate: skip is self-service (a member can rest their own
