@@ -230,9 +230,9 @@ export function PaddleRackStack({
                 )}
 
                 <div
-                  className={`group relative flex items-center gap-3 rounded-xl border p-3 transition ${
+                  className={`group relative flex items-center gap-2 sm:gap-3 rounded-xl border p-2.5 sm:p-3 transition ${
                     isOnDeck
-                      ? 'border-emerald-200 bg-emerald-50/50 pl-4'
+                      ? 'border-emerald-200 bg-emerald-50/50 pl-3 sm:pl-4'
                       : 'border-slate-200 bg-white hover:bg-slate-50'
                   }`}
                 >
@@ -259,8 +259,8 @@ export function PaddleRackStack({
 
                   {/* Identity */}
                   <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-slate-800">
-                      <span className="truncate">{name}</span>
+                    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm font-semibold text-slate-800">
+                      <span className="min-w-0 max-w-full truncate">{name}</span>
                       {isYou && (
                         <span className="shrink-0 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
                           You
