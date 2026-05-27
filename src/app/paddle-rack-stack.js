@@ -302,7 +302,10 @@ export function PaddleRackStack({
                         <button
                           ref={firstPanelButtonRef}
                           type="button"
-                          onClick={() => onSkipPlayer(player.id)}
+                          onClick={() => {
+                            setExpandedPlayerId(null);
+                            onSkipPlayer(player.id);
+                          }}
                           disabled={isPending}
                           className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
                           title={isYou ? 'Take a rest — send your paddle to the back of the rack' : 'Skip — send to the back of the rack'}
