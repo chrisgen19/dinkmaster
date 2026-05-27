@@ -503,7 +503,12 @@ export default function Arena({
   // modal renders at the page root, consistent with the score / cancel-fill
   // modals.
   const handleSkipPlayer = (id) => {
-    if (canManage && matchmakingProp.skipPickReplacement && queue.length > ON_DECK_SIZE) {
+    // Only open the picker when there's actually a waiting paddle to pick
+    // (other than the one being skipped). Checking the real waiting set —
+    // not just `queue.length > ON_DECK_SIZE` — keeps the open-condition honest
+    // so the manager never lands on a modal with an empty, unconfirmable list.
+    const hasWaiting = queue.slice(ON_DECK_SIZE).some((qid) => qid !== id);
+    if (canManage && matchmakingProp.skipPickReplacement && hasWaiting) {
       setSkipPickerSkippedId(id);
       setSelectedReplacementId(null);
       return;

@@ -1433,26 +1433,43 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
     expect(updates).not.toContainEqual(expect.objectContaining({ where: { id: 'p6' } }));
   });
 
-  it('Off (legacy): moves the on-deck paddle to the back, compacts the rack, resets waitRounds', async () => {
+  it('Off (legacy) + auto-pick: ONE write — skipped paddle to the back, first-waiting auto-promotes', async () => {
     getCurrentUser.mockResolvedValue({ id: 'u-me' });
     prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
-    // Rack of 5: p1 on deck (index 0). Off-mode auto-picks p5 (first waiting)
-    // to fill the freed slot. Unified compaction renumbers positions 1..N.
+    // Rack of 5: p1 on deck (index 0). Off-mode auto-pick does NOT renumber
+    // the rack — the skipped paddle goes to max+1 and the first waiting paddle
+    // (p5) promotes by queueOrder on its own. Minimal write volume under the
+    // lock (the prior single-row behavior, restored after the picker refactor).
     const tx = txWithRack(['p1', 'p2', 'p3', 'p4', 'p5'], { maxOrder: 5, skipRestoresPriority: false });
     prisma.$transaction.mockImplementation(async (cb) => cb(tx));
     const result = await actions.skipPlayer(ARENA, 'p1');
     expect(result.notification).toBe('Paddle sent to the back of the rack.');
-    const updates = tx.player.update.mock.calls.map((c) => c[0]);
-    // Final order: p2(1), p3(2), p4(3), p5(4 — promoted from waiting), p1(5 — back).
-    expect(updates).toContainEqual({ where: { id: 'p2' }, data: { queueOrder: 1 } });
-    expect(updates).toContainEqual({ where: { id: 'p3' }, data: { queueOrder: 2 } });
-    expect(updates).toContainEqual({ where: { id: 'p4' }, data: { queueOrder: 3 } });
-    expect(updates).toContainEqual({ where: { id: 'p5' }, data: { queueOrder: 4 } });
-    expect(updates).toContainEqual({ where: { id: 'p1' }, data: { queueOrder: 5 } });
-    // Plus the per-mode mutation on the skipped paddle: waitRounds reset
-    // and `skipBoosted: false` so a flag from a prior on-mode skip can't
-    // survive into the next mix once the arena toggles off.
-    expect(updates).toContainEqual({ where: { id: 'p1' }, data: { waitRounds: 0, skipBoosted: false } });
+    // Exactly one player.update — the skipped paddle, combining position +
+    // wait reset + boost clear. p2..p5 are NOT rewritten.
+    expect(tx.player.update).toHaveBeenCalledTimes(1);
+    expect(tx.player.update).toHaveBeenCalledWith({
+      where: { id: 'p1' },
+      data: { queueOrder: 6, waitRounds: 0, skipBoosted: false },
+    });
+  });
+
+  it('Off (legacy) + manual pick: TWO writes — replacement into freed slot, skipped to back', async () => {
+    getCurrentUser.mockResolvedValue({ id: 'u-mgr' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-other' });
+    requireArenaManager.mockResolvedValue({ user: { id: 'u-mgr' }, arena: { id: ARENA }, role: ROLES.OWNER });
+    // Off-mode, manager picks G (index 6) to fill C's freed slot (C is index 2,
+    // queueOrder 3). Minimal writes: G takes queueOrder 3, C goes to back.
+    const tx = txWithRack(['A', 'B', 'C', 'D', 'E', 'F', 'G'], { maxOrder: 7, skipRestoresPriority: false });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+    const result = await actions.skipPlayer(ARENA, 'C', 'G');
+    expect(result.error).toBeUndefined();
+    expect(result.notification).toBe('Paddle sent to the back of the rack.');
+    expect(tx.player.update).toHaveBeenCalledTimes(2);
+    expect(tx.player.update).toHaveBeenCalledWith({ where: { id: 'G' }, data: { queueOrder: 3 } });
+    expect(tx.player.update).toHaveBeenCalledWith({
+      where: { id: 'C' },
+      data: { queueOrder: 8, waitRounds: 0, skipBoosted: false },
+    });
   });
 
   it('returns NO notification on a no-op skip (paddle already left the rack)', async () => {
@@ -1532,9 +1549,10 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
     expect(tx.player.update).not.toHaveBeenCalled();
   });
 
-  it('Replacement that is on-deck (not in waiting) is rejected', async () => {
+  it('Replacement that is on-deck (not in waiting) is rejected with a distinct message', async () => {
     // The picker UI only lists waiting paddles, but a malformed POST could
-    // name an on-deck paddle. Server enforces the waiting constraint.
+    // name an on-deck paddle. Server enforces the waiting constraint and uses
+    // a different message than the raced case so the cause is debuggable.
     getCurrentUser.mockResolvedValue({ id: 'u-mgr' });
     prisma.player.findFirst.mockResolvedValue({ userId: 'u-other' });
     requireArenaManager.mockResolvedValue({ user: { id: 'u-mgr' }, arena: { id: ARENA }, role: ROLES.OWNER });
@@ -1542,7 +1560,8 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
     const tx = txWithRack(['A', 'B', 'C', 'D', 'E', 'F']);
     prisma.$transaction.mockImplementation(async (cb) => cb(tx));
     const result = await actions.skipPlayer(ARENA, 'C', 'B');
-    expect(result.error).toMatch(/no longer available/i);
+    expect(result.error).toMatch(/already on deck/i);
+    expect(result.error).not.toMatch(/no longer available/i);
     expect(tx.player.update).not.toHaveBeenCalled();
   });
 
