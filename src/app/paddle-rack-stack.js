@@ -259,8 +259,8 @@ export function PaddleRackStack({
 
                   {/* Identity */}
                   <div className="min-w-0 flex-1">
-                    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm font-semibold text-slate-800">
-                      <span className="min-w-0 max-w-full truncate">{name}</span>
+                    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm font-semibold text-slate-800 sm:flex-nowrap">
+                      <span className="w-full min-w-0 truncate sm:w-auto sm:max-w-full">{name}</span>
                       {isYou && (
                         <span className="shrink-0 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
                           You
