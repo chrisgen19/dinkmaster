@@ -269,9 +269,17 @@ export default async function LandingPage() {
             <BrandMark className="h-8 w-8" />
             <Wordmark />
           </div>
-          <p className="text-xs text-slate-400">
-            © {new Date().getFullYear()} Dinkmaster. Built for pickleball communities.
-          </p>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <Link href="/privacy" className="text-xs font-semibold text-slate-500 hover:text-emerald-700 transition">
+              Privacy
+            </Link>
+            <Link href="/data-deletion" className="text-xs font-semibold text-slate-500 hover:text-emerald-700 transition">
+              Data deletion
+            </Link>
+            <p className="text-xs text-slate-400">
+              © {new Date().getFullYear()} Dinkmaster. Built for pickleball communities.
+            </p>
+          </div>
         </div>
       </footer>
     </div>
