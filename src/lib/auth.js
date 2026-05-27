@@ -61,16 +61,23 @@ export const auth = betterAuth({
   database: prismaAdapter(prisma, { provider: 'postgresql' }),
   emailAndPassword: { enabled: true },
   socialProviders,
-  // Link a social sign-in to an existing account with the same email. We keep
-  // Better Auth's secure default (`requireLocalEmailVerified: true`): linking
-  // proceeds only when the local account's email is verified, so an attacker
-  // who pre-registers an unverified account at a victim's address can't have
-  // the victim's OAuth identity linked into it. NOTE: this app doesn't verify
-  // emails, so an existing password user (emailVerified=false) won't be
-  // auto-linked on a same-email social sign-in — they should keep using their
-  // password (see docs/social-auth-setup.md).
+  // Link a social sign-in to an existing account with the same email.
+  // `requireLocalEmailVerified: true` is set explicitly (it's also Better
+  // Auth's default): linking proceeds only when the LOCAL account's email is
+  // verified. This gate is independent of `trustedProviders` and is what
+  // prevents account-takeover — an attacker who pre-registers an unverified
+  // password account at a victim's address can't have the victim's OAuth
+  // identity linked into it. `trustedProviders` only relaxes the *provider*-
+  // side check and is required for Facebook, which reports emailVerified=false.
+  // NOTE: this app doesn't verify emails, so an existing password user
+  // (emailVerified=false) won't be auto-linked on a same-email social sign-in
+  // — they should keep using their password (see docs/social-auth-setup.md).
   account: {
-    accountLinking: { enabled: true, trustedProviders: ['google', 'facebook'] },
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ['google', 'facebook'],
+      requireLocalEmailVerified: true,
+    },
   },
   // Profile columns collected at registration alongside Better Auth's core
   // `name`/`email`. Only first/last name are required; the rest are optional
