@@ -48,6 +48,13 @@ model Arena {
   // `skipPlayer` in `src/app/actions.js`.
   skipRestoresPriority Boolean @default(true)
 
+  // When on, a manager skipping an on-deck paddle opens a replacement
+  // picker (modal listing waiting paddles) and the chosen player fills the
+  // freed on-deck slot. When off, the first waiting player auto-fills
+  // (existing behavior). Non-managers never see the picker even when this
+  // is on — self-rest is always auto-pick.
+  skipPickReplacement Boolean @default(true)
+
   // Per-arena match + leaderboard defaults (Phase 9b). Defaults preserve the
   // prior hardcoded behaviour, so existing arenas play exactly as before.
   // `targetScore` seeds the score-modal inputs; `autoMixDefault` seeds the

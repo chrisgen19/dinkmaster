@@ -17,7 +17,7 @@ import {
   updateArenaSchedule,
   prepareNextSession,
 } from './actions';
-import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT } from '@/lib/matchmaking';
+import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT, ON_DECK_SIZE } from '@/lib/matchmaking';
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE } from '@/lib/match-defaults';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
 import { computeSessionStats } from '@/lib/session-stats';
@@ -148,7 +148,7 @@ export default function Arena({
   arenaName,
   description = '',
   schedule: initialSchedule = { days: [], start: null, end: null, timezone: 'Asia/Manila' },
-  matchmaking: matchmakingProp = { starveThreshold: DEFAULT_STARVE_THRESHOLD, emergencyWait: DEFAULT_EMERGENCY_WAIT, skipRestoresPriority: true },
+  matchmaking: matchmakingProp = { starveThreshold: DEFAULT_STARVE_THRESHOLD, emergencyWait: DEFAULT_EMERGENCY_WAIT, skipRestoresPriority: true, skipPickReplacement: true },
   matchDefaults = {
     targetScore: DEFAULT_TARGET_SCORE,
     autoMixDefault: DEFAULT_AUTO_MIX,
@@ -213,6 +213,18 @@ export default function Arena({
   // The court whose fill is pending cancellation, surfaced in a confirm modal
   // so a destructive "return to deck" can't fire on a stray click. Null = closed.
   const [courtToCancel, setCourtToCancel] = useState(null);
+
+  // Skip-with-replacement picker: when a manager skips an on-deck paddle and
+  // the arena has `skipPickReplacement` on, a modal opens listing waiting
+  // paddles so the manager picks who fills the freed slot. Null = closed.
+  // `selectedReplacementId` is the highlighted choice in the modal; stays
+  // null until the manager taps a row.
+  const [skipPickerSkippedId, setSkipPickerSkippedId] = useState(null);
+  const [selectedReplacementId, setSelectedReplacementId] = useState(null);
+  // Picker-local error (e.g. "replacement no longer available"). Shown INSIDE
+  // the modal — the page-level banner sits behind the modal's backdrop and
+  // would be invisible during the keep-open-and-retry race flow.
+  const [skipPickerError, setSkipPickerError] = useState('');
 
   const [errorMsg, setErrorMsg] = useState('');
   const [activeTab, setActiveTab] = useState('courts');
@@ -328,6 +340,47 @@ export default function Arena({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [courtToCancel, isPending]);
+
+  // Escape closes the skip-with-replacement picker. Same in-flight guard as
+  // the cancel-fill modal — don't dismiss mid-action so a "no longer
+  // available" replacement-raced error has a chance to surface in context.
+  useEffect(() => {
+    if (!skipPickerSkippedId) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape' && !isPending) {
+        setSkipPickerSkippedId(null);
+        setSelectedReplacementId(null);
+        setSkipPickerError('');
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [skipPickerSkippedId, isPending]);
+
+  // iOS-safe scroll lock while the skip-picker is open. A plain
+  // `overflow: hidden` doesn't stop rubber-band scrolling in standalone PWA
+  // mode, and this modal has a scrollable waiting list — so pin <body> with
+  // `position: fixed` offset by the current scrollY, then restore on
+  // close/unmount. Mirrors the lockScroll/unlockScroll pattern in
+  // ArenaMobileSheet (arena-mobile-nav.js).
+  useEffect(() => {
+    if (!skipPickerSkippedId) return undefined;
+    const { style } = document.body;
+    const y = window.scrollY;
+    style.position = 'fixed';
+    style.top = `-${y}px`;
+    style.left = '0';
+    style.right = '0';
+    style.width = '100%';
+    return () => {
+      style.position = '';
+      style.top = '';
+      style.left = '';
+      style.right = '';
+      style.width = '';
+      window.scrollTo(0, y);
+    };
+  }, [skipPickerSkippedId]);
 
   // Session-scoped overlay of games / wins / losses. The DB `Player` row holds
   // lifetime counters (incremented on every `endMatch` and surfaced on
@@ -471,8 +524,65 @@ export default function Arena({
   // No canManage gate: skip is self-service (a member can rest their own
   // paddle). The server re-authorizes (own paddle or manager), and the Skip
   // button only renders for authorized rows (deriveRackRow `canSkip`).
+  //
+  // When the manager has `skipPickReplacement` on (the default), instead of
+  // firing the action immediately we open a picker modal so the manager
+  // chooses which waiting paddle fills the freed on-deck slot. Non-managers
+  // (self-rest) always auto-pick the first waiting player, matching the
+  // pre-picker behavior. The decision lives here (not in the rack) so the
+  // modal renders at the page root, consistent with the score / cancel-fill
+  // modals.
   const handleSkipPlayer = (id) => {
+    // Only open the picker when there's actually a RENDERABLE waiting paddle to
+    // pick (other than the one being skipped). Use the same id→player
+    // resolution the modal's list uses (`players.find(...)`), not just raw
+    // queue ids, so the open-condition is provably identical to what renders —
+    // the manager never lands on a modal with an empty, unconfirmable list.
+    const hasWaiting = queue
+      .slice(ON_DECK_SIZE)
+      .some((qid) => qid !== id && players.some((p) => p.id === qid));
+    if (canManage && matchmakingProp.skipPickReplacement && hasWaiting) {
+      setSkipPickerSkippedId(id);
+      setSelectedReplacementId(null);
+      return;
+    }
     run(() => skipPlayer(arenaId, id));
+  };
+
+  // Modal confirm — fire the skip with the picked replacement. The server
+  // re-validates that the replacement is still in waiting under the queue
+  // lock; if it raced, the response surfaces "no longer available" and the
+  // modal stays open so the manager can pick again from the refreshed list.
+  const handleConfirmSkipWithReplacement = () => {
+    if (!skipPickerSkippedId || !selectedReplacementId) return;
+    const skippedId = skipPickerSkippedId;
+    const replacementId = selectedReplacementId;
+    startTransition(async () => {
+      const result = await skipPlayer(arenaId, skippedId, replacementId);
+      const raced = result?.error && /no longer available/i.test(result.error);
+      if (raced) {
+        // Keep the picker open so the manager can pick again. Reconcile the
+        // refreshed waiting list (state only — no page banner, which would be
+        // hidden behind the modal) and surface the error INSIDE the modal.
+        if (result.state) applyResult({ state: result.state });
+        setSkipPickerError(result.error);
+        setSelectedReplacementId(null);
+      } else {
+        // Success, or a non-race error (e.g. invalid target / arena gone) that
+        // warrants closing — let applyResult drive the page banner as usual.
+        applyResult(result);
+        setSkipPickerError('');
+        setSkipPickerSkippedId(null);
+        setSelectedReplacementId(null);
+      }
+    });
+  };
+
+  const handleCancelSkipPicker = () => {
+    if (isPending) return; // don't dismiss mid-flight
+    setSkipPickerSkippedId(null);
+    setSelectedReplacementId(null);
+    setSkipPickerError('');
   };
 
   const handleTriggerScoreModal = (court) => {
@@ -1092,6 +1202,124 @@ export default function Arena({
         </div>,
         document.body,
       )}
+
+      {/* Skip + Pick Replacement Modal — manager picks who fills the freed
+          on-deck slot when skipping a paddle. Rendered via portal so no
+          ancestor's overflow/transform/filter can clip it (same PWA-safe
+          rule as the cancel-fill modal). Backdrop click and Esc dismiss
+          while idle; suppressed while a confirm is in flight so a
+          "replacement no longer available" race-error has context to land. */}
+      {mounted && skipPickerSkippedId && (() => {
+        const skippedPlayer = players.find((p) => p.id === skipPickerSkippedId);
+        // Waiting pool excludes the skipped paddle itself (it could in principle
+        // be in waiting if a manager's UI race opens the modal for a row that
+        // just shifted off-deck, though deriveRackRow's canSkip blocks that
+        // case today). queue.length > ON_DECK_SIZE is already guaranteed by
+        // handleSkipPlayer's open-condition, so waitingIds is non-empty.
+        const waitingIds = queue.slice(ON_DECK_SIZE).filter((id) => id !== skipPickerSkippedId);
+        const waitingPlayers = waitingIds
+          .map((id) => players.find((p) => p.id === id))
+          .filter(Boolean);
+        return createPortal(
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
+            onClick={(e) => {
+              if (e.target === e.currentTarget && !isPending) handleCancelSkipPicker();
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="skip-pick-title"
+              className="bg-white rounded-2xl border border-slate-200 max-w-md w-full shadow-xl animate-scale-up overflow-hidden flex flex-col max-h-[85vh]"
+            >
+              <div className="px-5 py-4 border-b border-slate-100">
+                <h3 id="skip-pick-title" className="font-extrabold text-slate-900 text-base">
+                  Skip {skippedPlayer ? fullName(skippedPlayer) : 'paddle'} — pick replacement
+                </h3>
+                <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                  Tap a waiting paddle to fill the freed on-deck slot.
+                </p>
+              </div>
+              <ul className="flex-1 overflow-y-auto divide-y divide-slate-100">
+                {waitingPlayers.map((p) => {
+                  const selected = selectedReplacementId === p.id;
+                  return (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedReplacementId(p.id);
+                          setSkipPickerError('');
+                        }}
+                        disabled={isPending}
+                        className={`w-full flex items-center gap-3 px-5 py-3 text-left transition disabled:opacity-50 ${
+                          selected ? 'bg-emerald-50' : 'hover:bg-slate-50'
+                        }`}
+                      >
+                        <span
+                          className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 transition ${
+                            selected
+                              ? 'border-emerald-600 bg-emerald-600 text-white'
+                              : 'border-slate-300'
+                          }`}
+                          aria-hidden="true"
+                        >
+                          {selected && (
+                            <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">
+                              <path
+                                fillRule="evenodd"
+                                d="M16.7 5.3a1 1 0 0 1 0 1.4l-8 8a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.4L8 12.6l7.3-7.3a1 1 0 0 1 1.4 0z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
+                          )}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-bold text-slate-800 truncate">
+                            {fullName(p)}
+                          </span>
+                          <span className="block text-[11px] font-medium tabular-nums text-slate-400">
+                            {p.gamesPlayed} games · {p.wins || 0}W · {p.losses || 0}L
+                            {p.waitRounds > 0 ? ` · waiting ${p.waitRounds}` : ''}
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              {skipPickerError && (
+                <p
+                  role="alert"
+                  className="mx-5 mt-3 rounded-lg border border-amber-200/70 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700"
+                >
+                  {skipPickerError}
+                </p>
+              )}
+              <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/60 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={handleCancelSkipPicker}
+                  disabled={isPending}
+                  className="px-4 py-2.5 rounded-xl text-slate-600 hover:bg-slate-200/60 disabled:opacity-50 font-bold text-xs uppercase tracking-wide transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmSkipWithReplacement}
+                  disabled={isPending || !selectedReplacementId}
+                  className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-wide transition shadow-sm shadow-emerald-600/20"
+                >
+                  Skip + Pick
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        );
+      })()}
 
       {/* Score Entry Modal — matches the CourtCard's visual language: slate-900
           court tile in the header, emerald = Team A, sky = Team B, stacked

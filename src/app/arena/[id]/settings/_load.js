@@ -43,6 +43,7 @@ export async function loadArenaForSettings(arenaId) {
         starveThreshold: arena.starveThreshold,
         emergencyWait: arena.emergencyWait,
         skipRestoresPriority: arena.skipRestoresPriority,
+        skipPickReplacement: arena.skipPickReplacement,
       },
       matchDefaults: {
         targetScore: arena.targetScore,
