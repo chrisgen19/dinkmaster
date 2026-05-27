@@ -55,6 +55,7 @@ export async function getArena(id) {
       starveThreshold: true,
       emergencyWait: true,
       skipRestoresPriority: true,
+      skipPickReplacement: true,
       targetScore: true,
       autoMixDefault: true,
       leaderboardSize: true,

@@ -63,7 +63,7 @@ const PLAY = [
   ['resetArena', () => actions.resetArena(ARENA)],
   ['updateArenaGeneral', () => actions.updateArenaGeneral(ARENA, { name: 'New' })],
   ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
-  ['updateArenaMatchmaking', () => actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true })],
+  ['updateArenaMatchmaking', () => actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true })],
   ['updateArenaMatchDefaults', () => actions.updateArenaMatchDefaults(ARENA, { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true })],
   ['updateArenaSessions', () => actions.updateArenaSessions(ARENA, { autoResetOnSession: true })],
   ['prepareNextSession', () => actions.prepareNextSession(ARENA)],
@@ -233,20 +233,28 @@ describe('arena server actions — authorization', () => {
       });
 
       it('persists valid thresholds and coerces numeric strings', async () => {
-        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: '3', emergencyWait: '6', skipRestoresPriority: true });
+        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: '3', emergencyWait: '6', skipRestoresPriority: true, skipPickReplacement: true });
         expect(result.error).toBeUndefined();
         expect(prisma.arena.updateMany).toHaveBeenCalledWith({
           where: { id: ARENA },
-          data: { starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true },
+          data: { starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true, skipPickReplacement: true },
         });
-        expect(result.matchmaking).toEqual({ starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true });
+        expect(result.matchmaking).toEqual({ starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true, skipPickReplacement: true });
       });
 
       it('coerces "true"/"false" string values for skipRestoresPriority', async () => {
-        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: 'false' });
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: 'false', skipPickReplacement: 'true' });
         expect(prisma.arena.updateMany).toHaveBeenLastCalledWith({
           where: { id: ARENA },
-          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false },
+          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false, skipPickReplacement: true },
+        });
+      });
+
+      it('coerces "true"/"false" string values for skipPickReplacement', async () => {
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: 'false' });
+        expect(prisma.arena.updateMany).toHaveBeenLastCalledWith({
+          where: { id: ARENA },
+          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: false },
         });
       });
 
@@ -254,7 +262,7 @@ describe('arena server actions — authorization', () => {
         // After persisting `skipRestoresPriority: false`, the action must also
         // clear `Player.skipBoosted` for the arena so the next auto-mix can't
         // elevate paddles that were boosted while the setting was on.
-        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false });
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false, skipPickReplacement: true });
         expect(prisma.player.updateMany).toHaveBeenCalledWith({
           where: { arenaId: ARENA, skipBoosted: true },
           data: { skipBoosted: false },
@@ -262,24 +270,25 @@ describe('arena server actions — authorization', () => {
       });
 
       it('does NOT wipe skipBoosted when the setting is being turned on', async () => {
-        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true });
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true });
         expect(prisma.player.updateMany).not.toHaveBeenCalled();
       });
 
       it('reports a clean error when the arena no longer exists', async () => {
         prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
-        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true });
+        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true });
         expect(result.error).toMatch(/no longer exists/i);
       });
 
       it.each([
-        ['a zero starve threshold', { starveThreshold: 0, emergencyWait: 4, skipRestoresPriority: true }],
-        ['a fractional starve threshold', { starveThreshold: 2.5, emergencyWait: 4, skipRestoresPriority: true }],
-        ['a non-numeric starve threshold', { starveThreshold: 'lots', emergencyWait: 4, skipRestoresPriority: true }],
-        ['an emergency wait below the starve threshold', { starveThreshold: 4, emergencyWait: 2, skipRestoresPriority: true }],
-        ['an out-of-range starve threshold', { starveThreshold: MAX_WAIT_THRESHOLD + 1, emergencyWait: 4, skipRestoresPriority: true }],
-        ['an out-of-range emergency wait', { starveThreshold: 2, emergencyWait: MAX_WAIT_THRESHOLD + 1, skipRestoresPriority: true }],
-        ['a non-boolean skipRestoresPriority', { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: 'maybe' }],
+        ['a zero starve threshold', { starveThreshold: 0, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true }],
+        ['a fractional starve threshold', { starveThreshold: 2.5, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true }],
+        ['a non-numeric starve threshold', { starveThreshold: 'lots', emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true }],
+        ['an emergency wait below the starve threshold', { starveThreshold: 4, emergencyWait: 2, skipRestoresPriority: true, skipPickReplacement: true }],
+        ['an out-of-range starve threshold', { starveThreshold: MAX_WAIT_THRESHOLD + 1, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true }],
+        ['an out-of-range emergency wait', { starveThreshold: 2, emergencyWait: MAX_WAIT_THRESHOLD + 1, skipRestoresPriority: true, skipPickReplacement: true }],
+        ['a non-boolean skipRestoresPriority', { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: 'maybe', skipPickReplacement: true }],
+        ['a non-boolean skipPickReplacement', { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: 'maybe' }],
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaMatchmaking(ARENA, input);
         expect(result.error).toBeTruthy();
@@ -1339,12 +1348,16 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('lets a member skip their OWN paddle without consulting the manager guard', async () => {
+  it('lets a member skip their OWN paddle even when the manager guard rejects them', async () => {
+    // Self-skip auth passes regardless of manager status. We still call
+    // `requireArenaManager` up front (so a manager skipping their own paddle
+    // can use the replacement picker), but a non-manager whose paddle this
+    // is must still be allowed through.
     getCurrentUser.mockResolvedValue({ id: 'u-me' });
     prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
+    requireArenaManager.mockResolvedValue({ error: ERR });
     const result = await actions.skipPlayer(ARENA, 'p1');
     expect(result.error).toBeUndefined();
-    expect(requireArenaManager).not.toHaveBeenCalled();
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
@@ -1379,11 +1392,16 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
   // Helper: a tx stub whose ordered rack is `rackIds`, used to drive the
   // eligibility checks inside the transaction. `skipRestoresPriority` toggles
   // between the new "Next in Line" behavior (default) and the legacy
-  // back-of-rack reset.
-  const txWithRack = (rackIds, { maxOrder = rackIds.length, skipRestoresPriority = true } = {}) => ({
+  // back-of-rack reset. `skipPickReplacement` controls whether a manager's
+  // `replacementId` is honored (default on).
+  const txWithRack = (rackIds, {
+    maxOrder = rackIds.length,
+    skipRestoresPriority = true,
+    skipPickReplacement = true,
+  } = {}) => ({
     $executeRaw: vi.fn(),
     arena: {
-      findUnique: vi.fn().mockResolvedValue({ skipRestoresPriority }),
+      findUnique: vi.fn().mockResolvedValue({ skipRestoresPriority, skipPickReplacement }),
     },
     player: {
       findMany: vi
@@ -1415,19 +1433,26 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
     expect(updates).not.toContainEqual(expect.objectContaining({ where: { id: 'p6' } }));
   });
 
-  it('Off (legacy): moves the on-deck paddle to the back and resets waitRounds', async () => {
+  it('Off (legacy): moves the on-deck paddle to the back, compacts the rack, resets waitRounds', async () => {
     getCurrentUser.mockResolvedValue({ id: 'u-me' });
     prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
+    // Rack of 5: p1 on deck (index 0). Off-mode auto-picks p5 (first waiting)
+    // to fill the freed slot. Unified compaction renumbers positions 1..N.
     const tx = txWithRack(['p1', 'p2', 'p3', 'p4', 'p5'], { maxOrder: 5, skipRestoresPriority: false });
     prisma.$transaction.mockImplementation(async (cb) => cb(tx));
     const result = await actions.skipPlayer(ARENA, 'p1');
     expect(result.notification).toBe('Paddle sent to the back of the rack.');
-    // `skipBoosted: false` is also written so a stale flag from a prior
-    // on-mode skip can't survive into the next mix once the arena toggles off.
-    expect(tx.player.update).toHaveBeenCalledWith({
-      where: { id: 'p1' },
-      data: { queueOrder: 6, waitRounds: 0, skipBoosted: false },
-    });
+    const updates = tx.player.update.mock.calls.map((c) => c[0]);
+    // Final order: p2(1), p3(2), p4(3), p5(4 — promoted from waiting), p1(5 — back).
+    expect(updates).toContainEqual({ where: { id: 'p2' }, data: { queueOrder: 1 } });
+    expect(updates).toContainEqual({ where: { id: 'p3' }, data: { queueOrder: 2 } });
+    expect(updates).toContainEqual({ where: { id: 'p4' }, data: { queueOrder: 3 } });
+    expect(updates).toContainEqual({ where: { id: 'p5' }, data: { queueOrder: 4 } });
+    expect(updates).toContainEqual({ where: { id: 'p1' }, data: { queueOrder: 5 } });
+    // Plus the per-mode mutation on the skipped paddle: waitRounds reset
+    // and `skipBoosted: false` so a flag from a prior on-mode skip can't
+    // survive into the next mix once the arena toggles off.
+    expect(updates).toContainEqual({ where: { id: 'p1' }, data: { waitRounds: 0, skipBoosted: false } });
   });
 
   it('returns NO notification on a no-op skip (paddle already left the rack)', async () => {
@@ -1461,6 +1486,102 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
     const result = await actions.skipPlayer(ARENA, 'p1');
     expect(result.notification).toBe('');
     expect(tx.player.update).not.toHaveBeenCalled();
+  });
+
+  // --- Manager replacement picker (skipPickReplacement) ----------------------
+  // A manager can name which waiting paddle fills the freed on-deck slot.
+  // The picker is gated on (a) manager auth, (b) the arena's
+  // `skipPickReplacement` setting, and (c) the replacement still being in the
+  // waiting pool at lock time. Any failure falls back to auto-pick (first
+  // waiting), EXCEPT a raced replacement which returns a clean error so the
+  // manager can pick again rather than misfiring.
+
+  it('Manager + picker: lands the picked paddle in the freed on-deck slot', async () => {
+    getCurrentUser.mockResolvedValue({ id: 'u-mgr' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-other' });
+    requireArenaManager.mockResolvedValue({ user: { id: 'u-mgr' }, arena: { id: ARENA }, role: ROLES.OWNER });
+    // Rack: A B C D E F G — on-deck = A B C D (indices 0..3). Skip C (index 2),
+    // pick G (index 6).
+    const tx = txWithRack(['A', 'B', 'C', 'D', 'E', 'F', 'G']);
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+    const result = await actions.skipPlayer(ARENA, 'C', 'G');
+    expect(result.error).toBeUndefined();
+    expect(result.notification).toBe('Marked Next in Line — top priority on the next mix.');
+    const updates = tx.player.update.mock.calls.map((c) => c[0]);
+    // Expected order: A(1), B(2), D(3), G(4), C(5), E(6), F(7).
+    expect(updates).toContainEqual({ where: { id: 'D' }, data: { queueOrder: 3 } });
+    expect(updates).toContainEqual({ where: { id: 'G' }, data: { queueOrder: 4 } });
+    expect(updates).toContainEqual({ where: { id: 'C' }, data: { queueOrder: 5 } });
+    expect(updates).toContainEqual({ where: { id: 'E' }, data: { queueOrder: 6 } });
+    expect(updates).toContainEqual({ where: { id: 'F' }, data: { queueOrder: 7 } });
+    expect(updates).toContainEqual({ where: { id: 'C' }, data: { skipBoosted: true } });
+    // A, B kept their positions — no rewrite for them.
+    expect(updates).not.toContainEqual(expect.objectContaining({ where: { id: 'A' } }));
+    expect(updates).not.toContainEqual(expect.objectContaining({ where: { id: 'B' } }));
+  });
+
+  it('Raced replacement (no longer in waiting) surfaces a clean error and no-ops', async () => {
+    getCurrentUser.mockResolvedValue({ id: 'u-mgr' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-other' });
+    requireArenaManager.mockResolvedValue({ user: { id: 'u-mgr' }, arena: { id: ARENA }, role: ROLES.OWNER });
+    // Manager picks "ghost" which isn't in the queue (already pulled to a court).
+    const tx = txWithRack(['A', 'B', 'C', 'D', 'E', 'F']);
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+    const result = await actions.skipPlayer(ARENA, 'C', 'ghost');
+    expect(result.error).toMatch(/no longer available/i);
+    expect(tx.player.update).not.toHaveBeenCalled();
+  });
+
+  it('Replacement that is on-deck (not in waiting) is rejected', async () => {
+    // The picker UI only lists waiting paddles, but a malformed POST could
+    // name an on-deck paddle. Server enforces the waiting constraint.
+    getCurrentUser.mockResolvedValue({ id: 'u-mgr' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-other' });
+    requireArenaManager.mockResolvedValue({ user: { id: 'u-mgr' }, arena: { id: ARENA }, role: ROLES.OWNER });
+    // B is on-deck (index 1) — can't be a replacement.
+    const tx = txWithRack(['A', 'B', 'C', 'D', 'E', 'F']);
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+    const result = await actions.skipPlayer(ARENA, 'C', 'B');
+    expect(result.error).toMatch(/no longer available/i);
+    expect(tx.player.update).not.toHaveBeenCalled();
+  });
+
+  it('Non-manager picker is silently ignored — falls back to auto-pick', async () => {
+    // A non-manager somehow sends a replacementId (UI never offers this, but
+    // a direct POST could). Server falls back to auto-pick rather than
+    // erroring, so the skip still completes.
+    getCurrentUser.mockResolvedValue({ id: 'u-me' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
+    requireArenaManager.mockResolvedValue({ error: ERR });
+    const tx = txWithRack(['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7']);
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+    // p1 is the caller's own paddle (self-skip ok). They try to pick p7,
+    // but since they aren't a manager, the server uses auto-pick (p5, first
+    // waiting) — same as if no replacementId were sent.
+    const result = await actions.skipPlayer(ARENA, 'p1', 'p7');
+    expect(result.error).toBeUndefined();
+    const updates = tx.player.update.mock.calls.map((c) => c[0]);
+    // Auto-pick path: p5 fills slot 4, p1 lands at 5, p7 stays at original 7.
+    expect(updates).toContainEqual({ where: { id: 'p5' }, data: { queueOrder: 4 } });
+    expect(updates).toContainEqual({ where: { id: 'p1' }, data: { queueOrder: 5 } });
+    expect(updates).not.toContainEqual({ where: { id: 'p7' }, data: { queueOrder: 4 } });
+  });
+
+  it('Setting off: manager picker is silently ignored — falls back to auto-pick', async () => {
+    getCurrentUser.mockResolvedValue({ id: 'u-mgr' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-other' });
+    requireArenaManager.mockResolvedValue({ user: { id: 'u-mgr' }, arena: { id: ARENA }, role: ROLES.OWNER });
+    // skipPickReplacement off — even a manager's pick is ignored.
+    const tx = txWithRack(['A', 'B', 'C', 'D', 'E', 'F', 'G'], { skipPickReplacement: false });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+    const result = await actions.skipPlayer(ARENA, 'C', 'G');
+    expect(result.error).toBeUndefined();
+    const updates = tx.player.update.mock.calls.map((c) => c[0]);
+    // Auto-pick: E (first waiting) fills slot 4, C lands at 5.
+    expect(updates).toContainEqual({ where: { id: 'E' }, data: { queueOrder: 4 } });
+    expect(updates).toContainEqual({ where: { id: 'C' }, data: { queueOrder: 5 } });
+    // G stays at its original position 7 — not promoted.
+    expect(updates).not.toContainEqual({ where: { id: 'G' }, data: { queueOrder: 4 } });
   });
 });
 

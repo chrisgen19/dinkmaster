@@ -348,7 +348,12 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
  */
 export async function updateArenaMatchmaking(
   arenaId,
-  { starveThreshold: starveInput, emergencyWait: emergencyInput, skipRestoresPriority: skipPriorityInput } = {},
+  {
+    starveThreshold: starveInput,
+    emergencyWait: emergencyInput,
+    skipRestoresPriority: skipPriorityInput,
+    skipPickReplacement: skipPickInput,
+  } = {},
 ) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error };
@@ -375,10 +380,14 @@ export async function updateArenaMatchmaking(
   if (skipRestoresPriority === null) {
     return { error: 'Restore-priority setting must be true or false.' };
   }
+  const skipPickReplacement = asBool(skipPickInput);
+  if (skipPickReplacement === null) {
+    return { error: 'Pick-replacement setting must be true or false.' };
+  }
 
   const updated = await prisma.arena.updateMany({
     where: { id: arenaId },
-    data: { starveThreshold: starve, emergencyWait: emergency, skipRestoresPriority },
+    data: { starveThreshold: starve, emergencyWait: emergency, skipRestoresPriority, skipPickReplacement },
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
 
@@ -395,7 +404,14 @@ export async function updateArenaMatchmaking(
     });
   }
 
-  return { matchmaking: { starveThreshold: starve, emergencyWait: emergency, skipRestoresPriority } };
+  return {
+    matchmaking: {
+      starveThreshold: starve,
+      emergencyWait: emergency,
+      skipRestoresPriority,
+      skipPickReplacement,
+    },
+  };
 }
 
 /**
@@ -1334,59 +1350,71 @@ export async function checkOutPlayer(arenaId, playerId) {
 
 /**
  * "Skip" a waiting paddle — yield this turn so the next paddle takes the
- * on-deck spot. Two modes, gated by the arena's `skipRestoresPriority`:
+ * on-deck spot. Two orthogonal arena settings shape the behavior:
  *
- *   On (default) — the "I'm stepping away, top priority on return" semantic:
- *     - the paddle moves just PAST on-deck (compacting the queue so a fresh
- *       face fills the freed slot, but they don't go all the way to the
- *       back), and
- *     - `waitRounds` is preserved (no fairness reset), and
- *     - `skipBoosted = true` so the next auto-mix sorts them into the
- *       new "Next in Line" band (above emergency, longest-first), then
- *       clears the flag.
+ *   `skipRestoresPriority` — where the skipped paddle lands:
+ *     On  (default) — moves just PAST on-deck (position ON_DECK_SIZE+1) with
+ *                     `waitRounds` preserved and `skipBoosted=true` so the
+ *                     next auto-mix elevates them into the Next-in-Line band.
+ *     Off           — back of the rack with `waitRounds=0`. Legacy fairness
+ *                     penalty.
  *
- *   Off — legacy "I'll sit this one out, take a hit" semantic:
- *     - the paddle is sent to the back of the rack, and
- *     - `waitRounds` resets to 0 (a voluntary skip isn't starvation).
+ *   `skipPickReplacement` — who fills the freed on-deck slot:
+ *     On  (default) — manager chooses a waiting paddle (via `replacementId`).
+ *     Off           — first waiting auto-fills (the prior behavior). Also the
+ *                     fallback whenever a non-manager skips (self-rest) or no
+ *                     `replacementId` is provided.
  *
  * Either way `gamesPlayed` is untouched (they didn't play).
  *
  * Authorization is hybrid: a signed-in member may skip THEIR OWN paddle
  * (self-service), and a manager (owner/organizer) may skip anyone — including
- * walk-ins, who have no account to self-serve.
+ * walk-ins, who have no account to self-serve. The replacement picker is
+ * manager-only; a `replacementId` from a non-manager is silently ignored
+ * (falls back to auto).
  *
  * No-op (clean) if the paddle is no longer eligible under the queue lock: it
- * left the rack, is no longer on deck, or nobody is waiting behind the on-deck
- * group to take the freed spot.
+ * left the rack, is no longer on deck, nobody is waiting behind the on-deck
+ * group, or — when a `replacementId` is provided — that replacement has
+ * since left the waiting pool (returns a clean error so the manager can pick
+ * again rather than silently misfiring to the wrong paddle).
+ *
+ * @param {string} arenaId
+ * @param {string} playerId - the paddle to skip
+ * @param {string|null} [replacementId] - optional, manager-only: the waiting
+ *   paddle the manager picked to fill the freed slot.
  */
-export async function skipPlayer(arenaId, playerId) {
+export async function skipPlayer(arenaId, playerId, replacementId = null) {
   const user = await getCurrentUser();
   if (!user) return { error: 'Please sign in.', state: await getState(arenaId) };
 
   // Self-service check before the lock: ownership (player.userId === user.id)
-  // is stable, so reading it outside the tx is safe. Anyone else must be a
-  // manager. Walk-ins (userId null) can never be self-skipped.
+  // is stable, so reading it outside the tx is safe. Walk-ins (userId null)
+  // can never be self-skipped. We also resolve manager status up front so a
+  // manager skipping their own paddle still unlocks the picker — `isSelf`
+  // alone used to short-circuit the manager check, which would have hidden
+  // the picker in that case.
   const target = await prisma.player.findFirst({
     where: { id: playerId, arenaId },
     select: { userId: true },
   });
   const isSelf = Boolean(target?.userId && target.userId === user.id);
-  if (!isSelf) {
-    const guard = await requireArenaManager(arenaId);
-    if (guard.error) {
-      return { error: 'You can only rest your own paddle.', state: await getState(arenaId) };
-    }
+  const managerGuard = await requireArenaManager(arenaId);
+  const isManager = !managerGuard.error;
+  if (!isSelf && !isManager) {
+    return { error: 'You can only rest your own paddle.', state: await getState(arenaId) };
   }
 
   let moved = false;
   let restoresPriority = false;
+  let replacementInvalid = false;
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
-    // Read the arena setting inside the tx so a concurrent settings save can't
-    // slip between read and write.
+    // Read both relevant arena settings inside the tx so a concurrent
+    // settings save can't slip between read and write.
     const arena = await tx.arena.findUnique({
       where: { id: arenaId },
-      select: { skipRestoresPriority: true },
+      select: { skipRestoresPriority: true, skipPickReplacement: true },
     });
     if (!arena) return;
     restoresPriority = arena.skipRestoresPriority;
@@ -1404,46 +1432,72 @@ export async function skipPlayer(arenaId, playerId) {
     const index = queued.findIndex((p) => p.id === playerId);
     if (index === -1 || index >= ON_DECK_SIZE || queued.length <= ON_DECK_SIZE) return;
 
-    if (restoresPriority) {
-      // Option (c) — move the skipped paddle to position ON_DECK_SIZE+1 so
-      // a fresh face fills the freed on-deck slot, but they sit just past
-      // on-deck (not all the way at the back). The next auto-mix elevates
-      // them via the next-line band (skipBoosted). Preserve waitRounds.
-      const reordered = [
-        ...queued.slice(0, index),
-        ...queued.slice(index + 1, ON_DECK_SIZE + 1),
-        queued[index],
-        ...queued.slice(ON_DECK_SIZE + 1),
-      ];
-      // Only write the rows whose positions actually change — keeps the write
-      // count to the local window, not the whole rack.
-      for (let i = 0; i < reordered.length; i++) {
-        if (reordered[i].queueOrder !== i + 1) {
-          await tx.player.update({
-            where: { id: reordered[i].id },
-            data: { queueOrder: i + 1 },
-          });
-        }
+    // Manual replacement picking is gated on caller (manager-only), the arena
+    // setting, and a valid waiting target. Anything that fails the gate falls
+    // back to auto-pick (first waiting). A `replacementId` that *was* meant
+    // to be used but raced (replacement left, got pulled to a court) surfaces
+    // a clean error so the manager retries with a fresh list, rather than a
+    // silent misfire to the wrong player.
+    let replacementIdx = ON_DECK_SIZE; // auto: first waiting
+    if (replacementId && isManager && arena.skipPickReplacement) {
+      const idx = queued.findIndex((p) => p.id === replacementId);
+      if (idx === -1 || idx < ON_DECK_SIZE) {
+        replacementInvalid = true;
+        return;
       }
+      replacementIdx = idx;
+    }
+
+    // Unified compaction: assemble the new queue order as a single list, then
+    // write only rows whose position actually changes. Slot layout:
+    //   [on-deck minus skipped]  -> positions 1..ON_DECK_SIZE-1
+    //   [picked replacement]     -> position ON_DECK_SIZE  (the freed slot)
+    //   on-mode:  [skipped]      -> position ON_DECK_SIZE+1 (just past on-deck)
+    //             [rest waiting] -> positions ON_DECK_SIZE+2..N
+    //   off-mode: [rest waiting] -> positions ON_DECK_SIZE+1..N-1
+    //             [skipped]      -> position N (back of rack)
+    const onDeckMinusSkipped = queued.slice(0, ON_DECK_SIZE).filter((_, k) => k !== index);
+    const replacement = queued[replacementIdx];
+    const waitingMinusReplacement = queued
+      .slice(ON_DECK_SIZE)
+      .filter((p) => p.id !== replacement.id);
+    const reordered = restoresPriority
+      ? [...onDeckMinusSkipped, replacement, queued[index], ...waitingMinusReplacement]
+      : [...onDeckMinusSkipped, replacement, ...waitingMinusReplacement, queued[index]];
+
+    for (let i = 0; i < reordered.length; i++) {
+      if (reordered[i].queueOrder !== i + 1) {
+        await tx.player.update({
+          where: { id: reordered[i].id },
+          data: { queueOrder: i + 1 },
+        });
+      }
+    }
+    // Per-mode mutations on the skipped player. Position was already written
+    // above; here we set only the boost flag / wait reset.
+    if (restoresPriority) {
       await tx.player.update({
         where: { id: playerId },
         data: { skipBoosted: true },
       });
     } else {
-      // Legacy mode — back of the rack, reset waitRounds. Also clear any
-      // lingering `skipBoosted` from a prior on-mode skip: without this, a
-      // paddle that was boosted before the arena toggled off would carry the
-      // flag into the next auto-mix and still get next-line elevation,
-      // defeating the off setting.
-      const order = (await maxQueueOrder(tx, arenaId)) + 1;
+      // Off-mode: legacy "back of rack + reset". Clear any lingering boost
+      // from a prior on-mode skip so a paddle can't surf priority across a
+      // mode toggle.
       await tx.player.update({
         where: { id: playerId },
-        data: { queueOrder: order, waitRounds: 0, skipBoosted: false },
+        data: { waitRounds: 0, skipBoosted: false },
       });
     }
     moved = true;
   });
 
+  if (replacementInvalid) {
+    return {
+      error: 'That replacement is no longer available. Pick again.',
+      state: await getState(arenaId),
+    };
+  }
   // Only confirm when something actually moved — a no-op (the paddle already
   // left the rack mid-race) must not show a false-positive success toast.
   const successMsg = restoresPriority
