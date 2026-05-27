@@ -249,7 +249,7 @@ export function PaddleRackStack({
 
                   {/* Avatar */}
                   <span
-                    className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-bold ${
+                    className={`hidden sm:grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-bold ${
                       isOnDeck ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
                     } ${isYou ? 'ring-2 ring-emerald-400' : isOnDeck ? 'ring-1 ring-emerald-200' : 'ring-1 ring-slate-200'}`}
                     aria-hidden="true"
