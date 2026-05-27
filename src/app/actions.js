@@ -1062,10 +1062,10 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
         // null-checked explicitly rather than crashing on destructure.
         const arena = await tx.arena.findUnique({
           where: { id: arenaId },
-          select: { starveThreshold: true, emergencyWait: true },
+          select: { starveThreshold: true, emergencyWait: true, skipRestoresPriority: true },
         });
         if (!arena) throw new Error('ARENA_GONE');
-        const { starveThreshold, emergencyWait } = arena;
+        const { starveThreshold, emergencyWait, skipRestoresPriority } = arena;
 
         // Read the queued set under the lock so a concurrent fillCourt can't make
         // us reassign a position to a player who is now on a court.
@@ -1083,7 +1083,18 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
         const scored = queued
           .map((p) => ({
             id: p.id,
-            band: bandOf(p.waitRounds, { starveThreshold, emergencyWait, skipBoosted: p.skipBoosted }),
+            // Gate the boost on the arena setting under the queue lock: a
+            // stale `Player.skipBoosted` (set during a race with a
+            // toggle-off — skipPlayer reads the old `true` value under its
+            // own lock, then commits after `updateArenaMatchmaking`'s wipe
+            // outside the lock) must not elevate the paddle once the arena
+            // is in legacy mode. Treating the arena setting as
+            // authoritative here is simpler than locking the settings save.
+            band: bandOf(p.waitRounds, {
+              starveThreshold,
+              emergencyWait,
+              skipBoosted: p.skipBoosted && skipRestoresPriority,
+            }),
             waitRounds: p.waitRounds,
             games: p.gamesPlayed + p.gamesOffset,
             rand: Math.random(),
