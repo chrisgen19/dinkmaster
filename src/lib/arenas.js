@@ -54,6 +54,7 @@ export async function getArena(id) {
       timezone: true,
       starveThreshold: true,
       emergencyWait: true,
+      skipRestoresPriority: true,
       targetScore: true,
       autoMixDefault: true,
       leaderboardSize: true,

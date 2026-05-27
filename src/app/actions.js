@@ -1405,11 +1405,15 @@ export async function skipPlayer(arenaId, playerId) {
         data: { skipBoosted: true },
       });
     } else {
-      // Legacy mode — back of the rack, reset waitRounds.
+      // Legacy mode — back of the rack, reset waitRounds. Also clear any
+      // lingering `skipBoosted` from a prior on-mode skip: without this, a
+      // paddle that was boosted before the arena toggled off would carry the
+      // flag into the next auto-mix and still get next-line elevation,
+      // defeating the off setting.
       const order = (await maxQueueOrder(tx, arenaId)) + 1;
       await tx.player.update({
         where: { id: playerId },
-        data: { queueOrder: order, waitRounds: 0 },
+        data: { queueOrder: order, waitRounds: 0, skipBoosted: false },
       });
     }
     moved = true;

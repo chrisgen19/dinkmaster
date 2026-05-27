@@ -1406,9 +1406,11 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
     prisma.$transaction.mockImplementation(async (cb) => cb(tx));
     const result = await actions.skipPlayer(ARENA, 'p1');
     expect(result.notification).toBe('Paddle sent to the back of the rack.');
+    // `skipBoosted: false` is also written so a stale flag from a prior
+    // on-mode skip can't survive into the next mix once the arena toggles off.
     expect(tx.player.update).toHaveBeenCalledWith({
       where: { id: 'p1' },
-      data: { queueOrder: 6, waitRounds: 0 },
+      data: { queueOrder: 6, waitRounds: 0, skipBoosted: false },
     });
   });
 
