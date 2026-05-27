@@ -221,6 +221,10 @@ export default function Arena({
   // null until the manager taps a row.
   const [skipPickerSkippedId, setSkipPickerSkippedId] = useState(null);
   const [selectedReplacementId, setSelectedReplacementId] = useState(null);
+  // Picker-local error (e.g. "replacement no longer available"). Shown INSIDE
+  // the modal — the page-level banner sits behind the modal's backdrop and
+  // would be invisible during the keep-open-and-retry race flow.
+  const [skipPickerError, setSkipPickerError] = useState('');
 
   const [errorMsg, setErrorMsg] = useState('');
   const [activeTab, setActiveTab] = useState('courts');
@@ -346,11 +350,37 @@ export default function Arena({
       if (e.key === 'Escape' && !isPending) {
         setSkipPickerSkippedId(null);
         setSelectedReplacementId(null);
+        setSkipPickerError('');
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [skipPickerSkippedId, isPending]);
+
+  // iOS-safe scroll lock while the skip-picker is open. A plain
+  // `overflow: hidden` doesn't stop rubber-band scrolling in standalone PWA
+  // mode, and this modal has a scrollable waiting list — so pin <body> with
+  // `position: fixed` offset by the current scrollY, then restore on
+  // close/unmount. Mirrors the lockScroll/unlockScroll pattern in
+  // ArenaMobileSheet (arena-mobile-nav.js).
+  useEffect(() => {
+    if (!skipPickerSkippedId) return undefined;
+    const { style } = document.body;
+    const y = window.scrollY;
+    style.position = 'fixed';
+    style.top = `-${y}px`;
+    style.left = '0';
+    style.right = '0';
+    style.width = '100%';
+    return () => {
+      style.position = '';
+      style.top = '';
+      style.left = '';
+      style.right = '';
+      style.width = '';
+      window.scrollTo(0, y);
+    };
+  }, [skipPickerSkippedId]);
 
   // Session-scoped overlay of games / wins / losses. The DB `Player` row holds
   // lifetime counters (incremented on every `endMatch` and surfaced on
@@ -526,13 +556,20 @@ export default function Arena({
     const replacementId = selectedReplacementId;
     startTransition(async () => {
       const result = await skipPlayer(arenaId, skippedId, replacementId);
-      applyResult(result);
-      // Close on success or an unrelated error; keep open if the replacement
-      // raced so the manager can pick again from the now-fresh list.
-      if (!result?.error || !/no longer available/i.test(result.error)) {
-        setSkipPickerSkippedId(null);
+      const raced = result?.error && /no longer available/i.test(result.error);
+      if (raced) {
+        // Keep the picker open so the manager can pick again. Reconcile the
+        // refreshed waiting list (state only — no page banner, which would be
+        // hidden behind the modal) and surface the error INSIDE the modal.
+        if (result.state) applyResult({ state: result.state });
+        setSkipPickerError(result.error);
         setSelectedReplacementId(null);
       } else {
+        // Success, or a non-race error (e.g. invalid target / arena gone) that
+        // warrants closing — let applyResult drive the page banner as usual.
+        applyResult(result);
+        setSkipPickerError('');
+        setSkipPickerSkippedId(null);
         setSelectedReplacementId(null);
       }
     });
@@ -542,6 +579,7 @@ export default function Arena({
     if (isPending) return; // don't dismiss mid-flight
     setSkipPickerSkippedId(null);
     setSelectedReplacementId(null);
+    setSkipPickerError('');
   };
 
   const handleTriggerScoreModal = (court) => {
@@ -1207,7 +1245,10 @@ export default function Arena({
                     <li key={p.id}>
                       <button
                         type="button"
-                        onClick={() => setSelectedReplacementId(p.id)}
+                        onClick={() => {
+                          setSelectedReplacementId(p.id);
+                          setSkipPickerError('');
+                        }}
                         disabled={isPending}
                         className={`w-full flex items-center gap-3 px-5 py-3 text-left transition disabled:opacity-50 ${
                           selected ? 'bg-emerald-50' : 'hover:bg-slate-50'
@@ -1245,6 +1286,14 @@ export default function Arena({
                   );
                 })}
               </ul>
+              {skipPickerError && (
+                <p
+                  role="alert"
+                  className="mx-5 mt-3 rounded-lg border border-amber-200/70 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700"
+                >
+                  {skipPickerError}
+                </p>
+              )}
               <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/60 flex items-center justify-end gap-2.5">
                 <button
                   type="button"
