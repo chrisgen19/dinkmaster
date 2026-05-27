@@ -366,7 +366,7 @@ export function PaddleRackStack({
                               aria-label={`Skip ${name} to the back of the rack`}
                             >
                               <IconArrowDownToLine className="h-3.5 w-3.5" />
-                              <span>{isYou ? 'Rest' : 'Skip to back'}</span>
+                              <span>{isYou ? 'Rest' : 'Skip'}</span>
                             </button>
                           )}
                           {canManage && (
