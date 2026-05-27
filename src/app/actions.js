@@ -128,6 +128,7 @@ async function activateArenaPlayer(tx, arenaId, user) {
       leftAt: null,
       queueOrder: order,
       waitRounds: 0,
+      skipBoosted: false,
       // Keep lifetime stats, but reset the effective ordering metric to the
       // group average so a returner rotates as a peer (offset may go negative).
       gamesOffset: avg - existing.gamesPlayed,
@@ -155,7 +156,7 @@ async function removeArenaMember(tx, arenaId, userId) {
     // kept so the user's record survives and a rejoin reclaims it.
     await tx.player.update({
       where: { id: player.id },
-      data: { leftAt: new Date(), queueOrder: null, waitRounds: 0 },
+      data: { leftAt: new Date(), queueOrder: null, waitRounds: 0, skipBoosted: false },
     });
   }
   await tx.arenaMembership.deleteMany({
@@ -347,7 +348,7 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
  */
 export async function updateArenaMatchmaking(
   arenaId,
-  { starveThreshold: starveInput, emergencyWait: emergencyInput } = {},
+  { starveThreshold: starveInput, emergencyWait: emergencyInput, skipRestoresPriority: skipPriorityInput } = {},
 ) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error };
@@ -365,12 +366,22 @@ export async function updateArenaMatchmaking(
     return { error: 'Emergency wait must be at least the starve threshold.' };
   }
 
+  // Coerce HTML form values ("true"/"false") strictly; reject anything else
+  // so a malformed POST can't silently flip the setting. Same pattern as the
+  // booleans in `updateArenaMatchDefaults`.
+  const asBool = (v) =>
+    v === true || v === 'true' ? true : v === false || v === 'false' ? false : null;
+  const skipRestoresPriority = asBool(skipPriorityInput);
+  if (skipRestoresPriority === null) {
+    return { error: 'Restore-priority setting must be true or false.' };
+  }
+
   const updated = await prisma.arena.updateMany({
     where: { id: arenaId },
-    data: { starveThreshold: starve, emergencyWait: emergency },
+    data: { starveThreshold: starve, emergencyWait: emergency, skipRestoresPriority },
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
-  return { matchmaking: { starveThreshold: starve, emergencyWait: emergency } };
+  return { matchmaking: { starveThreshold: starve, emergencyWait: emergency, skipRestoresPriority } };
 }
 
 /**
@@ -694,9 +705,11 @@ export async function fillCourt(arenaId, courtId) {
       );
 
       // Remove exactly these four from the rack; bail if any slipped away meanwhile.
+      // Clear `skipBoosted` too — once a paddle is actually playing, the
+      // "Next in Line" stamp has served its purpose.
       const dequeued = await tx.player.updateMany({
         where: { id: { in: [p0, p1, p2, p3] }, queueOrder: { not: null } },
-        data: { gamesPlayed: { increment: 1 }, queueOrder: null, waitRounds: 0 },
+        data: { gamesPlayed: { increment: 1 }, queueOrder: null, waitRounds: 0, skipBoosted: false },
       });
       if (dequeued.count !== 4) throw new Error('QUEUE_CHANGED');
 
@@ -1044,31 +1057,40 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
         // us reassign a position to a player who is now on a court.
         const queued = await tx.player.findMany({
           where: { arenaId, leftAt: null, queueOrder: { not: null } },
-          select: { id: true, gamesPlayed: true, gamesOffset: true, waitRounds: true },
+          select: { id: true, gamesPlayed: true, gamesOffset: true, waitRounds: true, skipBoosted: true },
         });
         if (queued.length === 0) return;
-        // Sort lexicographically: band first (emergency > protected > fresh),
-        // then in the emergency band strictly by wait, then by FEWEST games
-        // played-since-joining (gamesPlayed + gamesOffset, so a player who has
-        // played less goes ahead but a late joiner can't hog), then a random
-        // tie-break for variety among equals.
+        // Sort lexicographically: band first (next-line > emergency > protected
+        // > fresh), then in the strict-wait bands (next-line, emergency) by
+        // longest-waiting first, then by FEWEST games played-since-joining
+        // (gamesPlayed + gamesOffset, so a player who has played less goes
+        // ahead but a late joiner can't hog), then a random tie-break for
+        // variety among equals.
         const scored = queued
           .map((p) => ({
             id: p.id,
-            band: bandOf(p.waitRounds, { starveThreshold, emergencyWait }),
+            band: bandOf(p.waitRounds, { starveThreshold, emergencyWait, skipBoosted: p.skipBoosted }),
             waitRounds: p.waitRounds,
             games: p.gamesPlayed + p.gamesOffset,
             rand: Math.random(),
           }))
           .sort((a, b) => {
-            if (a.band !== b.band) return b.band - a.band; // emergency > protected > fresh
-            if (a.band === 2 && a.waitRounds !== b.waitRounds) return b.waitRounds - a.waitRounds; // strict longest-first
+            if (a.band !== b.band) return b.band - a.band; // next-line > emergency > protected > fresh
+            // Both next-line and emergency bands are strictly longest-first.
+            if ((a.band === 3 || a.band === 2) && a.waitRounds !== b.waitRounds) return b.waitRounds - a.waitRounds;
             if (a.games !== b.games) return a.games - b.games; // fewest games-since-joining first
             return a.rand - b.rand; // random tie-break among equals
           });
         for (let i = 0; i < scored.length; i++) {
           await tx.player.update({ where: { id: scored[i].id }, data: { queueOrder: i + 1 } });
         }
+        // One-shot semantic: the next-line boost is consumed by the mix that
+        // elevated them. Clear the flag for anyone in the rack so a paddle
+        // can't surf the boost across multiple mixes.
+        await tx.player.updateMany({
+          where: { arenaId, leftAt: null, queueOrder: { not: null }, skipBoosted: true },
+          data: { skipBoosted: false },
+        });
         mixed = true;
       });
     } catch (err) {
@@ -1162,7 +1184,7 @@ export async function resetArena(arenaId) {
     // no longer exist. queueOrder is assigned per active player below.
     await tx.player.updateMany({
       where: { arenaId },
-      data: { gamesPlayed: 0, wins: 0, losses: 0, waitRounds: 0, gamesOffset: 0, rating: RATING_BASELINE },
+      data: { gamesPlayed: 0, wins: 0, losses: 0, waitRounds: 0, gamesOffset: 0, rating: RATING_BASELINE, skipBoosted: false },
     });
 
     // Send every active player back to the rack. Departed players (leftAt
@@ -1215,7 +1237,7 @@ export async function prepareNextSession(arenaId) {
     await tx.partnership.deleteMany({ where: { arenaId } });
     await tx.player.updateMany({
       where: { arenaId, leftAt: null },
-      data: { queueOrder: null, waitRounds: 0 },
+      data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
     });
     const updated = await tx.arena.updateMany({
       where: { id: arenaId },
@@ -1258,7 +1280,7 @@ export async function checkInPlayer(arenaId, playerId) {
     const order = (await maxQueueOrder(tx, arenaId)) + 1;
     await tx.player.update({
       where: { id: player.id },
-      data: { queueOrder: order, waitRounds: 0, gamesOffset: avg - player.gamesPlayed },
+      data: { queueOrder: order, waitRounds: 0, skipBoosted: false, gamesOffset: avg - player.gamesPlayed },
     });
   });
 
@@ -1278,7 +1300,7 @@ export async function checkOutPlayer(arenaId, playerId) {
     await lockQueue(tx, arenaId);
     await tx.player.updateMany({
       where: { id: playerId, arenaId, leftAt: null, queueOrder: { not: null } },
-      data: { queueOrder: null, waitRounds: 0 },
+      data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
     });
   });
 
@@ -1286,16 +1308,27 @@ export async function checkOutPlayer(arenaId, playerId) {
 }
 
 /**
- * "Skip" a waiting paddle to the back of the rack — the player keeps their
- * place in the rotation but yields this turn, so the next paddle takes their
- * on-deck spot. Used for "I'll sit this one out" without leaving the rack.
+ * "Skip" a waiting paddle — yield this turn so the next paddle takes the
+ * on-deck spot. Two modes, gated by the arena's `skipRestoresPriority`:
+ *
+ *   On (default) — the "I'm stepping away, top priority on return" semantic:
+ *     - the paddle moves just PAST on-deck (compacting the queue so a fresh
+ *       face fills the freed slot, but they don't go all the way to the
+ *       back), and
+ *     - `waitRounds` is preserved (no fairness reset), and
+ *     - `skipBoosted = true` so the next auto-mix sorts them into the
+ *       new "Next in Line" band (above emergency, longest-first), then
+ *       clears the flag.
+ *
+ *   Off — legacy "I'll sit this one out, take a hit" semantic:
+ *     - the paddle is sent to the back of the rack, and
+ *     - `waitRounds` resets to 0 (a voluntary skip isn't starvation).
+ *
+ * Either way `gamesPlayed` is untouched (they didn't play).
  *
  * Authorization is hybrid: a signed-in member may skip THEIR OWN paddle
  * (self-service), and a manager (owner/organizer) may skip anyone — including
- * walk-ins, who have no account to self-serve. `waitRounds` resets to 0: a
- * voluntary skip isn't starvation, so it must not earn a priority badge.
- * `gamesPlayed` is untouched (they didn't play); the player slots in at the
- * back as a peer on their existing count.
+ * walk-ins, who have no account to self-serve.
  *
  * No-op (clean) if the paddle is no longer eligible under the queue lock: it
  * left the rack, is no longer on deck, or nobody is waiting behind the on-deck
@@ -1321,32 +1354,74 @@ export async function skipPlayer(arenaId, playerId) {
   }
 
   let moved = false;
+  let restoresPriority = false;
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
+    // Read the arena setting inside the tx so a concurrent settings save can't
+    // slip between read and write.
+    const arena = await tx.arena.findUnique({
+      where: { id: arenaId },
+      select: { skipRestoresPriority: true },
+    });
+    if (!arena) return;
+    restoresPriority = arena.skipRestoresPriority;
+
     // Enforce the same eligibility the UI gates on (deriveRackRow.canSkip),
     // server-authoritatively: skip is only valid for an ON-DECK paddle (top
     // ON_DECK_SIZE of the rack) AND only when someone is waiting behind to
     // take the freed spot. Re-checked under the lock so a direct POST can't
-    // skip an off-deck paddle to reset waitRounds and dodge the fairness rules.
+    // skip an off-deck paddle and dodge the fairness rules.
     const queued = await tx.player.findMany({
       where: { arenaId, leftAt: null, queueOrder: { not: null } },
       orderBy: { queueOrder: 'asc' },
-      select: { id: true },
+      select: { id: true, queueOrder: true },
     });
     const index = queued.findIndex((p) => p.id === playerId);
     if (index === -1 || index >= ON_DECK_SIZE || queued.length <= ON_DECK_SIZE) return;
-    const order = (await maxQueueOrder(tx, arenaId)) + 1;
-    await tx.player.update({
-      where: { id: playerId },
-      data: { queueOrder: order, waitRounds: 0 },
-    });
+
+    if (restoresPriority) {
+      // Option (c) — move the skipped paddle to position ON_DECK_SIZE+1 so
+      // a fresh face fills the freed on-deck slot, but they sit just past
+      // on-deck (not all the way at the back). The next auto-mix elevates
+      // them via the next-line band (skipBoosted). Preserve waitRounds.
+      const reordered = [
+        ...queued.slice(0, index),
+        ...queued.slice(index + 1, ON_DECK_SIZE + 1),
+        queued[index],
+        ...queued.slice(ON_DECK_SIZE + 1),
+      ];
+      // Only write the rows whose positions actually change — keeps the write
+      // count to the local window, not the whole rack.
+      for (let i = 0; i < reordered.length; i++) {
+        if (reordered[i].queueOrder !== i + 1) {
+          await tx.player.update({
+            where: { id: reordered[i].id },
+            data: { queueOrder: i + 1 },
+          });
+        }
+      }
+      await tx.player.update({
+        where: { id: playerId },
+        data: { skipBoosted: true },
+      });
+    } else {
+      // Legacy mode — back of the rack, reset waitRounds.
+      const order = (await maxQueueOrder(tx, arenaId)) + 1;
+      await tx.player.update({
+        where: { id: playerId },
+        data: { queueOrder: order, waitRounds: 0 },
+      });
+    }
     moved = true;
   });
 
   // Only confirm when something actually moved — a no-op (the paddle already
   // left the rack mid-race) must not show a false-positive success toast.
+  const successMsg = restoresPriority
+    ? 'Marked Next in Line — top priority on the next mix.'
+    : 'Paddle sent to the back of the rack.';
   return {
-    notification: moved ? 'Paddle sent to the back of the rack.' : '',
+    notification: moved ? successMsg : '',
     state: await getState(arenaId),
   };
 }

@@ -7,6 +7,7 @@ import {
   Clock,
   Layers,
   Shuffle,
+  Sparkles,
   TriangleAlert,
   UserPlus,
   Users,
@@ -45,6 +46,7 @@ function GroupLabel({ children, accent = false, className = '' }) {
  * @param {boolean} props.isPending - disable actions during a server write
  * @param {number} props.starveThreshold - wait rounds before the amber wait badge
  * @param {number} props.emergencyWait - wait rounds before the red wait badge
+ * @param {boolean} props.skipRestoresPriority - when true, Skip = "back soon, top priority on return" (drives the button label/tooltip)
  * @param {string} props.errorMsg - surfaced inline above the list
  */
 export function PaddleRackStack({
@@ -61,6 +63,7 @@ export function PaddleRackStack({
   isPending,
   starveThreshold,
   emergencyWait,
+  skipRestoresPriority = true,
   errorMsg,
 }) {
   // Which row's action panel is open. Only one open at a time; `null` = all collapsed.
@@ -183,7 +186,8 @@ export function PaddleRackStack({
               index,
               { viewerUserId, starveThreshold, emergencyWait, canManage, queueLength: queue.length },
             );
-            const starving = badge !== 'none';
+            const nextLine = badge === 'next-line';
+            const starving = badge !== 'none' && !nextLine;
             const emergency = badge === 'emergency';
             const hasActions = canSkip || canManage;
             const isExpanded = expandedPlayerId === player.id;
@@ -251,6 +255,15 @@ export function PaddleRackStack({
                             Walk-in
                           </span>
                         )}
+                        {nextLine && (
+                          <span
+                            className="inline-flex shrink-0 items-center gap-0.5 rounded-md bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-700"
+                            title="Next in Line — top priority on the next auto-mix (returning from a skip)"
+                          >
+                            <Sparkles className="h-3 w-3" />
+                            Next
+                          </span>
+                        )}
                         {starving && (
                           <span
                             className={`inline-flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
@@ -308,8 +321,20 @@ export function PaddleRackStack({
                           }}
                           disabled={isPending}
                           className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
-                          title={isYou ? 'Take a rest — send your paddle to the back of the rack' : 'Skip — send to the back of the rack'}
-                          aria-label={`Skip ${name} to the back of the rack`}
+                          title={
+                            skipRestoresPriority
+                              ? isYou
+                                ? 'Step away — you keep top priority on the next mix'
+                                : 'Skip — they step away, top priority on the next mix'
+                              : isYou
+                                ? 'Take a rest — send your paddle to the back of the rack'
+                                : 'Skip — send to the back of the rack'
+                          }
+                          aria-label={
+                            skipRestoresPriority
+                              ? `Step ${name} away — top priority on the next mix`
+                              : `Skip ${name} to the back of the rack`
+                          }
                         >
                           <ArrowDownToLine className="h-3.5 w-3.5" />
                           <span>{isYou ? 'Rest' : 'Skip'}</span>

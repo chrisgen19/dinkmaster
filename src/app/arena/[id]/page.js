@@ -61,6 +61,7 @@ export default async function ArenaPage({ params }) {
       matchmaking={{
         starveThreshold: arena.starveThreshold,
         emergencyWait: arena.emergencyWait,
+        skipRestoresPriority: arena.skipRestoresPriority,
       }}
       matchDefaults={{
         targetScore: arena.targetScore,

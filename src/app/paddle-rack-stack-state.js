@@ -19,20 +19,23 @@ export const initials = (p) => `${p?.firstName?.[0] ?? ''}${p?.lastName?.[0] ?? 
 /**
  * Derive a rack row's presentation flags from the player and its queue index.
  *
- * `badge` is the wait-starvation severity, shown only once a player has waited
- * long enough: 'emergency' (red) at `emergencyWait`, else 'warn' (amber) at
- * `starveThreshold`, else 'none'. `emergencyWait >= starveThreshold` in
- * practice, so emergency is checked first.
+ * `badge` is the priority severity, in descending order:
+ *   'next-line' — the paddle was Skip'd while the arena's
+ *      `skipRestoresPriority` was on; they jump to the top of the next mix.
+ *      Wins over the wait-based bands so it stays visible while they're back.
+ *   'emergency' (red) at `emergencyWait` rounds of waiting.
+ *   'warn' (amber) at `starveThreshold` rounds of waiting.
+ *   'none' otherwise.
  *
- * `canSkip` gates the "skip to back of rack" action: only on-deck paddles can
- * skip (that's the urgent case), only when someone is actually waiting behind
- * the on-deck group (`queueLength > ON_DECK_SIZE`), and only for a manager or
- * the viewer's own paddle (self-service). The server re-authorizes regardless.
+ * `canSkip` gates the Skip action: only on-deck paddles can skip (that's the
+ * urgent case), only when someone is actually waiting behind the on-deck group
+ * (`queueLength > ON_DECK_SIZE`), and only for a manager or the viewer's own
+ * paddle (self-service). The server re-authorizes regardless.
  *
- * @param {{userId?:string|null, firstName?:string, lastName?:string|null, waitRounds?:number}} player
+ * @param {{userId?:string|null, firstName?:string, lastName?:string|null, waitRounds?:number, skipBoosted?:boolean}} player
  * @param {number} index - 0-based position in the queue (0 = front of rack)
  * @param {{viewerUserId:string|null, starveThreshold:number, emergencyWait:number, canManage?:boolean, queueLength?:number}} opts
- * @returns {{rank:number, isOnDeck:boolean, isYou:boolean, isWalkIn:boolean, badge:'none'|'warn'|'emergency', waitRounds:number, name:string, initials:string, canSkip:boolean}}
+ * @returns {{rank:number, isOnDeck:boolean, isYou:boolean, isWalkIn:boolean, badge:'none'|'warn'|'emergency'|'next-line', waitRounds:number, name:string, initials:string, canSkip:boolean}}
  */
 export function deriveRackRow(
   player,
@@ -40,8 +43,10 @@ export function deriveRackRow(
   { viewerUserId, starveThreshold, emergencyWait, canManage = false, queueLength = 0 },
 ) {
   const waitRounds = player?.waitRounds ?? 0;
+  const skipBoosted = Boolean(player?.skipBoosted);
   let badge = 'none';
-  if (waitRounds >= emergencyWait) badge = 'emergency';
+  if (skipBoosted) badge = 'next-line';
+  else if (waitRounds >= emergencyWait) badge = 'emergency';
   else if (waitRounds >= starveThreshold) badge = 'warn';
 
   const isOnDeck = index < ON_DECK_SIZE;

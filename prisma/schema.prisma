@@ -41,6 +41,13 @@ model Arena {
   starveThreshold Int @default(2)
   emergencyWait   Int @default(4)
 
+  // When on, the Skip action promotes the paddle to a "Next in Line" band
+  // (above emergency) so they jump to the top on the next auto-mix, instead
+  // of going to the back of the rack with `waitRounds` reset to 0. Off
+  // preserves the original behaviour (de-prioritize on skip). See
+  // `skipPlayer` in `src/app/actions.js`.
+  skipRestoresPriority Boolean @default(true)
+
   // Per-arena match + leaderboard defaults (Phase 9b). Defaults preserve the
   // prior hardcoded behaviour, so existing arenas play exactly as before.
   // `targetScore` seeds the score-modal inputs; `autoMixDefault` seeds the
@@ -161,6 +168,10 @@ model Player {
   queueOrder  Int? // null = not in queue; ascending = rack order
   waitRounds  Int      @default(0) // consecutive rounds spent waiting (fairness)
   gamesOffset Int      @default(0) // games credited at join (group avg) so latecomers slot in as peers, not catch-up
+  // When true, a Skip moved this paddle off-deck while signaling "back soon —
+  // top priority on return". The next auto-mix sorts them above the emergency
+  // band, then clears the flag. See `Arena.skipRestoresPriority`.
+  skipBoosted Boolean  @default(false)
   rating      Int      @default(1000) // Elo skill rating (Phase 6); displayed DUPR-style. Per-arena.
   leftAt      DateTime? // null = active; set = the member left/was removed (row kept for history)
 

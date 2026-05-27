@@ -544,6 +544,9 @@ function MatchmakingSection({ arenaId, matchmaking }) {
   // immediately coerce to 0 and trigger a validation error. Parsing happens on save.
   const [starve, setStarve] = useState(String(matchmaking.starveThreshold));
   const [emergency, setEmergency] = useState(String(matchmaking.emergencyWait));
+  const [skipRestoresPriority, setSkipRestoresPriority] = useState(
+    matchmaking.skipRestoresPriority ?? true,
+  );
   const [error, setError] = useState('');
   const [saved, flashSaved, clearSaved] = useSavedFlag();
   const [isPending, startTransition] = useTransition();
@@ -565,7 +568,11 @@ function MatchmakingSection({ arenaId, matchmaking }) {
     setError('');
     startTransition(async () => {
       try {
-        const result = await updateArenaMatchmaking(arenaId, { starveThreshold: starveNum, emergencyWait: emergencyNum });
+        const result = await updateArenaMatchmaking(arenaId, {
+          starveThreshold: starveNum,
+          emergencyWait: emergencyNum,
+          skipRestoresPriority,
+        });
         if (result?.error) return setError(result.error);
         flashSaved();
         router.refresh();
@@ -617,6 +624,22 @@ function MatchmakingSection({ arenaId, matchmaking }) {
             Heads up: with both thresholds equal, the protected band is skipped — once a player&apos;s wait hits {starve}, they go straight to emergency (strict longest-first).
           </p>
         )}
+
+        <label className="flex items-start gap-3 cursor-pointer pt-2">
+          <input
+            type="checkbox"
+            checked={skipRestoresPriority}
+            onChange={(e) => setSkipRestoresPriority(e.target.checked)}
+            disabled={isPending}
+            className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4"
+          />
+          <span>
+            <span className="block text-sm font-bold text-slate-800">Restore priority on Skip</span>
+            <span className="block text-xs text-slate-400 mt-0.5">
+              When on, a Skip&apos;d paddle is stamped as “Next in Line” — they step off-deck so a fresh face fills the slot, then jump to the top of the next auto-mix (above the emergency band). When off, Skip sends them to the back of the rack and resets their wait count.
+            </span>
+          </span>
+        </label>
       </div>
       <Status error={error} saved={saved} />
       <div className="mt-5">

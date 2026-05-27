@@ -38,4 +38,18 @@ describe('bandOf', () => {
     expect(bandOf(3, collapsed)).toBe(2);
     expect(bandOf(4, collapsed)).toBe(2);
   });
+
+  it('returns next-line (3) when skipBoosted, regardless of wait', () => {
+    // skipBoosted wins over every wait-based band — even fresh.
+    expect(bandOf(0, { ...DEFAULTS, skipBoosted: true })).toBe(3);
+    // And it wins over an emergency wait too — a returning skipper sorts
+    // above genuine emergency-band players (until the mix consumes the flag).
+    expect(bandOf(99, { ...DEFAULTS, skipBoosted: true })).toBe(3);
+  });
+
+  it('skipBoosted=false is a no-op vs the wait-based bands', () => {
+    expect(bandOf(0, { ...DEFAULTS, skipBoosted: false })).toBe(0);
+    expect(bandOf(3, { ...DEFAULTS, skipBoosted: false })).toBe(1);
+    expect(bandOf(4, { ...DEFAULTS, skipBoosted: false })).toBe(2);
+  });
 });

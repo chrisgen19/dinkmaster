@@ -85,6 +85,12 @@ describe('deriveRackRow — wait badge severity', () => {
     expect(deriveRackRow({ userId: 'u-1' }, 0, opts).waitRounds).toBe(0);
     expect(deriveRackRow({ userId: 'u-1' }, 0, opts).badge).toBe('none');
   });
+  it('skipBoosted wins over every wait-based badge', () => {
+    // Even at zero wait, a returning skipper shows next-line.
+    expect(deriveRackRow(player({ waitRounds: 0, skipBoosted: true }), 0, opts).badge).toBe('next-line');
+    // And the wait-based bands are suppressed in favor of next-line.
+    expect(deriveRackRow(player({ waitRounds: 9, skipBoosted: true }), 0, opts).badge).toBe('next-line');
+  });
 });
 
 describe('deriveRackRow — canSkip gating', () => {
