@@ -94,10 +94,10 @@ export function normalizeUserProfile(data, { requireNames = true } = {}) {
 
 /**
  * Best-effort first/last name for an OAuth sign-up. Providers expose names
- * differently — Google sends `given_name`/`family_name`, Facebook sends
- * `first_name`/`last_name` (when requested), and both always send a combined
+ * differently — Google sends `given_name`/`family_name` plus a combined
  * `name`. Prefer the structured parts and backfill whichever is missing by
  * splitting the full `name` (first token → first name, the rest → last name).
+ * Kept generic (not Google-specific) so a future provider can reuse it.
  *
  * Always returns trimmed strings. A mononymous profile (single token, no
  * structured last name) yields an empty `lastName`, which the social path

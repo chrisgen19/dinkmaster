@@ -7,10 +7,10 @@ import { normalizeUserProfile, deriveNameParts } from '@/lib/user-profile';
 
 /**
  * Social OAuth providers, registered only when their credentials are present
- * so a missing secret can't break `betterAuth()` init in any environment. The
- * OAuth profile carries names under provider-specific keys, so each provider
- * maps them onto our `firstName`/`lastName` columns via `deriveNameParts`
- * (the social counterpart to the register form). Callback URL is Better Auth's
+ * so a missing secret can't break `betterAuth()` init in any environment.
+ * Google's profile carries names under `given_name`/`family_name`; we map
+ * them onto our `firstName`/`lastName` columns via `deriveNameParts` (the
+ * social counterpart to the register form). Callback URL is Better Auth's
  * standard `${BETTER_AUTH_URL}/api/auth/callback/<provider>`.
  */
 const socialProviders = {};
@@ -26,20 +26,6 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
       }),
   };
 }
-if (process.env.FACEBOOK_CLIENT_ID && process.env.FACEBOOK_CLIENT_SECRET) {
-  socialProviders.facebook = {
-    clientId: process.env.FACEBOOK_CLIENT_ID,
-    clientSecret: process.env.FACEBOOK_CLIENT_SECRET,
-    // Graph defaults to id/name/email/picture — ask for the structured name parts too.
-    fields: ['first_name', 'last_name'],
-    mapProfileToUser: (profile) =>
-      deriveNameParts({
-        firstName: profile.first_name,
-        lastName: profile.last_name,
-        name: profile.name,
-      }),
-  };
-}
 
 /**
  * Provider ids that are actually configured (both env vars present). The
@@ -50,8 +36,8 @@ if (process.env.FACEBOOK_CLIENT_ID && process.env.FACEBOOK_CLIENT_SECRET) {
 export const enabledSocialProviders = Object.keys(socialProviders);
 
 /**
- * Better Auth server instance. Email + password and social (Google/Facebook)
- * auth backed by the existing PostgreSQL database via the Prisma adapter.
+ * Better Auth server instance. Email + password and Google social auth backed
+ * by the existing PostgreSQL database via the Prisma adapter.
  *
  * Reads BETTER_AUTH_SECRET and BETTER_AUTH_URL from the environment.
  * `nextCookies()` must be the last plugin so session cookies are set on
@@ -61,21 +47,20 @@ export const auth = betterAuth({
   database: prismaAdapter(prisma, { provider: 'postgresql' }),
   emailAndPassword: { enabled: true },
   socialProviders,
-  // Link a social sign-in to an existing account with the same email.
+  // Link a Google sign-in to an existing account with the same email.
   // `requireLocalEmailVerified: true` is set explicitly (it's also Better
   // Auth's default): linking proceeds only when the LOCAL account's email is
-  // verified. This gate is independent of `trustedProviders` and is what
-  // prevents account-takeover — an attacker who pre-registers an unverified
-  // password account at a victim's address can't have the victim's OAuth
-  // identity linked into it. `trustedProviders` only relaxes the *provider*-
-  // side check and is required for Facebook, which reports emailVerified=false.
+  // verified, which prevents account-takeover — an attacker who pre-registers
+  // an unverified password account at a victim's address can't have the
+  // victim's OAuth identity linked into it. Google is in `trustedProviders`
+  // because it returns `email_verified` (verified on Google's side).
   // NOTE: this app doesn't verify emails, so an existing password user
-  // (emailVerified=false) won't be auto-linked on a same-email social sign-in
+  // (emailVerified=false) won't be auto-linked on a same-email Google sign-in
   // — they should keep using their password (see docs/social-auth-setup.md).
   account: {
     accountLinking: {
       enabled: true,
-      trustedProviders: ['google', 'facebook'],
+      trustedProviders: ['google'],
       requireLocalEmailVerified: true,
     },
   },

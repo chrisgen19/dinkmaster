@@ -2,10 +2,13 @@
  * Supported social providers, in display order. Pure data (no React) so the
  * selection logic below stays unit-testable in the node test environment;
  * `auth-shell.js` maps each `id` to its brand icon at render time.
+ *
+ * Adding a provider: append it here, register it in `@/lib/auth`'s
+ * `socialProviders`, and add an entry to `SOCIAL_PROVIDER_ICONS` in
+ * `src/app/auth-shell.js`.
  */
 export const SOCIAL_PROVIDERS = [
   { id: 'google', label: 'Continue with Google' },
-  { id: 'facebook', label: 'Continue with Facebook' },
 ];
 
 /**

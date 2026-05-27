@@ -25,9 +25,9 @@ export default function PrivacyPage() {
             address, birthday, and gender if you choose to add them.
           </li>
           <li>
-            <strong>Social login data</strong> — if you sign in with Google or Facebook, we
-            receive your name, email address, and profile picture from that provider to create
-            or match your account. We do not receive your social account password.
+            <strong>Social login data</strong> — if you sign in with Google, we receive your
+            name, email address, and profile picture from Google to create or match your
+            account. We do not receive your Google password.
           </li>
           <li>
             <strong>Gameplay data</strong> — the arenas you join, matches you play, scores,
@@ -61,7 +61,7 @@ export default function PrivacyPage() {
       <LegalSection heading="Third-party services">
         <p>We rely on a small number of providers to run DinkMaster:</p>
         <ul className="list-disc space-y-1.5 pl-5">
-          <li><strong>Google</strong> and <strong>Facebook</strong> — only if you choose social sign-in.</li>
+          <li><strong>Google</strong> — only if you choose to sign in with Google.</li>
           <li><strong>Hosting &amp; database</strong> — to store your data and serve the app.</li>
         </ul>
         <p>These providers process data on our behalf and under their own privacy terms.</p>
