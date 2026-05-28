@@ -55,9 +55,22 @@ export function validateLineup(team1Ids, team2Ids) {
 export function diffLineup(current, next) {
   const currentIds = new Set([...current.team1, ...current.team2]);
   const nextIds = new Set([...next.team1, ...next.team2]);
+  // Which team number each id sits on, so a pure side swap (Team A ↔ Team B
+  // with the same partnerships) still counts as a change — the team number
+  // drives score1/score2 attribution in the score modal.
+  const teamOf = (lineup) =>
+    new Map([...lineup.team1.map((id) => [id, 1]), ...lineup.team2.map((id) => [id, 2])]);
+  const currentTeam = teamOf(current);
+  const nextTeam = teamOf(next);
 
   const added = [...nextIds].filter((id) => !currentIds.has(id));
   const removed = [...currentIds].filter((id) => !nextIds.has(id));
+
+  // A retained player whose team number flipped (without their partnership
+  // changing) — e.g. both teams swapped wholesale.
+  const teamSideChanged = [...nextIds].some(
+    (id) => currentIds.has(id) && currentTeam.get(id) !== nextTeam.get(id),
+  );
 
   // Build pair maps keyed canonically so a swap (same two players, opposite
   // order) is recognised as unchanged.
@@ -78,7 +91,11 @@ export function diffLineup(current, next) {
     removed,
     pairsToBump,
     pairsToUnbump,
-    changed: added.length > 0 || removed.length > 0 || pairsToBump.length > 0,
+    changed:
+      added.length > 0 ||
+      removed.length > 0 ||
+      pairsToBump.length > 0 ||
+      teamSideChanged,
   };
 }
 

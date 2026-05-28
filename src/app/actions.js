@@ -1015,6 +1015,11 @@ export async function editCourtLineup(arenaId, courtId, team1Ids, team2Ids) {
         team1: slots.filter((s) => s.team === 1).map((s) => s.playerId),
         team2: slots.filter((s) => s.team === 2).map((s) => s.playerId),
       };
+      // Guard against a malformed split (e.g. 3/1) slipping past the count check —
+      // diffLineup's pair logic assumes exactly two players per team.
+      if (current.team1.length !== 2 || current.team2.length !== 2) {
+        throw new Error('INVALID_COURT');
+      }
       const next = { team1: team1Ids, team2: team2Ids };
       const diff = diffLineup(current, next);
       if (!diff.changed) return; // nothing to do

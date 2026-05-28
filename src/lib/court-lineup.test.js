@@ -53,6 +53,20 @@ describe('diffLineup', () => {
     expect(d.pairsToUnbump).toEqual([]);
   });
 
+  it('flags a pure team-side swap (Team A ↔ Team B) as changed, even with identical partnerships', () => {
+    // Same pairs, opposite sides: [a,b]|[c,d] -> [c,d]|[a,b]. The team number
+    // drives score1/score2 attribution, so this must register as a change.
+    const d = diffLineup(
+      { team1: ['a', 'b'], team2: ['c', 'd'] },
+      { team1: ['c', 'd'], team2: ['a', 'b'] },
+    );
+    expect(d.added).toEqual([]);
+    expect(d.removed).toEqual([]);
+    expect(d.pairsToBump).toEqual([]);
+    expect(d.pairsToUnbump).toEqual([]);
+    expect(d.changed).toBe(true);
+  });
+
   it('handles a partner swap: no add/remove, both pairs change', () => {
     // a was with b, c was with d -> a now with c, b now with d.
     const d = diffLineup(
