@@ -219,6 +219,9 @@ export default function Arena({
   // a modal-scoped error so a save race surfaces inside the editor, not behind it.
   const [courtToEdit, setCourtToEdit] = useState(null);
   const [editError, setEditError] = useState('');
+  // Bumped on a save race to remount the editor, so its working lineup re-seeds
+  // from the (rolled-back, authoritative) court and drops the now-invalid pick.
+  const [editResetKey, setEditResetKey] = useState(0);
 
   // Skip-with-replacement picker: when a manager skips an on-deck paddle and
   // the arena has `skipPickReplacement` on, a modal opens listing waiting
@@ -639,6 +642,10 @@ export default function Arena({
       if (raced) {
         if (result.state) applyResult({ state: result.state });
         setEditError(result.error);
+        // Remount the editor so its working lineup resets to the court's
+        // authoritative four — otherwise the failed pick lingers and re-saving
+        // resubmits the same now-unavailable id.
+        setEditResetKey((k) => k + 1);
       } else {
         applyResult(result);
         setEditError('');
@@ -1188,6 +1195,7 @@ export default function Arena({
           owns its own portal (same PWA-safe rule as the others). */}
       {mounted && courtToEdit && (
         <CourtEditModal
+          key={editResetKey}
           court={courtToEdit}
           players={displayPlayers}
           queue={queue}
