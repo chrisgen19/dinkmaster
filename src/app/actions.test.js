@@ -57,6 +57,7 @@ const PLAY = [
   ['shuffleQueue', () => actions.shuffleQueue(ARENA)],
   ['fillCourt', () => actions.fillCourt(ARENA, 'c1')],
   ['cancelFill', () => actions.cancelFill(ARENA, 'c1')],
+  ['editCourtLineup', () => actions.editCourtLineup(ARENA, 'c1', ['p1', 'p2'], ['p3', 'p4'])],
   ['endMatch', () => actions.endMatch(ARENA, 'c1', 11, 5, true)],
   ['addCourt', () => actions.addCourt(ARENA)],
   ['removeCourt', () => actions.removeCourt(ARENA, 'c1')],
@@ -1851,5 +1852,196 @@ describe('cancelFill() — return four players to the rack without recording a m
     expect(result.error).toMatch(/unexpected state/i);
     expect(tx.courtSlot.deleteMany).not.toHaveBeenCalled();
     expect(tx.player.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('editCourtLineup() — manual partner swap / substitution', () => {
+  const COURT = 'court-1';
+
+  // The current on-court four: p1+p2 (Team A) vs p3+p4 (Team B), each carrying
+  // the pre-fill snapshot cancelFill relies on.
+  const SLOTS = [
+    { playerId: 'p1', team: 1, prevQueueOrder: 1, prevWaitRounds: 0 },
+    { playerId: 'p2', team: 1, prevQueueOrder: 2, prevWaitRounds: 0 },
+    { playerId: 'p3', team: 2, prevQueueOrder: 3, prevWaitRounds: 0 },
+    { playerId: 'p4', team: 2, prevQueueOrder: 4, prevWaitRounds: 0 },
+  ];
+
+  // Build a tx mock covering every prisma call the action makes. `incoming` is
+  // the subbed-in lookup (player.findMany #1); `others` is the rack-renumber
+  // lookup (player.findMany #2). Substitutions always have BOTH (|added| ===
+  // |removed|), so the ordered mock chain holds; a pure swap fires neither.
+  function makeTx({
+    court = { id: COURT, fillBumpedPlayerIds: [] }, // null => NOT_PLAYING
+    slots = SLOTS,
+    incoming = [],
+    others = [],
+    onCourt = null, // courtSlot.findFirst — is a subbed-in player already on a court?
+  } = {}) {
+    return {
+      $executeRaw: vi.fn(),
+      court: {
+        findFirst: vi.fn().mockResolvedValue(court),
+        update: vi.fn(),
+      },
+      courtSlot: {
+        findMany: vi.fn().mockResolvedValue(slots),
+        findFirst: vi.fn().mockResolvedValue(onCourt),
+        deleteMany: vi.fn(),
+        createMany: vi.fn(),
+      },
+      player: {
+        findMany: vi
+          .fn()
+          .mockResolvedValueOnce(incoming)
+          .mockResolvedValueOnce(others.map((id) => ({ id }))),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        update: vi.fn(),
+      },
+      partnership: {
+        updateMany: vi.fn(),
+        upsert: vi.fn(),
+      },
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireArenaManager.mockResolvedValue({
+      user: { id: 'u1' },
+      arena: { id: ARENA, ownerId: 'u1' },
+      role: ROLES.OWNER,
+    });
+  });
+
+  it('rejects an invalid lineup before opening a transaction', async () => {
+    const result = await actions.editCourtLineup(ARENA, COURT, ['p1', 'p1'], ['p3', 'p4']);
+    expect(result.error).toMatch(/four different players/i);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('substitutes a waiting paddle: dequeues the incoming, returns the outgoing to the FRONT, swaps game credit', async () => {
+    // Sub OUT p4, sub IN p5 (waiting at queueOrder 7). Team B becomes p3+p5.
+    const tx = makeTx({
+      incoming: [{ id: 'p5', queueOrder: 7, waitRounds: 0 }],
+      others: ['p6', 'p7'], // other waiters left in the rack
+    });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    const result = await actions.editCourtLineup(ARENA, COURT, ['p1', 'p2'], ['p3', 'p5']);
+    expect(result.error).toBeUndefined();
+
+    // Incoming dequeued exactly like fillCourt (game credited, pulled off rack).
+    expect(tx.player.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['p5'] } },
+      data: { gamesPlayed: { increment: 1 }, queueOrder: null, waitRounds: 0, skipBoosted: false },
+    });
+    // Outgoing loses its game credit (floored).
+    expect(tx.player.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['p4'] }, gamesPlayed: { gt: 0 } },
+      data: { gamesPlayed: { decrement: 1 } },
+    });
+    // Outgoing renumbered to the FRONT (waitRounds reset); others keep theirs.
+    const renumber = tx.player.update.mock.calls
+      .map(([arg]) => arg)
+      .filter((arg) => 'queueOrder' in (arg.data ?? {}));
+    expect(renumber.map((c) => [c.where.id, c.data.queueOrder])).toEqual([
+      ['p4', 1], ['p6', 2], ['p7', 3],
+    ]);
+    expect(renumber.find((c) => c.where.id === 'p4').data.waitRounds).toBe(0);
+    expect(renumber.find((c) => c.where.id === 'p6').data).not.toHaveProperty('waitRounds');
+
+    // Incoming slot carries its pre-edit rack snapshot for a later cancelFill.
+    const [{ data: created }] = tx.courtSlot.createMany.mock.calls[0];
+    const p5Slot = created.find((s) => s.playerId === 'p5');
+    expect(p5Slot).toMatchObject({ team: 2, prevQueueOrder: 7, prevWaitRounds: 0 });
+
+    // Partnership delta: p3 was with p4, now with p5 — unbump old, bump new.
+    expect(tx.partnership.updateMany).toHaveBeenCalledWith({
+      where: { playerA: 'p3', playerB: 'p4', count: { gt: 0 } },
+      data: { count: { decrement: 1 } },
+    });
+    expect(tx.partnership.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { playerA_playerB: { playerA: 'p3', playerB: 'p5' } } }),
+    );
+  });
+
+  it('keeps the fill-bump bookkeeping exact when subbing in a paddle the original fill bumped', async () => {
+    // p5 was bumped by this court's original fill, so its current waitRounds (1)
+    // includes that +1, and it is still in fillBumpedPlayerIds.
+    const tx = makeTx({
+      court: { id: COURT, fillBumpedPlayerIds: ['p5', 'p6'] },
+      incoming: [{ id: 'p5', queueOrder: 7, waitRounds: 1 }],
+      others: ['p6'],
+    });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.editCourtLineup(ARENA, COURT, ['p1', 'p2'], ['p3', 'p5']);
+
+    // Snapshot stores the PRE-bump value (1 - 1 = 0) so cancelFill restores the
+    // true pre-fill fairness, not the inflated one.
+    const [{ data: created }] = tx.courtSlot.createMany.mock.calls[0];
+    expect(created.find((s) => s.playerId === 'p5').prevWaitRounds).toBe(0);
+    // And the player is dropped from the court's bump set so a later sub-out +
+    // cancel can't reverse a wait credit they since earned elsewhere.
+    expect(tx.court.update).toHaveBeenCalledWith({
+      where: { id: COURT },
+      data: { fillBumpedPlayerIds: ['p6'] },
+    });
+  });
+
+  it('handles a pure team-side swap: rewrites slot teams, touches no game counts or partnerships', async () => {
+    const tx = makeTx(); // no incoming/others — nobody enters or leaves the rack
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    // Same four, teams swapped: p3+p4 become Team A, p1+p2 become Team B.
+    const result = await actions.editCourtLineup(ARENA, COURT, ['p3', 'p4'], ['p1', 'p2']);
+    expect(result.error).toBeUndefined();
+
+    const [{ data: created }] = tx.courtSlot.createMany.mock.calls[0];
+    expect(created.filter((s) => s.team === 1).map((s) => s.playerId).sort()).toEqual(['p3', 'p4']);
+    expect(created.filter((s) => s.team === 2).map((s) => s.playerId).sort()).toEqual(['p1', 'p2']);
+
+    // Same partnerships, so no count changes; no one moved, so no game-count edits.
+    expect(tx.partnership.updateMany).not.toHaveBeenCalled();
+    expect(tx.partnership.upsert).not.toHaveBeenCalled();
+    expect(tx.player.update).not.toHaveBeenCalled();
+    expect(tx.player.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('errors and writes nothing when the court is no longer playing (NOT_PLAYING)', async () => {
+    const tx = makeTx({ court: null });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    const result = await actions.editCourtLineup(ARENA, COURT, ['p1', 'p2'], ['p3', 'p5']);
+    expect(result.error).toMatch(/no longer active/i);
+    expect(tx.courtSlot.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['fewer than four slots', SLOTS.slice(0, 3)],
+    ['a malformed 3/1 team split', [
+      { playerId: 'p1', team: 1, prevQueueOrder: 1, prevWaitRounds: 0 },
+      { playerId: 'p2', team: 1, prevQueueOrder: 2, prevWaitRounds: 0 },
+      { playerId: 'p3', team: 1, prevQueueOrder: 3, prevWaitRounds: 0 },
+      { playerId: 'p4', team: 2, prevQueueOrder: 4, prevWaitRounds: 0 },
+    ]],
+  ])('refuses with a clear error on %s (INVALID_COURT)', async (_label, slots) => {
+    const tx = makeTx({ slots });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    const result = await actions.editCourtLineup(ARENA, COURT, ['p1', 'p2'], ['p3', 'p5']);
+    expect(result.error).toMatch(/unexpected state/i);
+    expect(tx.courtSlot.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('errors when a subbed-in paddle is no longer waiting (QUEUE_CHANGED)', async () => {
+    // diff.added = [p5] but the lookup returns nobody (it raced onto a court / left).
+    const tx = makeTx({ incoming: [], others: ['p6'] });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    const result = await actions.editCourtLineup(ARENA, COURT, ['p1', 'p2'], ['p3', 'p5']);
+    expect(result.error).toMatch(/no longer available|try again/i);
+    expect(tx.courtSlot.deleteMany).not.toHaveBeenCalled();
   });
 });
