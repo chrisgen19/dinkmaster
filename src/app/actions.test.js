@@ -1877,9 +1877,13 @@ describe('editCourtLineup() — manual partner swap / substitution', () => {
     incoming = [],
     others = [],
     onCourt = null, // courtSlot.findFirst — is a subbed-in player already on a court?
+    skipRestoresPriority = true, // arena.findUnique in the removed branch
   } = {}) {
     return {
       $executeRaw: vi.fn(),
+      arena: {
+        findUnique: vi.fn().mockResolvedValue({ skipRestoresPriority }),
+      },
       court: {
         findFirst: vi.fn().mockResolvedValue(court),
         update: vi.fn(),
@@ -1948,8 +1952,15 @@ describe('editCourtLineup() — manual partner swap / substitution', () => {
     expect(renumber.map((c) => [c.where.id, c.data.queueOrder])).toEqual([
       ['p4', 1], ['p6', 2], ['p7', 3],
     ]);
-    expect(renumber.find((c) => c.where.id === 'p4').data.waitRounds).toBe(0);
+    // Subbed-out paddle is returned as Next-in-Line (skipRestoresPriority on):
+    // pre-stack waitRounds restored from the slot snapshot (0 in this fixture)
+    // and skipBoosted set so the next auto-mix lifts them above emergency.
+    const p4Update = renumber.find((c) => c.where.id === 'p4').data;
+    expect(p4Update.waitRounds).toBe(0);
+    expect(p4Update.skipBoosted).toBe(true);
+    // Other waiters keep their wait fairness — only queueOrder is rewritten.
     expect(renumber.find((c) => c.where.id === 'p6').data).not.toHaveProperty('waitRounds');
+    expect(renumber.find((c) => c.where.id === 'p6').data).not.toHaveProperty('skipBoosted');
 
     // Incoming slot carries its pre-edit rack snapshot for a later cancelFill.
     const [{ data: created }] = tx.courtSlot.createMany.mock.calls[0];
@@ -1964,6 +1975,25 @@ describe('editCourtLineup() — manual partner swap / substitution', () => {
     expect(tx.partnership.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ where: { playerA_playerB: { playerA: 'p3', playerB: 'p5' } } }),
     );
+  });
+
+  it('falls back to the legacy reset for the subbed-out paddle when skipRestoresPriority is OFF', async () => {
+    // Same sub as above, but the arena disables the Next-in-Line band. The
+    // returned paddle should match legacy skip (waitRounds 0, skipBoosted false).
+    const tx = makeTx({
+      incoming: [{ id: 'p5', queueOrder: 7, waitRounds: 0 }],
+      others: ['p6'],
+      skipRestoresPriority: false,
+    });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.editCourtLineup(ARENA, COURT, ['p1', 'p2'], ['p3', 'p5']);
+
+    const p4Update = tx.player.update.mock.calls
+      .map(([arg]) => arg)
+      .find((arg) => arg.where.id === 'p4').data;
+    expect(p4Update.waitRounds).toBe(0);
+    expect(p4Update.skipBoosted).toBe(false);
   });
 
   it('keeps the fill-bump bookkeeping exact when subbing in a paddle the original fill bumped', async () => {

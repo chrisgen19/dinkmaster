@@ -966,7 +966,11 @@ export async function cancelFill(arenaId, courtId) {
  *     later `cancelFill` restores them precisely.
  *   - Subbed-OUT players: `gamesPlayed -1` (floored), slot removed, and they
  *     return to the FRONT of the rack (the whole rack is renumbered densely,
- *     the removed players first, mirroring `cancelFill`).
+ *     the removed players first, mirroring `cancelFill`). A sub-out is the same
+ *     event class as Skip-with-replacement, so it honours `Arena.skipRestoresPriority`:
+ *     ON (default) the returned paddle is Next-in-Line (`skipBoosted` set,
+ *     pre-stack `waitRounds` restored from the slot snapshot); OFF falls back
+ *     to the legacy reset (`waitRounds = 0`, no boost).
  *   - Partnership counts are adjusted by the DELTA from `diffLineup` (only
  *     pairs that actually changed), keeping the matrix consistent with what
  *     `cancelFill`/`endMatch` later read from the final slots.
@@ -1026,6 +1030,14 @@ export async function editCourtLineup(arenaId, courtId, team1Ids, team2Ids) {
       const diff = diffLineup(current, next);
       if (!diff.changed) return; // nothing to do
 
+      // Pre-stack rack snapshot for everyone currently on court (the original
+      // four). Used to restore a subbed-OUT paddle's pre-stack waitRounds when
+      // returning them to the rack as Next-in-Line, and to preserve a stayed
+      // player's slot snapshot when the slots are rewritten below.
+      const stayedSnap = new Map(
+        slots.map((s) => [s.playerId, { prevQueueOrder: s.prevQueueOrder, prevWaitRounds: s.prevWaitRounds }]),
+      );
+
       // Pre-edit rack snapshot for each subbed-in player, captured BEFORE the
       // dequeue so a later cancelFill can restore them precisely.
       const incomingSnap = new Map();
@@ -1075,13 +1087,27 @@ export async function editCourtLineup(arenaId, courtId, team1Ids, team2Ids) {
 
       // Subbed-out players: undo their game credit and return them to the rack.
       if (diff.removed.length > 0) {
+        // A sub-out is the same event class as a Skip-with-replacement (a paddle
+        // yields its spot, the manager picks who fills it), so honour the same
+        // arena toggle that governs `skipPlayer`. ON (default) ⇒ returned paddle
+        // is Next-in-Line: `skipBoosted` set and pre-stack `waitRounds` restored
+        // (from the slot snapshot) so the next auto-mix elevates them above the
+        // emergency band. OFF ⇒ legacy reset (waitRounds 0, no boost). Read
+        // inside the tx so a concurrent settings save can't slip between read
+        // and write — mirrors skipPlayer at line 1612.
+        const arena = await tx.arena.findUnique({
+          where: { id: arenaId },
+          select: { skipRestoresPriority: true },
+        });
+        const restoresPriority = arena?.skipRestoresPriority ?? true;
+
         await tx.player.updateMany({
           where: { id: { in: diff.removed }, gamesPlayed: { gt: 0 } },
           data: { gamesPlayed: { decrement: 1 } },
         });
         // Front-of-rack: renumber the whole active rack with removed first, then
         // the existing waiters in their current order. Only the RETURNING players
-        // get waitRounds reset; everyone else keeps their wait fairness (so a
+        // get waitRounds touched; everyone else keeps their wait fairness (so a
         // substitution can't wipe the rack's starvation protection).
         const others = await tx.player.findMany({
           where: { arenaId, leftAt: null, queueOrder: { not: null }, id: { notIn: diff.removed } },
@@ -1091,22 +1117,29 @@ export async function editCourtLineup(arenaId, courtId, team1Ids, team2Ids) {
         const removedSet = new Set(diff.removed);
         const ordered = [...diff.removed, ...others.map((p) => p.id)];
         for (let i = 0; i < ordered.length; i++) {
-          await tx.player.update({
-            where: { id: ordered[i] },
-            data: removedSet.has(ordered[i])
-              ? { queueOrder: i + 1, waitRounds: 0, skipBoosted: false }
-              : { queueOrder: i + 1 },
-          });
+          const id = ordered[i];
+          let data;
+          if (!removedSet.has(id)) {
+            data = { queueOrder: i + 1 };
+          } else if (restoresPriority) {
+            const snap = stayedSnap.get(id);
+            data = {
+              queueOrder: i + 1,
+              waitRounds: snap?.prevWaitRounds ?? 0,
+              skipBoosted: true,
+            };
+          } else {
+            data = { queueOrder: i + 1, waitRounds: 0, skipBoosted: false };
+          }
+          await tx.player.update({ where: { id }, data });
         }
       }
 
       // Rewrite the four slots to the desired lineup. Wipe and recreate so team
       // assignments and substitutions land in one consistent shape: carry the
       // fresh snapshot for incoming players, and preserve the existing snapshot
-      // for players who stayed on court (so cancelFill keeps working for them).
-      const stayedSnap = new Map(
-        slots.map((s) => [s.playerId, { prevQueueOrder: s.prevQueueOrder, prevWaitRounds: s.prevWaitRounds }]),
-      );
+      // (built above) for players who stayed on court so cancelFill keeps
+      // working for them.
       const slotSnap = (playerId) => incomingSnap.get(playerId) ?? stayedSnap.get(playerId) ?? {};
 
       await tx.courtSlot.deleteMany({ where: { courtId } });
