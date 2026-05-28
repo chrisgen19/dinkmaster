@@ -14,6 +14,7 @@ import {
 } from '@/lib/match-defaults';
 import { computeMatchRatings, RATING_BASELINE } from '@/lib/rating';
 import { validateMatchScore } from '@/lib/scoring';
+import { diffLineup, validateLineup } from '@/lib/court-lineup';
 
 /** Canonical (sorted) pair so each partnership has exactly one row. */
 function canonicalPair(x, y) {
@@ -941,6 +942,235 @@ export async function cancelFill(arenaId, courtId) {
     if (err?.message === 'INVALID_COURT') {
       return {
         error: 'This court is in an unexpected state and can\'t be cancelled — finish the match instead.',
+        state: await getState(arenaId),
+      };
+    }
+    throw err;
+  }
+
+  return { state: await getState(arenaId) };
+}
+
+/**
+ * Manually edit a live court's lineup — swap partners and/or substitute
+ * on-court players with waiting paddles — committing the final desired four in
+ * one locked transaction. Manager-only (matches `fillCourt`/`cancelFill`).
+ *
+ * The caller sends the FINAL desired lineup (`team1Ids`, `team2Ids`); the
+ * action diffs it against the court's current slots and applies the minimum
+ * set of changes:
+ *   - Subbed-IN players (in the new lineup, not currently on court): dequeued
+ *     exactly like `fillCourt` — `gamesPlayed +1`, `queueOrder`/`waitRounds`
+ *     cleared, `skipBoosted` cleared — and their pre-edit rack position is
+ *     snapshotted onto the new slot (`prevQueueOrder`/`prevWaitRounds`) so a
+ *     later `cancelFill` restores them precisely.
+ *   - Subbed-OUT players: `gamesPlayed -1` (floored), slot removed, and they
+ *     return to the FRONT of the rack (the whole rack is renumbered densely,
+ *     the removed players first, mirroring `cancelFill`). A sub-out is the same
+ *     event class as Skip-with-replacement, so it honours `Arena.skipRestoresPriority`:
+ *     ON (default) the returned paddle is Next-in-Line (`skipBoosted` set,
+ *     pre-stack `waitRounds` restored from the slot snapshot); OFF falls back
+ *     to the legacy reset (`waitRounds = 0`, no boost).
+ *   - Partnership counts are adjusted by the DELTA from `diffLineup` (only
+ *     pairs that actually changed), keeping the matrix consistent with what
+ *     `cancelFill`/`endMatch` later read from the final slots.
+ *   - Players who merely changed teams: only their `CourtSlot.team` is rewritten
+ *     (no game-count change).
+ *   - `Court.fillBumpedPlayerIds` is pruned of any subbed-IN players (they no
+ *     longer wait, so a later `cancelFill` must not reverse a bump for them),
+ *     and a subbed-IN player who was in that set has the original fill's `+1`
+ *     reversed in their slot snapshot (`prevWaitRounds = max(0, waitRounds-1)`)
+ *     so cancel restores their true pre-fill fairness, not the inflated value.
+ *     Subbed-OUT players were never in the set, so nothing to do for them.
+ *
+ * No-op (clean) if the desired lineup equals the current one. Returns a clean
+ * error if the court is no longer playing, in an unexpected slot state, or a
+ * subbed-in player has since left the waiting pool (raced onto a court / out of
+ * the arena) so the manager can re-pick rather than misfiring.
+ *
+ * @param {string} arenaId
+ * @param {string} courtId
+ * @param {string[]} team1Ids - two player ids for Team A
+ * @param {string[]} team2Ids - two player ids for Team B
+ */
+export async function editCourtLineup(arenaId, courtId, team1Ids, team2Ids) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  const valid = validateLineup(team1Ids, team2Ids);
+  if (!valid.ok) {
+    return { error: 'Pick exactly four different players, two per team.', state: await getState(arenaId) };
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockQueue(tx, arenaId);
+
+      // Court must still be live and in this arena. Read its current slots to
+      // derive the lineup we're diffing against.
+      const court = await tx.court.findFirst({
+        where: { id: courtId, arenaId, status: 'playing' },
+        select: { id: true, fillBumpedPlayerIds: true },
+      });
+      if (!court) throw new Error('NOT_PLAYING');
+
+      const slots = await tx.courtSlot.findMany({ where: { courtId } });
+      if (slots.length !== 4) throw new Error('INVALID_COURT');
+
+      const current = {
+        team1: slots.filter((s) => s.team === 1).map((s) => s.playerId),
+        team2: slots.filter((s) => s.team === 2).map((s) => s.playerId),
+      };
+      // Guard against a malformed split (e.g. 3/1) slipping past the count check —
+      // diffLineup's pair logic assumes exactly two players per team.
+      if (current.team1.length !== 2 || current.team2.length !== 2) {
+        throw new Error('INVALID_COURT');
+      }
+      const next = { team1: team1Ids, team2: team2Ids };
+      const diff = diffLineup(current, next);
+      if (!diff.changed) return; // nothing to do
+
+      // Pre-stack rack snapshot for everyone currently on court (the original
+      // four). Used to restore a subbed-OUT paddle's pre-stack waitRounds when
+      // returning them to the rack as Next-in-Line, and to preserve a stayed
+      // player's slot snapshot when the slots are rewritten below.
+      const stayedSnap = new Map(
+        slots.map((s) => [s.playerId, { prevQueueOrder: s.prevQueueOrder, prevWaitRounds: s.prevWaitRounds }]),
+      );
+
+      // Pre-edit rack snapshot for each subbed-in player, captured BEFORE the
+      // dequeue so a later cancelFill can restore them precisely.
+      const incomingSnap = new Map();
+
+      // Validate subbed-in players under the lock: each must be an active,
+      // waiting paddle in THIS arena and not already on any court.
+      if (diff.added.length > 0) {
+        const incoming = await tx.player.findMany({
+          where: {
+            id: { in: diff.added },
+            arenaId,
+            leftAt: null,
+            queueOrder: { not: null },
+          },
+          select: { id: true, queueOrder: true, waitRounds: true },
+        });
+        if (incoming.length !== diff.added.length) throw new Error('QUEUE_CHANGED');
+        const onCourt = await tx.courtSlot.findFirst({
+          where: { playerId: { in: diff.added } },
+        });
+        if (onCourt) throw new Error('QUEUE_CHANGED');
+
+        // A subbed-in paddle that the ORIGINAL fill bumped (+1 waitRounds) still
+        // carries that +1 in its current waitRounds. Snapshot the PRE-bump value
+        // so a later cancelFill restores their true pre-fill fairness, not the
+        // inflated one — and drop them from the court's bump set so, if they are
+        // later subbed back out, cancelFill won't reverse a wait credit they
+        // since earned elsewhere. Both keep the fill/cancel bookkeeping exact.
+        const bumpedSet = new Set(court.fillBumpedPlayerIds ?? []);
+        for (const p of incoming) {
+          const prevWaitRounds = bumpedSet.has(p.id) ? Math.max(0, p.waitRounds - 1) : p.waitRounds;
+          incomingSnap.set(p.id, { prevQueueOrder: p.queueOrder, prevWaitRounds });
+        }
+        // Dequeue them onto the court (same accounting as fillCourt's dequeue).
+        await tx.player.updateMany({
+          where: { id: { in: diff.added } },
+          data: { gamesPlayed: { increment: 1 }, queueOrder: null, waitRounds: 0, skipBoosted: false },
+        });
+        const addedSet = new Set(diff.added);
+        if ((court.fillBumpedPlayerIds ?? []).some((id) => addedSet.has(id))) {
+          await tx.court.update({
+            where: { id: courtId },
+            data: { fillBumpedPlayerIds: court.fillBumpedPlayerIds.filter((id) => !addedSet.has(id)) },
+          });
+        }
+      }
+
+      // Subbed-out players: undo their game credit and return them to the rack.
+      if (diff.removed.length > 0) {
+        // A sub-out is the same event class as a Skip-with-replacement (a paddle
+        // yields its spot, the manager picks who fills it), so honour the same
+        // arena toggle that governs `skipPlayer`. ON (default) ⇒ returned paddle
+        // is Next-in-Line: `skipBoosted` set and pre-stack `waitRounds` restored
+        // (from the slot snapshot) so the next auto-mix elevates them above the
+        // emergency band. OFF ⇒ legacy reset (waitRounds 0, no boost). Read
+        // inside the tx so a concurrent settings save can't slip between read
+        // and write — mirrors skipPlayer at line 1612.
+        const arena = await tx.arena.findUnique({
+          where: { id: arenaId },
+          select: { skipRestoresPriority: true },
+        });
+        const restoresPriority = arena?.skipRestoresPriority ?? true;
+
+        await tx.player.updateMany({
+          where: { id: { in: diff.removed }, gamesPlayed: { gt: 0 } },
+          data: { gamesPlayed: { decrement: 1 } },
+        });
+        // Front-of-rack: renumber the whole active rack with removed first, then
+        // the existing waiters in their current order. Only the RETURNING players
+        // get waitRounds touched; everyone else keeps their wait fairness (so a
+        // substitution can't wipe the rack's starvation protection).
+        const others = await tx.player.findMany({
+          where: { arenaId, leftAt: null, queueOrder: { not: null }, id: { notIn: diff.removed } },
+          orderBy: { queueOrder: 'asc' },
+          select: { id: true },
+        });
+        const removedSet = new Set(diff.removed);
+        const ordered = [...diff.removed, ...others.map((p) => p.id)];
+        for (let i = 0; i < ordered.length; i++) {
+          const id = ordered[i];
+          let data;
+          if (!removedSet.has(id)) {
+            data = { queueOrder: i + 1 };
+          } else if (restoresPriority) {
+            const snap = stayedSnap.get(id);
+            data = {
+              queueOrder: i + 1,
+              waitRounds: snap?.prevWaitRounds ?? 0,
+              skipBoosted: true,
+            };
+          } else {
+            data = { queueOrder: i + 1, waitRounds: 0, skipBoosted: false };
+          }
+          await tx.player.update({ where: { id }, data });
+        }
+      }
+
+      // Rewrite the four slots to the desired lineup. Wipe and recreate so team
+      // assignments and substitutions land in one consistent shape: carry the
+      // fresh snapshot for incoming players, and preserve the existing snapshot
+      // (built above) for players who stayed on court so cancelFill keeps
+      // working for them.
+      const slotSnap = (playerId) => incomingSnap.get(playerId) ?? stayedSnap.get(playerId) ?? {};
+
+      await tx.courtSlot.deleteMany({ where: { courtId } });
+      await tx.courtSlot.createMany({
+        data: [
+          ...team1Ids.map((playerId) => ({ courtId, playerId, team: 1, ...slotSnap(playerId) })),
+          ...team2Ids.map((playerId) => ({ courtId, playerId, team: 2, ...slotSnap(playerId) })),
+        ],
+      });
+
+      // Partnership delta: only pairs that actually changed.
+      for (const [x, y] of diff.pairsToUnbump) await unbumpPartnership(tx, x, y);
+      for (const [x, y] of diff.pairsToBump) await bumpPartnership(tx, arenaId, x, y);
+    });
+  } catch (err) {
+    if (err?.message === 'NOT_PLAYING') {
+      return {
+        error: 'This court is no longer active — it was finished or cancelled.',
+        state: await getState(arenaId),
+      };
+    }
+    if (err?.message === 'INVALID_COURT') {
+      return {
+        error: "This court is in an unexpected state and can't be edited — finish or cancel the match instead.",
+        state: await getState(arenaId),
+      };
+    }
+    // QUEUE_CHANGED, or a P2002 from a concurrent fill claiming a player.
+    if (err?.code === 'P2002' || err?.message === 'QUEUE_CHANGED') {
+      return {
+        error: 'A chosen player is no longer available — the rack changed. Please try again.',
         state: await getState(arenaId),
       };
     }
