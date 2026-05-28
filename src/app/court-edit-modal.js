@@ -72,12 +72,20 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
     return () => window.removeEventListener('keydown', onKey);
   }, [isPending, replacingPos, onClose]);
 
-  // Substitute candidates: rack paddles (deck + waiting) not already in the
-  // working lineup, resolved through `players` so the list matches what renders.
-  const candidates = useMemo(
-    () => queue.filter((id) => !order.includes(id)).map((id) => playerById.get(id)).filter(Boolean),
-    [queue, order, playerById],
-  );
+  // The four originally on this court when the editor opened — used both to
+  // detect changes and to let a subbed-out paddle be picked back this session.
+  const originalSet = useMemo(() => new Set(original), [original]);
+
+  // Substitute candidates, none already in the working lineup: rack paddles
+  // (deck + waiting) PLUS any originally-on-court paddle that's been subbed out,
+  // so a substitution can be reverted without cancelling the whole edit. Rack
+  // paddles first, then the off-court originals. Resolved through `players` so
+  // the list matches what renders.
+  const candidates = useMemo(() => {
+    const inLineup = new Set(order);
+    const pool = [...new Set([...queue, ...original])];
+    return pool.filter((id) => !inLineup.has(id)).map((id) => playerById.get(id)).filter(Boolean);
+  }, [queue, original, order, playerById]);
 
   // Lineup is "changed" if the partition into teams differs from the original.
   // A within-team reorder (same two players, swapped order) is NOT a change.
@@ -188,12 +196,12 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
                 Replace {replacingPlayer ? fullName(replacingPlayer) : 'paddle'}
               </h3>
               <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
-                Tap a waiting paddle to take this spot on {court.name}.
+                Tap a paddle to take this spot on {court.name}.
               </p>
             </div>
             {candidates.length === 0 ? (
               <div className="flex-1 px-5 py-10 text-center">
-                <p className="text-sm font-bold text-slate-700">No paddles waiting</p>
+                <p className="text-sm font-bold text-slate-700">No paddles available</p>
                 <p className="text-[11px] text-slate-500 mt-1">
                   Everyone is on a court. Add or check in a paddle first.
                 </p>
@@ -213,8 +221,15 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
                         aria-hidden="true"
                       />
                       <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-bold text-slate-800 truncate">
-                          {fullName(p)}
+                        <span className="flex items-center gap-1.5">
+                          <span className="text-sm font-bold text-slate-800 truncate">
+                            {fullName(p)}
+                          </span>
+                          {originalSet.has(p.id) && (
+                            <span className="shrink-0 text-[9px] font-black uppercase tracking-[0.12em] text-amber-700 bg-amber-50 ring-1 ring-amber-200/70 rounded-full px-1.5 py-0.5">
+                              Just removed
+                            </span>
+                          )}
                         </span>
                         <span className="block text-[11px] font-medium tabular-nums text-slate-400">
                           {p.gamesPlayed} games · {p.wins || 0}W · {p.losses || 0}L
