@@ -642,9 +642,12 @@ export default function Arena({
       if (raced) {
         if (result.state) applyResult({ state: result.state });
         setEditError(result.error);
-        // Remount the editor so its working lineup resets to the court's
-        // authoritative four — otherwise the failed pick lingers and re-saving
-        // resubmits the same now-unavailable id.
+        // Refresh the editor's court from the reconciled state (it was frozen at
+        // open time — a concurrent edit could have changed the on-court four),
+        // then remount so the working lineup re-seeds from that authoritative
+        // four and drops the now-unavailable pick instead of resubmitting it.
+        const freshCourt = result.state?.courts?.find((c) => c.id === courtId);
+        if (freshCourt) setCourtToEdit(freshCourt);
         setEditResetKey((k) => k + 1);
       } else {
         applyResult(result);
