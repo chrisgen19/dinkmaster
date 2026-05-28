@@ -10,6 +10,7 @@ import {
   shuffleQueue,
   fillCourt,
   cancelFill,
+  editCourtLineup,
   endMatch,
   addCourt,
   removeCourt,
@@ -33,6 +34,7 @@ import { ArenaHero } from './arena-hero';
 import { TabIcon, TabBadge } from './arena-tab-icons';
 import { ArenaScheduleModal } from './arena-schedule-modal';
 import { ArenaCourtsPanel } from './arena-courts-panel';
+import { CourtEditModal } from './court-edit-modal';
 import { ArenaThisWeek } from './arena-this-week';
 import { ArenaSessionPrepBanner } from './arena-session-prep-banner';
 import { ArenaPrepRosterModal } from './arena-prep-roster-modal';
@@ -213,6 +215,10 @@ export default function Arena({
   // The court whose fill is pending cancellation, surfaced in a confirm modal
   // so a destructive "return to deck" can't fire on a stray click. Null = closed.
   const [courtToCancel, setCourtToCancel] = useState(null);
+  // The court whose teams are being manually edited (null = editor closed), plus
+  // a modal-scoped error so a save race surfaces inside the editor, not behind it.
+  const [courtToEdit, setCourtToEdit] = useState(null);
+  const [editError, setEditError] = useState('');
 
   // Skip-with-replacement picker: when a manager skips an on-deck paddle and
   // the arena has `skipPickReplacement` on, a modal opens listing waiting
@@ -613,6 +619,35 @@ export default function Arena({
     });
   };
 
+  // Open the manual team editor for a live court (manager-only).
+  const handleRequestEditCourt = (court) => {
+    if (!canManage) return;
+    setEditError('');
+    setCourtToEdit(court);
+  };
+
+  // Commit the edited lineup. Mirrors the skip-picker race handling: a stale
+  // pick ("no longer available") keeps the editor open with the error inside it
+  // so the manager can re-pick from the reconciled rack; any other outcome closes
+  // and lets the page banner report it.
+  const handleConfirmEditLineup = (team1Ids, team2Ids) => {
+    if (!courtToEdit) return;
+    const courtId = courtToEdit.id;
+    startTransition(async () => {
+      const result = await editCourtLineup(arenaId, courtId, team1Ids, team2Ids);
+      const raced = result?.error && /no longer available|Please try again/i.test(result.error);
+      if (raced) {
+        if (result.state) applyResult({ state: result.state });
+        setEditError(result.error);
+      } else {
+        applyResult(result);
+        setEditError('');
+        setCourtToEdit(null);
+        playPaddleSound();
+      }
+    });
+  };
+
   const handleEndMatchWithScore = (courtId, score1, score2) => {
     setScoreModalOpen(false);
     setSelectedCourtForScore(null);
@@ -977,6 +1012,7 @@ export default function Arena({
               queueLength={queue.length}
               onAddCourt={handleAddCourt}
               onFinishCourt={handleTriggerScoreModal}
+              onEditCourt={handleRequestEditCourt}
               onCancelCourt={handleRequestCancelFill}
               onFillCourt={handleFillCourt}
               onRemoveCourt={handleRemoveCourt}
@@ -1142,6 +1178,24 @@ export default function Arena({
           pendingLinkRequests={pendingLinkRequests}
           onApplyResult={applyResult}
           onClose={() => setRosterModalOpen(false)}
+        />
+      )}
+
+      {/* Manual team editor — drag to swap partners, substitute from the deck/
+          waiting list. Commits the final lineup via editCourtLineup. The modal
+          owns its own portal (same PWA-safe rule as the others). */}
+      {mounted && courtToEdit && (
+        <CourtEditModal
+          court={courtToEdit}
+          players={displayPlayers}
+          queue={queue}
+          isPending={isPending}
+          error={editError}
+          onSave={handleConfirmEditLineup}
+          onClose={() => {
+            setCourtToEdit(null);
+            setEditError('');
+          }}
         />
       )}
 

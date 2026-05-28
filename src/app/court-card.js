@@ -16,6 +16,7 @@ import { formatShortName } from '@/lib/player-display';
  * @param {boolean} props.isPending - A mutation is in flight (disables the actions).
  * @param {number} props.queueLength - Rack size; gates the "stack 4" button.
  * @param {(court: object) => void} props.onFinish - Open the score modal for this court.
+ * @param {(court: object) => void} props.onEdit - Open the manual team editor for this court.
  * @param {(court: object) => void} props.onCancel - Cancel this fill and send the four back to the rack.
  * @param {(courtId: string) => void} props.onFill - Stack the next four paddles onto this court.
  * @param {(courtId: string) => void} props.onRemove - Close this (vacant) court.
@@ -27,6 +28,7 @@ export function CourtCard({
   isPending,
   queueLength,
   onFinish,
+  onEdit,
   onCancel,
   onFill,
   onRemove,
@@ -148,14 +150,24 @@ export function CourtCard({
               Finish Game & Record Score
             </button>
             {canManage && (
-              <button
-                onClick={() => onCancel(court)}
-                disabled={isPending}
-                title="Send these four back to the rack without recording a game"
-                className="w-full py-2 rounded-xl text-slate-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-[10px] uppercase tracking-[0.14em] transition"
-              >
-                Cancel & Return to Deck
-              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => onEdit(court)}
+                  disabled={isPending}
+                  title="Swap partners or substitute a paddle"
+                  className="py-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-[10px] uppercase tracking-[0.14em] transition ring-1 ring-slate-200"
+                >
+                  Edit Teams
+                </button>
+                <button
+                  onClick={() => onCancel(court)}
+                  disabled={isPending}
+                  title="Send these four back to the rack without recording a game"
+                  className="py-2 rounded-xl text-slate-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-[10px] uppercase tracking-[0.14em] transition ring-1 ring-slate-200"
+                >
+                  Cancel & Return
+                </button>
+              </div>
             )}
           </div>
         ) : (
