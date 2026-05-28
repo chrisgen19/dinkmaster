@@ -38,6 +38,29 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
   const playerById = useMemo(() => new Map(players.map((p) => [p.id, p])), [players]);
   const original = useMemo(() => [...court.team1, ...court.team2], [court.team1, court.team2]);
 
+  // iOS-safe scroll lock: this modal only mounts while open, so pin <body>
+  // with position:fixed offset by the current scrollY for its lifetime, then
+  // restore on unmount. A plain overflow:hidden doesn't stop rubber-band
+  // scrolling in standalone PWA mode, and both lists here scroll. Mirrors the
+  // skip-picker lock in arena.js / ArenaMobileSheet.
+  useEffect(() => {
+    const { style } = document.body;
+    const y = window.scrollY;
+    style.position = 'fixed';
+    style.top = `-${y}px`;
+    style.left = '0';
+    style.right = '0';
+    style.width = '100%';
+    return () => {
+      style.position = '';
+      style.top = '';
+      style.left = '';
+      style.right = '';
+      style.width = '';
+      window.scrollTo(0, y);
+    };
+  }, []);
+
   // Esc closes while idle; suppressed mid-save so a race-error has context.
   useEffect(() => {
     const onKey = (e) => {

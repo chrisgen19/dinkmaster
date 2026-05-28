@@ -643,7 +643,9 @@ export default function Arena({
         applyResult(result);
         setEditError('');
         setCourtToEdit(null);
-        playPaddleSound();
+        // Only chime on a real save — a non-race error (NOT_PLAYING /
+        // INVALID_COURT) also lands here and shouldn't sound like success.
+        if (!result?.error) playPaddleSound();
       }
     });
   };
