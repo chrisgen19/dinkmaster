@@ -1004,7 +1004,7 @@ export async function editCourtLineup(arenaId, courtId, team1Ids, team2Ids) {
       // derive the lineup we're diffing against.
       const court = await tx.court.findFirst({
         where: { id: courtId, arenaId, status: 'playing' },
-        select: { id: true },
+        select: { id: true, fillBumpedPlayerIds: true },
       });
       if (!court) throw new Error('NOT_PLAYING');
 
@@ -1046,14 +1046,29 @@ export async function editCourtLineup(arenaId, courtId, team1Ids, team2Ids) {
         });
         if (onCourt) throw new Error('QUEUE_CHANGED');
 
+        // A subbed-in paddle that the ORIGINAL fill bumped (+1 waitRounds) still
+        // carries that +1 in its current waitRounds. Snapshot the PRE-bump value
+        // so a later cancelFill restores their true pre-fill fairness, not the
+        // inflated one — and drop them from the court's bump set so, if they are
+        // later subbed back out, cancelFill won't reverse a wait credit they
+        // since earned elsewhere. Both keep the fill/cancel bookkeeping exact.
+        const bumpedSet = new Set(court.fillBumpedPlayerIds ?? []);
         for (const p of incoming) {
-          incomingSnap.set(p.id, { prevQueueOrder: p.queueOrder, prevWaitRounds: p.waitRounds });
+          const prevWaitRounds = bumpedSet.has(p.id) ? Math.max(0, p.waitRounds - 1) : p.waitRounds;
+          incomingSnap.set(p.id, { prevQueueOrder: p.queueOrder, prevWaitRounds });
         }
         // Dequeue them onto the court (same accounting as fillCourt's dequeue).
         await tx.player.updateMany({
           where: { id: { in: diff.added } },
           data: { gamesPlayed: { increment: 1 }, queueOrder: null, waitRounds: 0, skipBoosted: false },
         });
+        const addedSet = new Set(diff.added);
+        if ((court.fillBumpedPlayerIds ?? []).some((id) => addedSet.has(id))) {
+          await tx.court.update({
+            where: { id: courtId },
+            data: { fillBumpedPlayerIds: court.fillBumpedPlayerIds.filter((id) => !addedSet.has(id)) },
+          });
+        }
       }
 
       // Subbed-out players: undo their game credit and return them to the rack.
