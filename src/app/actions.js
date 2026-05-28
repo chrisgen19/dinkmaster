@@ -972,10 +972,12 @@ export async function cancelFill(arenaId, courtId) {
  *     `cancelFill`/`endMatch` later read from the final slots.
  *   - Players who merely changed teams: only their `CourtSlot.team` is rewritten
  *     (no game-count change).
- *
- * `Court.fillBumpedPlayerIds` is intentionally left untouched: subbed-in players
- * are now on a court (`queueOrder` null) so `cancelFill`'s wait-decrement guard
- * skips them, and subbed-out players were never in that set.
+ *   - `Court.fillBumpedPlayerIds` is pruned of any subbed-IN players (they no
+ *     longer wait, so a later `cancelFill` must not reverse a bump for them),
+ *     and a subbed-IN player who was in that set has the original fill's `+1`
+ *     reversed in their slot snapshot (`prevWaitRounds = max(0, waitRounds-1)`)
+ *     so cancel restores their true pre-fill fairness, not the inflated value.
+ *     Subbed-OUT players were never in the set, so nothing to do for them.
  *
  * No-op (clean) if the desired lineup equals the current one. Returns a clean
  * error if the court is no longer playing, in an unexpected slot state, or a
