@@ -113,7 +113,13 @@ export const auth = betterAuth({
           if (result.error) {
             throw new APIError('BAD_REQUEST', { message: result.error });
           }
-          return { data: result.data };
+          // Echo the incoming payload back with the normalized profile fields
+          // layered on top, so the returned `data` always carries every field
+          // being updated. Better Auth 1.6.11 already merges a hook's `data`
+          // onto the payload, but spelling the merge out here keeps non-profile
+          // updates (image, name-only, emailVerified, …) correct regardless of
+          // that internal merge-vs-replace behavior.
+          return { data: { ...data, ...result.data } };
         },
       },
     },
