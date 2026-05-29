@@ -120,9 +120,10 @@ function ProfileSection({ initialUser }) {
         lastName: lastNameTrimmed,
         phone: phone.trim(),
         address: address.trim(),
-        // Parse YYYY-MM-DD at local noon, not UTC midnight, so the stored
-        // instant can't roll back a day in negative-offset timezones.
-        birthday: birthday ? new Date(`${birthday}T12:00:00`) : null,
+        // A birthday is a calendar date, not an instant — anchor it to UTC
+        // midnight so it reads back as the same day regardless of the browser's
+        // or the server's timezone (page.js reads it with UTC getters).
+        birthday: birthday ? new Date(`${birthday}T00:00:00Z`) : null,
         gender: gender || null,
       });
       if (updateError) {

@@ -10,14 +10,15 @@ import { SettingsForm } from './settings-form';
 export const dynamic = 'force-dynamic';
 
 /** Format a stored birthday (Date | string | null) as YYYY-MM-DD for a date
- *  input, using local time so the displayed day matches what was entered. */
+ *  input. Read from UTC components so the calendar day is stable regardless of
+ *  the server's timezone — the settings form writes it anchored to UTC midnight. */
 function toDateInputValue(birthday) {
   if (!birthday) return '';
   const date = birthday instanceof Date ? birthday : new Date(birthday);
   if (Number.isNaN(date.getTime())) return '';
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
+  const yyyy = date.getUTCFullYear();
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(date.getUTCDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
 }
 

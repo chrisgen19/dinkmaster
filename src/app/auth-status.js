@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { useSession, signOut } from '@/lib/auth-client';
@@ -122,17 +122,10 @@ function UserMenu({ name }) {
     };
   }, [open, canHover]);
 
-  // Lock background scroll while the mobile sheet is open so the page behind
-  // the scrim doesn't scroll under the user's thumb. Desktop dropdown is small
-  // and hover-driven, so it's left untouched.
-  useEffect(() => {
-    if (!open || canHover) return;
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previous;
-    };
-  }, [open, canHover]);
+  // Background-scroll lock for the mobile sheet lives inside MobileMenuSheet so
+  // it can defer the unlock to AnimatePresence's onExitComplete (and use the
+  // iOS-safe position:fixed pattern). The desktop dropdown is small and
+  // hover-driven, so it never locks scroll.
 
   // Close when focus leaves the whole control (keyboard tab-out / blur-out).
   const handleBlur = (e) => {
@@ -221,66 +214,117 @@ function UserMenu({ name }) {
  * @param {() => void} props.onClose - Dismiss the sheet.
  */
 function MobileMenuSheet({ open, name, initials, onClose }) {
+  // Remembers the scroll offset captured when we locked the body, so we can
+  // restore it on unlock.
+  const scrollLock = useRef({ y: 0, locked: false });
+
+  // Lock background scroll with the iOS-safe pattern: a plain `overflow: hidden`
+  // on <body> does NOT stop rubber-band scrolling in iOS Safari / standalone
+  // PWA, so pin the body with `position: fixed` offset by the current scroll
+  // position, then restore that position on unlock. Mirrors ArenaMobileSheet.
+  const lockScroll = useCallback(() => {
+    if (scrollLock.current.locked) return;
+    const y = window.scrollY;
+    scrollLock.current = { y, locked: true };
+    const { style } = document.body;
+    style.position = 'fixed';
+    style.top = `-${y}px`;
+    style.left = '0';
+    style.right = '0';
+    style.width = '100%';
+  }, []);
+
+  const unlockScroll = useCallback(() => {
+    if (!scrollLock.current.locked) return;
+    const { y } = scrollLock.current;
+    scrollLock.current.locked = false;
+    const { style } = document.body;
+    style.position = '';
+    style.top = '';
+    style.left = '';
+    style.right = '';
+    style.width = '';
+    window.scrollTo(0, y);
+  }, []);
+
+  // Lock on open. Unlock is NOT done here — it's deferred to AnimatePresence's
+  // onExitComplete so the page behind the scrim can't scroll during the exit
+  // animation.
+  useEffect(() => {
+    if (open) lockScroll();
+  }, [open, lockScroll]);
+
+  // Safety net: if the sheet unmounts while still open (e.g. navigating away on
+  // tap), onExitComplete never fires — make sure body scroll is restored.
+  useEffect(() => unlockScroll, [unlockScroll]);
+
+  // Each motion child is a direct, keyed child of AnimatePresence — wrapping
+  // them in a Fragment would hide them from AnimatePresence and skip the exit
+  // animations entirely.
   return (
-    <AnimatePresence>
+    <AnimatePresence onExitComplete={unlockScroll}>
       {open && (
-        <>
-          {/* Backdrop — explicit onClick so tapping outside the panel closes
-              the sheet even though it lives outside the trigger's subtree. */}
-          <motion.div
+        // Backdrop — explicit onClick so tapping outside the panel closes the
+        // sheet even though it lives outside the trigger's subtree.
+        <motion.div
+          key="backdrop"
+          aria-hidden="true"
+          onClick={onClose}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-[2px]"
+        />
+      )}
+      {open && (
+        <motion.div
+          key="sheet"
+          role="menu"
+          aria-label="Account"
+          initial={{ y: '100%' }}
+          animate={{ y: 0 }}
+          exit={{ y: '100%' }}
+          transition={{ type: 'spring', stiffness: 380, damping: 38 }}
+          className="fixed inset-x-0 bottom-0 z-50 bg-white rounded-t-2xl pt-3
+            pb-[max(1rem,env(safe-area-inset-bottom))]
+            shadow-[0_-20px_50px_-12px_rgba(15,23,42,0.25)]"
+        >
+          {/* Grab-handle affordance. */}
+          <div
             aria-hidden="true"
-            onClick={onClose}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-[2px]"
+            className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200"
           />
-          <motion.div
-            role="menu"
-            aria-label="Account"
-            initial={{ y: '100%' }}
-            animate={{ y: 0 }}
-            exit={{ y: '100%' }}
-            transition={{ type: 'spring', stiffness: 380, damping: 38 }}
-            className="fixed inset-x-0 bottom-0 z-50 bg-white rounded-t-2xl pt-3
-              pb-[max(1rem,env(safe-area-inset-bottom))]
-              shadow-[0_-20px_50px_-12px_rgba(15,23,42,0.25)]"
-          >
-            {/* Grab-handle affordance. */}
-            <div
+
+          {/* Who's signed in — name is hidden in the trigger on small screens,
+              so surface it here. */}
+          <div className="flex items-center gap-3 px-5 pb-3">
+            <span
               aria-hidden="true"
-              className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200"
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-slate-900
+                text-white ring-1 ring-slate-200 shadow-sm font-display font-extrabold
+                tracking-tight text-sm"
+            >
+              {initials}
+            </span>
+            <span className="min-w-0 truncate text-base font-bold text-slate-800">
+              {name}
+            </span>
+          </div>
+
+          <div className="h-px bg-slate-100" />
+
+          {/* Plain <div>, not a <nav> landmark — an intervening landmark would
+              break the role="menu" → role="menuitem" ownership. */}
+          <div className="px-3 pt-2">
+            <SheetItem href="/profile" label="Profile" onSelect={onClose} />
+            <SheetItem
+              href="/profile/settings"
+              label="Settings"
+              onSelect={onClose}
             />
-
-            {/* Who's signed in — name is hidden in the trigger on small screens,
-                so surface it here. */}
-            <div className="flex items-center gap-3 px-5 pb-3">
-              <span
-                aria-hidden="true"
-                className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-slate-900
-                  text-white ring-1 ring-slate-200 shadow-sm font-display font-extrabold
-                  tracking-tight text-sm"
-              >
-                {initials}
-              </span>
-              <span className="min-w-0 truncate text-base font-bold text-slate-800">
-                {name}
-              </span>
-            </div>
-
-            <div className="h-px bg-slate-100" />
-
-            <nav className="px-3 pt-2">
-              <SheetItem href="/profile" label="Profile" onSelect={onClose} />
-              <SheetItem
-                href="/profile/settings"
-                label="Settings"
-                onSelect={onClose}
-              />
-            </nav>
-          </motion.div>
-        </>
+          </div>
+        </motion.div>
       )}
     </AnimatePresence>
   );
