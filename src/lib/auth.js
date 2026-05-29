@@ -3,7 +3,7 @@ import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { nextCookies } from 'better-auth/next-js';
 import { APIError } from 'better-auth/api';
 import { prisma } from '@/lib/prisma';
-import { normalizeUserProfile, deriveNameParts } from '@/lib/user-profile';
+import { normalizeUserProfile, normalizeProfileUpdate, deriveNameParts } from '@/lib/user-profile';
 
 /**
  * Social OAuth providers, registered only when their credentials are present
@@ -98,6 +98,28 @@ export const auth = betterAuth({
             throw new APIError('BAD_REQUEST', { message: result.error });
           }
           return { data: result.data };
+        },
+      },
+      // Parity guard for self-service profile edits (`/update-user`, via the
+      // settings form). The create hook above only fires on sign-up, so without
+      // this an authenticated user could PATCH a whitespace-only name, an
+      // arbitrary gender, or a bad birthday straight past the client checks.
+      // Update payloads are partial, so `normalizeProfileUpdate` only normalizes
+      // the profile fields actually present and leaves everything else (and
+      // internal updates like emailVerified/session bookkeeping) untouched.
+      update: {
+        before(data) {
+          const result = normalizeProfileUpdate(data);
+          if (result.error) {
+            throw new APIError('BAD_REQUEST', { message: result.error });
+          }
+          // Echo the incoming payload back with the normalized profile fields
+          // layered on top, so the returned `data` always carries every field
+          // being updated. Better Auth 1.6.11 already merges a hook's `data`
+          // onto the payload, but spelling the merge out here keeps non-profile
+          // updates (image, name-only, emailVerified, …) correct regardless of
+          // that internal merge-vs-replace behavior.
+          return { data: { ...data, ...result.data } };
         },
       },
     },

@@ -93,6 +93,68 @@ export function normalizeUserProfile(data, { requireNames = true } = {}) {
 }
 
 /**
+ * Validate and normalize a PARTIAL profile-update payload — the counterpart to
+ * `normalizeUserProfile` for Better Auth's `databaseHooks.user.update.before`.
+ *
+ * An update carries only the fields being changed, so this touches present keys
+ * only and never invents or blanks an absent field — returning an empty `name`
+ * here would wipe the user's real name. When BOTH first and last name are in the
+ * payload it recomputes `name` to keep it consistent; with only one present it
+ * leaves `name` alone, since a hook can't form "First Last" without the other
+ * half (which lives in the DB, not the partial payload).
+ *
+ * Mirrors the create-time guards so a direct `/update-user` API call can't
+ * persist whitespace-only names, an out-of-allowlist gender, or an unparseable
+ * birthday — the settings form checks these client-side, but that's bypassable.
+ *
+ * @param {Record<string, unknown>} data - the partial update payload
+ * @returns {{data: Record<string, unknown>} | {error: string}}
+ */
+export function normalizeProfileUpdate(data) {
+  const normalized = {};
+
+  for (const field of REQUIRED_PROFILE_FIELDS) {
+    if (!(field in data)) continue;
+    const value = typeof data[field] === 'string' ? data[field].trim() : '';
+    // A name field is optional to *include* in an update, but when included it
+    // must carry a real value — an empty/whitespace name is never valid.
+    if (!value) return { error: `${field} is required.` };
+    normalized[field] = value;
+  }
+
+  // Recompute the core `name` only when both halves are present; with one absent
+  // we can't build a correct "First Last" without reading the existing record.
+  if ('firstName' in normalized && 'lastName' in normalized) {
+    normalized.name = `${normalized.firstName} ${normalized.lastName}`.trim();
+  }
+
+  for (const field of OPTIONAL_PROFILE_FIELDS) {
+    if (!(field in data)) continue;
+    const value = typeof data[field] === 'string' ? data[field].trim() : '';
+    normalized[field] = value || null;
+  }
+
+  if (normalized.gender != null && !GENDER_OPTIONS.includes(normalized.gender)) {
+    return { error: 'Please choose a valid gender option.' };
+  }
+
+  if ('birthday' in data) {
+    const raw = data.birthday;
+    if (raw === null || raw === undefined || raw === '') {
+      normalized.birthday = null;
+    } else {
+      const birthday = raw instanceof Date ? raw : new Date(raw);
+      if (Number.isNaN(birthday.getTime())) {
+        return { error: 'Please enter a valid birthday.' };
+      }
+      normalized.birthday = birthday;
+    }
+  }
+
+  return { data: normalized };
+}
+
+/**
  * Best-effort first/last name for an OAuth sign-up. Providers expose names
  * differently — Google sends `given_name`/`family_name` plus a combined
  * `name`. Prefer the structured parts and backfill whichever is missing by
