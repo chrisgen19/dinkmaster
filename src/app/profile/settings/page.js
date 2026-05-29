@@ -49,7 +49,7 @@ export default async function ProfileSettingsPage() {
         <div className="absolute -top-24 right-0 h-80 w-80 rounded-full bg-sky-200/25 blur-3xl" />
       </div>
 
-      <main className="flex-1 w-full max-w-2xl mx-auto px-4 md:px-6 lg:px-8 pt-4 md:pt-6 pb-12 space-y-8">
+      <main className="flex-1 w-full max-w-5xl mx-auto px-4 md:px-6 lg:px-8 pt-4 md:pt-6 pb-12 space-y-8">
         <BackPill fallbackHref="/profile" label="Back to profile" />
 
         <header className="animate-fade-in [animation-delay:40ms]">
