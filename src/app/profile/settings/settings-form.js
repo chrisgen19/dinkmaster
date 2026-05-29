@@ -249,7 +249,10 @@ function PasswordSection() {
       const { error: changeError } = await authClient.changePassword({
         currentPassword,
         newPassword,
-        revokeOtherSessions: false,
+        // Sign other devices out on a password change — if the change is a
+        // response to suspected compromise, lingering sessions defeat it. The
+        // current session is preserved, so the user stays signed in here.
+        revokeOtherSessions: true,
       });
       if (changeError) {
         // A Google-only account has no credential/password — Better Auth
@@ -477,8 +480,8 @@ function GoogleSection() {
 
           {unlinkLocked && (
             <p className="text-xs text-slate-500">
-              Google is your only sign-in method. Set a password before unlinking so
-              you don’t get locked out.
+              Google is your only sign-in method, so it can’t be removed — that would
+              leave you locked out of your account.
             </p>
           )}
 

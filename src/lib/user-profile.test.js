@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   normalizeUserProfile,
+  normalizeProfileUpdate,
   deriveNameParts,
   REQUIRED_PROFILE_FIELDS,
   OPTIONAL_PROFILE_FIELDS,
@@ -157,6 +158,72 @@ describe('normalizeUserProfile — registration profile contract', () => {
       expect(result.error).toBeUndefined();
       expect(result.data).toMatchObject({ firstName: 'Player', name: 'Player' });
     });
+  });
+});
+
+describe('normalizeProfileUpdate — partial self-service update contract', () => {
+  it('trims first/last and recomputes name when both are present', () => {
+    const result = normalizeProfileUpdate({ firstName: '  Jane  ', lastName: ' Doe ' });
+    expect(result.error).toBeUndefined();
+    expect(result.data).toEqual({ firstName: 'Jane', lastName: 'Doe', name: 'Jane Doe' });
+  });
+
+  it('does not recompute name when only one name half is present', () => {
+    const result = normalizeProfileUpdate({ firstName: 'Jane' });
+    expect(result.error).toBeUndefined();
+    expect(result.data).toEqual({ firstName: 'Jane' });
+    expect('name' in result.data).toBe(false);
+  });
+
+  it('only returns the fields present in the payload (no blanking absentees)', () => {
+    const result = normalizeProfileUpdate({ phone: ' 0917 ' });
+    expect(result.data).toEqual({ phone: '0917' });
+  });
+
+  it('returns an empty object for a payload with no profile fields', () => {
+    // e.g. an internal update touching emailVerified — must pass through clean.
+    const result = normalizeProfileUpdate({ emailVerified: true });
+    expect(result.error).toBeUndefined();
+    expect(result.data).toEqual({});
+  });
+
+  it.each(REQUIRED_PROFILE_FIELDS)('rejects a present-but-whitespace %s', (field) => {
+    const result = normalizeProfileUpdate({ [field]: '   ' });
+    expect(result.data).toBeUndefined();
+    expect(result.error).toContain(field);
+  });
+
+  it.each(OPTIONAL_PROFILE_FIELDS.filter((f) => f !== 'gender'))(
+    'normalizes a present-but-blank %s to null',
+    (field) => {
+      const result = normalizeProfileUpdate({ [field]: '   ' });
+      expect(result.data[field]).toBeNull();
+    },
+  );
+
+  it('rejects a gender outside the allowlist', () => {
+    const result = normalizeProfileUpdate({ gender: 'Wizard' });
+    expect(result.data).toBeUndefined();
+    expect(result.error).toMatch(/gender/i);
+  });
+
+  it('normalizes a blank gender to null', () => {
+    const result = normalizeProfileUpdate({ gender: '' });
+    expect(result.error).toBeUndefined();
+    expect(result.data.gender).toBeNull();
+  });
+
+  it.each([null, ''])('normalizes a blank birthday (%s) to null', (birthday) => {
+    const result = normalizeProfileUpdate({ birthday });
+    expect(result.error).toBeUndefined();
+    expect(result.data.birthday).toBeNull();
+  });
+
+  it('coerces a valid birthday string to a Date and rejects a bad one', () => {
+    expect(normalizeProfileUpdate({ birthday: '1990-01-01' }).data.birthday).toBeInstanceOf(Date);
+    const bad = normalizeProfileUpdate({ birthday: 'not-a-date' });
+    expect(bad.data).toBeUndefined();
+    expect(bad.error).toMatch(/birthday/i);
   });
 });
 
