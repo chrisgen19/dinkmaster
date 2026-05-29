@@ -51,17 +51,34 @@ export function AuthStatus() {
 }
 
 /**
- * Avatar + name trigger that opens a small dropdown (Profile / Settings) on
- * hover and on keyboard focus. Dismisses on mouse-leave, Escape, blur-out, and
- * outside-click so it behaves for both pointer and keyboard users.
+ * Avatar + name trigger that opens a small dropdown (Profile / Settings).
+ *
+ * Interaction is device-appropriate: on hover-capable pointers (desktop) the
+ * menu opens on hover and keyboard focus for convenience; on touch devices it's
+ * a plain tap-to-toggle so it doesn't depend on hover that doesn't exist there.
+ * Either way it dismisses on Escape and outside-click (and blur-out on desktop).
  *
  * @param {object} props
  * @param {string} props.name - The signed-in user's display name.
  */
 function UserMenu({ name }) {
   const [open, setOpen] = useState(false);
+  // Default to non-hover so SSR and touch devices get tap-to-toggle by default;
+  // upgraded to hover handlers only once we confirm a hover-capable pointer.
+  const [canHover, setCanHover] = useState(false);
   const containerRef = useRef(null);
   const initials = monogram(name);
+
+  // Detect hover capability rather than guessing from screen width, so we only
+  // wire up hover handlers on devices that actually have a fine, hovering
+  // pointer (desktop). Touch devices stay on the tap-to-toggle path.
+  useEffect(() => {
+    const mql = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const update = () => setCanHover(mql.matches);
+    update();
+    mql.addEventListener('change', update);
+    return () => mql.removeEventListener('change', update);
+  }, []);
 
   // Outside-click + Escape dismissal. Only wired up while the menu is open so
   // we're not holding global listeners for every signed-in header.
@@ -88,15 +105,19 @@ function UserMenu({ name }) {
     if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);
   };
 
+  // Hover/focus convenience is desktop-only: on touch devices these would fight
+  // the click toggle, so we attach them only when a hovering pointer is present.
+  const hoverHandlers = canHover
+    ? {
+        onMouseEnter: () => setOpen(true),
+        onMouseLeave: () => setOpen(false),
+        onFocus: () => setOpen(true),
+        onBlur: handleBlur,
+      }
+    : {};
+
   return (
-    <div
-      ref={containerRef}
-      className="relative"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-      onFocus={() => setOpen(true)}
-      onBlur={handleBlur}
-    >
+    <div ref={containerRef} className="relative" {...hoverHandlers}>
       <button
         type="button"
         aria-haspopup="menu"
