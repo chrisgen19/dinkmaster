@@ -121,14 +121,18 @@ function UserMenu({ name }) {
       </button>
 
       {open && (
-        <div
-          role="menu"
-          aria-label="Account"
-          className="absolute right-0 top-full z-50 mt-1.5 w-44 rounded-xl border border-slate-200
-            bg-white p-1 shadow-lg shadow-slate-900/5"
-        >
-          <MenuItem href="/profile" label="Profile" />
-          <MenuItem href="/profile/settings" label="Settings" />
+        // Wrapper uses top padding (not margin) so the gap between the trigger
+        // and the card stays inside the hoverable area — otherwise the cursor
+        // crosses an unhovered void and `onMouseLeave` closes the menu.
+        <div className="absolute right-0 top-full z-50 w-44 pt-1.5">
+          <div
+            role="menu"
+            aria-label="Account"
+            className="w-full rounded-xl border border-slate-200 bg-white p-1 shadow-lg shadow-slate-900/5"
+          >
+            <MenuItem href="/profile" label="Profile" />
+            <MenuItem href="/profile/settings" label="Settings" />
+          </div>
         </div>
       )}
     </div>
