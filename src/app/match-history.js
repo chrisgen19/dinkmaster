@@ -413,7 +413,7 @@ function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie }) {
           <span 
             className="inline-flex items-center gap-1.5 text-xs md:text-[13px] font-black bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-2.5 py-1 rounded-xl shadow-xs shadow-emerald-500/10 transition-all duration-300 hover:scale-102"
           >
-            <svg className="w-3.5 h-3.5 text-emerald-100 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+            <svg className="w-3.5 h-3.5 text-emerald-100 shrink-0 hidden sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
               <circle cx="12" cy="7" r="4" />
             </svg>
@@ -448,7 +448,7 @@ function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie }) {
                 ].join(' ')}
                 title={p.firstName}
               >
-                <svg className={`w-3.5 h-3.5 ${iconClass} shrink-0`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <svg className={`w-3.5 h-3.5 ${iconClass} shrink-0 hidden sm:block`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                   <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                   <circle cx="12" cy="7" r="4" />
                 </svg>
