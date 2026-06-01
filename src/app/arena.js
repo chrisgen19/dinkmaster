@@ -971,20 +971,24 @@ export default function Arena({
         onSelectTab={handleSelectTab}
       />
 
-      {/* Main Grid Workspace */}
+      {/* Main Grid Workspace
+          The PaddleRack is rendered in two positions so DOM order always
+          matches visual order at every breakpoint:
+            • Position 1 (desktop-only): left sidebar, first in DOM → correct
+              left-to-right focus order on lg+.
+            • Position 2 (mobile-only): below the tab content, second in DOM →
+              correct top-to-bottom focus order on mobile.
+          Only one is visible at a time via responsive display utilities. */}
       <main className="flex-1 p-4 pb-28 md:p-6 md:pb-8 lg:p-8 lg:pb-10 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
-        {/* Left Column: PaddleRack — sticks on lg+ so it stays visible while
-            users scroll through Match Log, Stats, etc. on the right. On mobile
-            (single-column, below lg) it only belongs to the Active Courts tab,
-            so hide it on the other tabs; the lg+ sidebar always shows. */}
+        {/* Left Column: PaddleRack — desktop only (hidden below lg).
+            First in DOM so keyboard focus flows left → right on lg+. */}
         <div
           style={{ top: headerHeight + tabBarHeight }}
-          className={`lg:col-span-5 lg:sticky lg:self-start space-y-6 ${
-            activeTab === 'courts' ? '' : 'hidden lg:block'
-          }`}
+          className="hidden lg:block lg:col-span-5 lg:sticky lg:self-start space-y-6"
         >
           <PaddleRackStack
+            idPrefix="rack-desktop"
             queue={queue}
             players={displayPlayers}
             canManage={canManage}
@@ -1161,6 +1165,31 @@ export default function Arena({
           )}
 
           </ArenaContentSwipe>
+        </div>
+
+        {/* PaddleRack — mobile only (hidden at lg+, where the desktop
+            instance above takes over). Visible below lg only on the
+            Active Courts tab; hidden on all other tabs. Second in DOM
+            so mobile keyboard focus flows top → bottom (courts → rack). */}
+        <div className={`space-y-6 ${activeTab === 'courts' ? 'lg:hidden' : 'hidden'}`}>
+          <PaddleRackStack
+            idPrefix="rack-mobile"
+            queue={queue}
+            players={displayPlayers}
+            canManage={canManage}
+            viewerUserId={viewerUserId}
+            autoMix={autoMix}
+            onToggleAutoMix={setAutoMix}
+            onAddPlayers={() => setRosterModalOpen(true)}
+            onShuffle={handleShuffleQueue}
+            onUnrackPlayer={handleUnrackPlayer}
+            onSkipPlayer={handleSkipPlayer}
+            isPending={isPending}
+            starveThreshold={matchmakingProp.starveThreshold}
+            emergencyWait={matchmakingProp.emergencyWait}
+            skipRestoresPriority={matchmakingProp.skipRestoresPriority}
+            errorMsg={errorMsg}
+          />
         </div>
       </main>
 
