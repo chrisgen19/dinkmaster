@@ -927,38 +927,10 @@ export default function Arena({
       {/* Main Grid Workspace */}
       <main className="flex-1 p-4 pb-28 md:p-6 md:pb-8 lg:p-8 lg:pb-10 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
-        {/* Left Column: PaddleRack — sticks on lg+ so it stays visible while
-            users scroll through Match Log, Stats, etc. on the right. On mobile
-            (single-column, below lg) it only belongs to the Active Courts tab,
-            so hide it on the other tabs; the lg+ sidebar always shows.
-            On mobile, push below the courts panel via order-2. */}
-        <div
-          style={{ top: headerHeight + tabBarHeight }}
-          className={`order-2 lg:order-none lg:col-span-5 lg:sticky lg:self-start space-y-6 ${
-            activeTab === 'courts' ? '' : 'hidden lg:block'
-          }`}
-        >
-          <PaddleRackStack
-            queue={queue}
-            players={displayPlayers}
-            canManage={canManage}
-            viewerUserId={viewerUserId}
-            autoMix={autoMix}
-            onToggleAutoMix={setAutoMix}
-            onAddPlayers={() => setRosterModalOpen(true)}
-            onShuffle={handleShuffleQueue}
-            onUnrackPlayer={handleUnrackPlayer}
-            onSkipPlayer={handleSkipPlayer}
-            isPending={isPending}
-            starveThreshold={matchmakingProp.starveThreshold}
-            emergencyWait={matchmakingProp.emergencyWait}
-            skipRestoresPriority={matchmakingProp.skipRestoresPriority}
-            errorMsg={errorMsg}
-          />
-        </div>
-
-        {/* Right Column: Tab content — on mobile, pull above the rack via order-1 */}
-        <div className="order-1 lg:order-none lg:col-span-7 space-y-6">
+        {/* Tab content — first in DOM so mobile reading/tab order matches
+            visual order (courts above the rack). On lg+, lg:order-2 pushes
+            this to the right column while the rack sits on the left. */}
+        <div className="lg:order-2 lg:col-span-7 space-y-6">
 
           {/* Scroll target — selecting a tab on mobile scrolls here. */}
           <div ref={contentAnchorRef} className="scroll-mt-24" aria-hidden="true" />
@@ -1114,6 +1086,37 @@ export default function Arena({
           )}
 
           </ArenaContentSwipe>
+        </div>
+
+        {/* Left Column: PaddleRack — sticks on lg+ so it stays visible while
+            users scroll through Match Log, Stats, etc. on the right. On mobile
+            (single-column, below lg) it only belongs to the Active Courts tab,
+            so hide it on the other tabs; the lg+ sidebar always shows.
+            Second in DOM so mobile reading/tab order matches visual order;
+            lg:order-1 restores the left-column position on desktop. */}
+        <div
+          style={{ top: headerHeight + tabBarHeight }}
+          className={`lg:order-1 lg:col-span-5 lg:sticky lg:self-start space-y-6 ${
+            activeTab === 'courts' ? '' : 'hidden lg:block'
+          }`}
+        >
+          <PaddleRackStack
+            queue={queue}
+            players={displayPlayers}
+            canManage={canManage}
+            viewerUserId={viewerUserId}
+            autoMix={autoMix}
+            onToggleAutoMix={setAutoMix}
+            onAddPlayers={() => setRosterModalOpen(true)}
+            onShuffle={handleShuffleQueue}
+            onUnrackPlayer={handleUnrackPlayer}
+            onSkipPlayer={handleSkipPlayer}
+            isPending={isPending}
+            starveThreshold={matchmakingProp.starveThreshold}
+            emergencyWait={matchmakingProp.emergencyWait}
+            skipRestoresPriority={matchmakingProp.skipRestoresPriority}
+            errorMsg={errorMsg}
+          />
         </div>
       </main>
 
