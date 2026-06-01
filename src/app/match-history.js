@@ -7,6 +7,8 @@ import {
   summarise,
   viewerWon,
   winnerSide,
+  scoreSpreadClass,
+  scoreSplitColors,
 } from '@/lib/match-history';
 
 /**
@@ -15,7 +17,7 @@ import {
  *
  *   - `neutral` — Team A vs Team B, no viewer bias. Used by the arena's
  *     History tab to show every game played on every court.
- *   - `player`  — viewer is always on side A; outcome rail, score order, and
+ *   - `player`  — viewer is always on side A; outcome vertical indicator pill, score order, and
  *     differential are colored from their perspective. Adds the optional
  *     summary header (W/L/streak) and All/Wins/Losses filter chips.
  *
@@ -257,14 +259,14 @@ function FilterPills({ active, onChange, stats }) {
  *  stick against. */
 function GroupHeader({ label, count }) {
   return (
-    <div className="sticky top-0 z-10 -mx-5 md:-mx-6 px-5 md:px-6 py-2 bg-white/95 backdrop-blur-sm border-b border-slate-100 mb-3">
-      <div className="flex items-baseline justify-between">
-        <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500">
+    <div className="sticky top-0 z-10 -mx-5 md:-mx-6 px-5 md:px-6 py-2.5 bg-slate-50/85 backdrop-blur-md border-b border-slate-200/40 mb-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-600">
           {label}
         </p>
-        <p className="text-[10px] font-bold tabular-nums text-slate-400">
+        <span className="inline-flex items-center gap-1 bg-emerald-50/70 text-emerald-700 ring-1 ring-emerald-200/50 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider">
           {count} {count === 1 ? 'match' : 'matches'}
-        </p>
+        </span>
       </div>
     </div>
   );
@@ -276,110 +278,199 @@ function MatchRow({ match, perspective, formatTime }) {
   const youWon = perspective === 'player' ? viewerWon(match) : null;
   const diff = differential(match);
 
-  // Rail tone: emerald when the focused side won, slate when they lost / tie /
-  // neutral. In neutral mode the focused side is always Team A.
-  const railWon = perspective === 'player' ? youWon === true : winner === 'a';
-  const railClass = railWon
-    ? 'bg-emerald-500'
-    : winner === 'tie'
-      ? 'bg-slate-300'
+  // Border & Glow styling based on outcome
+  const isPos = perspective === 'player' ? youWon === true : winner === 'a';
+  const isTie = winner === 'tie';
+  
+  const desktopGlowClass = isPos
+    ? 'sm:border-emerald-200/70 sm:shadow-[0_6px_24px_rgba(16,185,129,0.03)] sm:hover:border-emerald-400 sm:hover:shadow-[0_12px_32px_rgba(16,185,129,0.07)]'
+    : isTie
+      ? 'sm:border-slate-200/70 sm:hover:border-slate-300 sm:hover:shadow-[0_8px_24px_rgba(15,23,42,0.03)]'
+      : 'sm:border-slate-200/50 sm:hover:border-slate-300 sm:hover:shadow-[0_8px_24px_rgba(15,23,42,0.03)]';
+
+  const indicatorClass = isPos
+    ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'
+    : isTie
+      ? 'bg-slate-400'
       : 'bg-slate-200';
 
   return (
     <article
       className={[
-        'relative grid grid-cols-[3px_1fr] gap-3 rounded-xl overflow-hidden',
-        'border border-slate-200/70 bg-white',
-        'hover:border-slate-300 hover:shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
-        'transition',
+        'relative overflow-hidden bg-white pl-4 pr-0 sm:pl-8 sm:pr-5 py-5',
+        'border-b border-x-0 border-dashed border-slate-300 rounded-none',
+        'sm:border sm:border-solid sm:rounded-3xl',
+        desktopGlowClass,
+        'transition-all duration-300 ease-out sm:hover:-translate-y-0.5 group',
       ].join(' ')}
     >
-      <span className={railClass} aria-hidden="true" />
+      {/* Elegant vertical outcome pill nested on the left edge */}
+      <div 
+        className={[
+          'absolute left-1.5 sm:left-3 top-1/2 -translate-y-1/2 w-1 h-12 rounded-full transition-colors duration-300',
+          indicatorClass
+        ].join(' ')}
+        aria-hidden="true" 
+      />
 
-      <div className="py-3 pr-4 min-w-0">
-        {/* Meta row */}
-        <div className="flex items-center justify-between gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="truncate">{match.courtName}</span>
-            {match.arenaName && (
-              <>
-                <Dot />
-                <span className="truncate text-slate-500">{match.arenaName}</span>
-              </>
-            )}
-          </div>
-          <span className="shrink-0 normal-case tracking-normal text-slate-400 font-medium">
-            {formatTime(match.timestamp)}
-          </span>
+      {/* Top glowing accent line (hover revealed) */}
+      <div 
+        className={[
+          'absolute top-0 inset-x-0 h-[3px] transition-transform duration-500 origin-left scale-x-0 group-hover:scale-x-100',
+          isPos ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : 'bg-gradient-to-r from-slate-300 to-slate-400'
+        ].join(' ')}
+        aria-hidden="true" 
+      />
+
+      {/* Meta Row */}
+      <div className="flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 mb-4 pb-3 border-b border-slate-100/70">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <svg className="w-3.5 h-3.5 text-slate-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M3 12h18M12 4v16" />
+          </svg>
+          <span className="font-display font-black text-slate-800 tracking-[0.12em] truncate">{match.courtName}</span>
+          {match.arenaName && (
+            <span className="truncate font-sans font-extrabold text-[8px] tracking-wider text-slate-500 bg-slate-100 border border-slate-200/40 rounded-full px-2.5 py-0.5 normal-case">
+              {match.arenaName}
+            </span>
+          )}
         </div>
-
-        {/* Teams + score — in player mode the viewer's side always sits on
-            the left so the row reads "you : them". Ordering happens once
-            here so the team column and the score column can't drift apart
-            (which would put the wrong score under the wrong name). */}
-        {(() => {
-          const viewerOnLeft = perspective !== 'player' || youOn !== 'b';
-          const leftSide = viewerOnLeft ? 'a' : 'b';
-          const rightSide = viewerOnLeft ? 'b' : 'a';
-          return (
-            <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-center">
-              <TeamCell
-                team={match.teams[leftSide]}
-                isYou={youOn === leftSide}
-                isWinner={winner === leftSide}
-                align="left"
-                label={labelFor(leftSide, perspective, youOn)}
-              />
-
-              <ScoreBlock
-                scoreLeft={match.teams[leftSide].score}
-                scoreRight={match.teams[rightSide].score}
-                leftWon={winner === leftSide}
-                rightWon={winner === rightSide}
-                differential={diff}
-                perspective={perspective}
-                youWon={youWon}
-              />
-
-              <TeamCell
-                team={match.teams[rightSide]}
-                isYou={youOn === rightSide}
-                isWinner={winner === rightSide}
-                align="right"
-                label={labelFor(rightSide, perspective, youOn)}
-              />
-            </div>
-          );
-        })()}
+        <div className="flex items-center gap-1.5 shrink-0 font-medium normal-case tracking-normal text-slate-400 font-mono text-[10px]">
+          <svg className="w-3.5 h-3.5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 6v6l4 2" />
+          </svg>
+          <span>{formatTime(match.timestamp)}</span>
+        </div>
       </div>
+
+      {/* Teams + score */}
+      {(() => {
+        const viewerOnLeft = perspective !== 'player' || youOn !== 'b';
+        const leftSide = viewerOnLeft ? 'a' : 'b';
+        const rightSide = viewerOnLeft ? 'b' : 'a';
+        return (
+          <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-center">
+            <TeamCell
+              team={match.teams[leftSide]}
+              isYou={youOn === leftSide}
+              isWinner={winner === leftSide}
+              align="left"
+              label={labelFor(leftSide, perspective, youOn)}
+              perspective={perspective}
+              isTie={winner === 'tie'}
+            />
+
+            <ScoreBlock
+              scoreLeft={match.teams[leftSide].score}
+              scoreRight={match.teams[rightSide].score}
+              leftWon={winner === leftSide}
+              rightWon={winner === rightSide}
+              differential={diff}
+              perspective={perspective}
+              youWon={youWon}
+            />
+
+            <TeamCell
+              team={match.teams[rightSide]}
+              isYou={youOn === rightSide}
+              isWinner={winner === rightSide}
+              align="right"
+              label={labelFor(rightSide, perspective, youOn)}
+              perspective={perspective}
+              isTie={winner === 'tie'}
+            />
+          </div>
+        );
+      })()}
     </article>
   );
 }
 
-function TeamCell({ team, isYou, isWinner, align, label }) {
-  const names = team.players?.length
-    ? team.players.map((p) => p.firstName).join(' & ')
-    : '—';
+function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie }) {
   const justify = align === 'right' ? 'text-right items-end' : 'text-left items-start';
+  const players = team.players ?? [];
   return (
     <div className={`flex flex-col ${justify} min-w-0`}>
-      <span
-        className={[
-          'text-[9px] font-black uppercase tracking-widest mb-1',
-          isYou ? 'text-emerald-600' : 'text-slate-400',
-        ].join(' ')}
-      >
+      {/* 1. Dynamic Outcome Badge (At the very top) */}
+      {isTie ? (
+        <span className="inline-flex items-center gap-1 text-[8px] font-black tracking-wider uppercase bg-slate-100 text-slate-500 ring-1 ring-slate-200/50 px-2 py-0.5 rounded-full shrink-0 mb-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+          Tie
+        </span>
+      ) : isWinner ? (
+        <span className="inline-flex items-center gap-1 text-[8px] font-black tracking-wider uppercase bg-emerald-500 text-white px-2 py-0.5 rounded-full shadow-xs shadow-emerald-500/10 shrink-0 mb-1.5 animate-fade-in">
+          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+          Win
+        </span>
+      ) : (
+        <span className="inline-flex items-center gap-1 text-[8px] font-black tracking-wider uppercase bg-rose-50 text-rose-600 border border-rose-100/60 px-2 py-0.5 rounded-full shrink-0 mb-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+          Lose
+        </span>
+      )}
+
+      {/* 2. Team Category Label (Below win/lose) */}
+      <span className={[
+        'text-[9px] font-extrabold uppercase tracking-[0.16em] px-0.5',
+        isYou && perspective === 'player' ? 'text-emerald-600 font-black' : 'text-slate-400'
+      ].join(' ')}>
         {label}
       </span>
-      <span
-        className={[
-          'text-xs md:text-[13px] font-bold truncate max-w-full',
-          isWinner ? 'text-slate-900' : 'text-slate-500',
-        ].join(' ')}
-        title={names}
-      >
-        {names}
-      </span>
+      
+      {/* 3. Roster of Player Badges (with explicit gap below the team label) */}
+      <div className={`flex flex-wrap gap-2 ${align === 'right' ? 'justify-end' : 'justify-start'} max-w-full mt-2.5`}>
+        {/* Render "You" pill if isYou is true and we are in player perspective */}
+        {isYou && perspective === 'player' && (
+          <span 
+            className="inline-flex items-center gap-1.5 text-xs md:text-[13px] font-black bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-2.5 py-1 rounded-xl shadow-xs shadow-emerald-500/10 transition-all duration-300 hover:scale-102"
+          >
+            <svg className="w-3.5 h-3.5 text-emerald-100 shrink-0 hidden sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+            <span>You</span>
+          </span>
+        )}
+
+        {players.length === 0 && (!isYou || perspective !== 'player') ? (
+          <span className="text-xs md:text-[13px] font-medium text-slate-400">—</span>
+        ) : (
+          players.map((p, idx) => {
+            const isViewerHighlight = isYou && perspective !== 'player';
+            
+            const badgeClass = isViewerHighlight
+              ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white border-emerald-500 font-black shadow-xs shadow-emerald-500/10'
+              : isWinner
+                ? 'bg-slate-900 text-white border-slate-900 font-bold shadow-xs'
+                : 'bg-slate-50 text-slate-600 border-slate-200/60 font-semibold hover:bg-slate-100';
+
+            const iconClass = isViewerHighlight
+              ? 'text-emerald-100'
+              : isWinner
+                ? 'text-slate-300'
+                : 'text-slate-400';
+
+            return (
+              <span
+                key={idx}
+                className={[
+                  'inline-flex items-center gap-1.5 text-xs md:text-[13px] px-2.5 py-1 rounded-xl border transition-all duration-300 truncate max-w-full',
+                  badgeClass
+                ].join(' ')}
+                title={p.firstName}
+              >
+                <svg className={`w-3.5 h-3.5 ${iconClass} shrink-0 hidden sm:block`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                  <circle cx="12" cy="7" r="4" />
+                </svg>
+                <span className="truncate">{p.firstName}</span>
+              </span>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
@@ -396,42 +487,59 @@ function labelFor(side, perspective, youOn) {
 
 /** Dumb score renderer — receives already-ordered values from the parent so
  *  the team columns and the score columns can't get out of sync. */
-function ScoreBlock({ scoreLeft, scoreRight, leftWon, rightWon, differential, perspective, youWon }) {
+export function ScoreBlock({ scoreLeft, scoreRight, leftWon, rightWon, differential, perspective, youWon }) {
   const diffSign = differential > 0 ? '+' : differential < 0 ? '−' : '';
   const diffMag = Math.abs(differential);
-  const diffTone = perspective === 'player'
-    ? youWon
-      ? 'bg-emerald-50 text-emerald-700 ring-emerald-100'
-      : 'bg-slate-50 text-slate-500 ring-slate-200'
-    : differential > 0
-      ? 'bg-emerald-50 text-emerald-700 ring-emerald-100'
-      : differential < 0
-        ? 'bg-sky-50 text-sky-700 ring-sky-100'
-        : 'bg-slate-50 text-slate-500 ring-slate-200';
+
+  // Score Split ratio calculation
+  const total = scoreLeft + scoreRight || 1;
+  const pctLeft = (scoreLeft / total) * 100;
+
+  const isPos = perspective === 'player' ? youWon === true : differential > 0;
+  const isNeg = perspective === 'player' ? youWon === false : differential < 0;
+
+  const diffClass = scoreSpreadClass(isPos, isNeg, perspective);
+
+  const winner = leftWon ? 'a' : rightWon ? 'b' : 'tie';
+  const { leftBarColor, rightBarColor } = scoreSplitColors(winner, perspective, youWon);
 
   return (
-    <div className="flex flex-col items-center">
-      <div className="flex items-baseline gap-2 font-display font-extrabold tabular-nums leading-none">
-        <span className={`text-2xl md:text-[28px] ${leftWon ? 'text-slate-900' : 'text-slate-400'}`}>
+    <div className="flex flex-col items-center justify-center shrink-0 px-2">
+      {/* Scoreboard Hub */}
+      <div className="flex items-center justify-center bg-slate-50/70 border border-slate-200/30 px-4 py-1.5 rounded-2xl shadow-3xs gap-2 font-display tabular-nums leading-none">
+        <span className={`text-2xl md:text-3xl font-black tracking-tight transition-colors duration-300 ${leftWon ? 'text-slate-900 font-black' : 'text-slate-400 font-bold'}`}>
           {scoreLeft}
         </span>
-        <span className="text-base text-slate-300 font-normal">:</span>
-        <span className={`text-2xl md:text-[28px] ${rightWon ? 'text-slate-900' : 'text-slate-400'}`}>
+        <span className="text-sm text-slate-300 font-extrabold">:</span>
+        <span className={`text-2xl md:text-3xl font-black tracking-tight transition-colors duration-300 ${rightWon ? 'text-slate-900 font-black' : 'text-slate-400 font-bold'}`}>
           {scoreRight}
         </span>
       </div>
+      
+      {/* Visual Balance Bar */}
+      <div className="w-16 h-1.5 rounded-full overflow-hidden bg-slate-100 border border-slate-200/10 mt-2.5 flex shadow-4xs shrink-0">
+        <div 
+          className={`h-full ${leftBarColor} transition-all duration-500`}
+          style={{ width: `${pctLeft}%` }} 
+        />
+        <div 
+          className={`h-full ${rightBarColor} transition-all duration-500`}
+          style={{ width: `${100 - pctLeft}%` }} 
+        />
+      </div>
+
+      {/* Spread Badge */}
       <span
-        className={`mt-1.5 text-[9px] font-extrabold uppercase tracking-widest tabular-nums px-1.5 py-0.5 rounded ring-1 ${diffTone}`}
+        className={[
+          'mt-2 text-[9px] font-black uppercase tracking-wider tabular-nums px-2 py-0.5 rounded-full transition-all duration-300 shrink-0',
+          diffClass
+        ].join(' ')}
       >
         {diffSign}
         {diffMag}
       </span>
     </div>
   );
-}
-
-function Dot() {
-  return <span className="text-slate-300" aria-hidden="true">·</span>;
 }
 
 const DEFAULT_EMPTY = {

@@ -7,6 +7,8 @@ import {
   dayLabel,
   groupByDay,
   summarise,
+  scoreSpreadClass,
+  scoreSplitColors,
 } from './match-history';
 
 const NEUTRAL = {
@@ -181,5 +183,54 @@ describe('summarise()', () => {
 
   it('winPct is null when no decided matches', () => {
     expect(summarise([]).winPct).toBeNull();
+  });
+});
+
+describe('ScoreBlock visual styles logic', () => {
+  it('selects sky tones for negative Team A differentials in neutral perspective', () => {
+    const cls = scoreSpreadClass(false, true, 'neutral');
+    expect(cls).toContain('bg-sky-50');
+    expect(cls).toContain('text-sky-700');
+    expect(cls).toContain('ring-sky-200/50');
+  });
+
+  it('selects emerald tones for positive Team A differentials in neutral perspective', () => {
+    const cls = scoreSpreadClass(true, false, 'neutral');
+    expect(cls).toContain('bg-emerald-500');
+    expect(cls).toContain('text-white');
+  });
+
+  it('selects slate tones for ties', () => {
+    const cls = scoreSpreadClass(false, false, 'neutral');
+    expect(cls).toContain('bg-slate-50');
+    expect(cls).toContain('text-slate-400');
+    expect(cls).toContain('ring-1');
+  });
+
+  it('applies dynamic split bar colors based on winner and perspective', () => {
+    // Neutral Win (Team A won)
+    const neutralWin = scoreSplitColors('a', 'neutral', null);
+    expect(neutralWin.leftBarColor).toBe('bg-emerald-500');
+    expect(neutralWin.rightBarColor).toBe('bg-slate-300');
+
+    // Neutral Loss (Team B won)
+    const neutralLoss = scoreSplitColors('b', 'neutral', null);
+    expect(neutralLoss.leftBarColor).toBe('bg-slate-300');
+    expect(neutralLoss.rightBarColor).toBe('bg-sky-500');
+
+    // Player Win
+    const playerWin = scoreSplitColors('a', 'player', true);
+    expect(playerWin.leftBarColor).toBe('bg-emerald-500');
+    expect(playerWin.rightBarColor).toBe('bg-slate-300');
+
+    // Player Loss
+    const playerLoss = scoreSplitColors('b', 'player', false);
+    expect(playerLoss.leftBarColor).toBe('bg-slate-300');
+    expect(playerLoss.rightBarColor).toBe('bg-rose-500');
+
+    // Tie
+    const tie = scoreSplitColors('tie', 'neutral', null);
+    expect(tie.leftBarColor).toBe('bg-slate-400');
+    expect(tie.rightBarColor).toBe('bg-slate-400');
   });
 });

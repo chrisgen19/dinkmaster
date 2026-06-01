@@ -231,3 +231,54 @@ function startOfDay(d) {
   x.setHours(0, 0, 0, 0);
   return x;
 }
+
+/**
+ * Resolves the CSS styling class for the scoreboard differential spread badge.
+ *
+ * @param {boolean} isPos
+ * @param {boolean} isNeg
+ * @param {string} perspective - 'player' | 'neutral'
+ * @returns {string}
+ */
+export function scoreSpreadClass(isPos, isNeg, perspective) {
+  return isPos
+    ? 'bg-emerald-500 text-white shadow-xs shadow-emerald-500/15'
+    : isNeg
+      ? perspective === 'player'
+        ? 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/50'
+        : 'bg-sky-50 text-sky-700 ring-1 ring-sky-200/50'
+      : 'bg-slate-50 text-slate-400 ring-1 ring-slate-200/50';
+}
+
+/**
+ * Resolves the progress bar segment colors for the split balance bar.
+ *
+ * @param {string} winner - 'a' | 'b' | 'tie'
+ * @param {string} perspective - 'player' | 'neutral'
+ * @param {boolean | null} youWon
+ * @returns {{ leftBarColor: string, rightBarColor: string }}
+ */
+export function scoreSplitColors(winner, perspective, youWon) {
+  let leftBarColor = 'bg-slate-300';
+  let rightBarColor = 'bg-slate-300';
+
+  if (winner === 'tie') {
+    leftBarColor = 'bg-slate-400';
+    rightBarColor = 'bg-slate-400';
+  } else if (perspective === 'player') {
+    if (youWon === true) {
+      leftBarColor = 'bg-emerald-500';
+    } else {
+      rightBarColor = 'bg-rose-500';
+    }
+  } else {
+    // Neutral perspective
+    if (winner === 'a') {
+      leftBarColor = 'bg-emerald-500';
+    } else {
+      rightBarColor = 'bg-sky-500';
+    }
+  }
+
+  return { leftBarColor, rightBarColor };
+}
