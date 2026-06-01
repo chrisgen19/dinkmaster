@@ -296,7 +296,7 @@ function MatchRow({ match, perspective, formatTime }) {
     <article
       className={[
         'relative overflow-hidden bg-white px-0 py-5 sm:p-5',
-        'border-y border-x-0 border-dashed border-slate-200/60 rounded-none',
+        'border-y border-x-0 border-dashed border-slate-300 rounded-none',
         'sm:border sm:border-solid sm:rounded-3xl',
         desktopGlowClass,
         'transition-all duration-300 ease-out sm:hover:-translate-y-0.5 group',
