@@ -377,8 +377,8 @@ function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie }) {
   const players = team.players ?? [];
   return (
     <div className={`flex flex-col ${justify} min-w-0`}>
-      {/* Category header tag & Win/Lose pill */}
-      <div className={`flex items-center gap-1.5 mb-2 ${align === 'right' ? 'flex-row-reverse' : 'flex-row'}`}>
+      {/* Category header tag & Win/Lose pill (stacked vertically for mobile compatibility) */}
+      <div className={`flex flex-col gap-1 mb-2.5 ${align === 'right' ? 'items-end' : 'items-start'}`}>
         {isYou && perspective === 'player' ? (
           <span className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700 bg-emerald-50 border border-emerald-100/60 rounded px-1.5 py-0.5">
             {label}
