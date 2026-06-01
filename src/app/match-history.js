@@ -343,6 +343,7 @@ function MatchRow({ match, perspective, formatTime }) {
               align="left"
               label={labelFor(leftSide, perspective, youOn)}
               perspective={perspective}
+              isTie={winner === 'tie'}
             />
 
             <ScoreBlock
@@ -362,6 +363,7 @@ function MatchRow({ match, perspective, formatTime }) {
               align="right"
               label={labelFor(rightSide, perspective, youOn)}
               perspective={perspective}
+              isTie={winner === 'tie'}
             />
           </div>
         );
@@ -370,15 +372,41 @@ function MatchRow({ match, perspective, formatTime }) {
   );
 }
 
-function TeamCell({ team, isYou, isWinner, align, label, perspective }) {
+function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie }) {
   const justify = align === 'right' ? 'text-right items-end' : 'text-left items-start';
   const players = team.players ?? [];
   return (
     <div className={`flex flex-col ${justify} min-w-0`}>
-      {/* Category header tag */}
-      <span className="text-[9px] font-black uppercase tracking-[0.16em] text-slate-400 mb-2 px-0.5">
-        {label}
-      </span>
+      {/* Category header tag & Win/Lose pill */}
+      <div className={`flex items-center gap-1.5 mb-2 ${align === 'right' ? 'flex-row-reverse' : 'flex-row'}`}>
+        {isYou && perspective === 'player' ? (
+          <span className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700 bg-emerald-50 border border-emerald-100/60 rounded px-1.5 py-0.5">
+            {label}
+          </span>
+        ) : (
+          <span className="text-[9px] font-extrabold uppercase tracking-[0.16em] text-slate-400 px-0.5">
+            {label}
+          </span>
+        )}
+        
+        {/* Dynamic Outcome Badge with Color Indicator */}
+        {isTie ? (
+          <span className="inline-flex items-center gap-1 text-[8px] font-black tracking-wider uppercase bg-slate-100 text-slate-500 ring-1 ring-slate-200/50 px-2 py-0.5 rounded-full shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+            Tie
+          </span>
+        ) : isWinner ? (
+          <span className="inline-flex items-center gap-1 text-[8px] font-black tracking-wider uppercase bg-emerald-500 text-white px-2 py-0.5 rounded-full shadow-xs shadow-emerald-500/10 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            Win
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-[8px] font-black tracking-wider uppercase bg-rose-50 text-rose-600 border border-rose-100/60 px-2 py-0.5 rounded-full shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+            Lose
+          </span>
+        )}
+      </div>
       
       {/* Roster of Player Badges */}
       <div className={`flex flex-wrap gap-2 ${align === 'right' ? 'justify-end' : 'justify-start'} max-w-full`}>
