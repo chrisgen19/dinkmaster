@@ -257,14 +257,14 @@ function FilterPills({ active, onChange, stats }) {
  *  stick against. */
 function GroupHeader({ label, count }) {
   return (
-    <div className="sticky top-0 z-10 -mx-5 md:-mx-6 px-5 md:px-6 py-2 bg-white/95 backdrop-blur-sm border-b border-slate-100 mb-3">
-      <div className="flex items-baseline justify-between">
-        <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500">
+    <div className="sticky top-0 z-10 -mx-5 md:-mx-6 px-5 md:px-6 py-2 bg-slate-50/85 backdrop-blur-md border-b border-slate-200/40 mb-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-black uppercase tracking-widest text-slate-600">
           {label}
         </p>
-        <p className="text-[10px] font-bold tabular-nums text-slate-400">
+        <span className="inline-flex items-center gap-1 bg-emerald-50/70 text-emerald-700 ring-1 ring-emerald-200/50 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider">
           {count} {count === 1 ? 'match' : 'matches'}
-        </p>
+        </span>
       </div>
     </div>
   );
@@ -280,7 +280,7 @@ function MatchRow({ match, perspective, formatTime }) {
   // neutral. In neutral mode the focused side is always Team A.
   const railWon = perspective === 'player' ? youWon === true : winner === 'a';
   const railClass = railWon
-    ? 'bg-emerald-500'
+    ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.35)]'
     : winner === 'tie'
       ? 'bg-slate-300'
       : 'bg-slate-200';
@@ -288,29 +288,41 @@ function MatchRow({ match, perspective, formatTime }) {
   return (
     <article
       className={[
-        'relative grid grid-cols-[3px_1fr] gap-3 rounded-xl overflow-hidden',
-        'border border-slate-200/70 bg-white',
-        'hover:border-slate-300 hover:shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
-        'transition',
+        'relative grid grid-cols-[auto_1fr] gap-4 rounded-2xl overflow-hidden',
+        'border border-slate-200/50 bg-white p-1.5 pr-4',
+        'hover:border-slate-300 hover:shadow-[0_4px_12px_rgba(15,23,42,0.03)] hover:-translate-y-0.5',
+        'transition-all duration-300 ease-out group',
       ].join(' ')}
     >
-      <span className={railClass} aria-hidden="true" />
+      <div className="flex items-center pl-2" aria-hidden="true">
+        <span className={`w-1 h-12 rounded-full ${railClass} transition-all duration-300 group-hover:scale-y-110`} />
+      </div>
 
-      <div className="py-3 pr-4 min-w-0">
+      <div className="py-2.5 min-w-0">
         {/* Meta row */}
-        <div className="flex items-center justify-between gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="truncate">{match.courtName}</span>
+        <div className="flex items-center justify-between gap-3 text-[10px] font-extrabold uppercase tracking-[0.14em] text-slate-400 mb-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <svg className="w-3.5 h-3.5 text-slate-400/80 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M3 12h18M9 3v18M15 3v18" />
+            </svg>
+            <span className="font-display font-extrabold text-slate-700 truncate">{match.courtName}</span>
             {match.arenaName && (
               <>
                 <Dot />
-                <span className="truncate text-slate-500">{match.arenaName}</span>
+                <span className="truncate font-semibold text-slate-500 bg-slate-100/70 border border-slate-200/40 rounded px-1.5 py-0.5 text-[9px] tracking-wider normal-case font-sans">
+                  {match.arenaName}
+                </span>
               </>
             )}
           </div>
-          <span className="shrink-0 normal-case tracking-normal text-slate-400 font-medium">
-            {formatTime(match.timestamp)}
-          </span>
+          <div className="flex items-center gap-1.5 shrink-0 font-medium normal-case tracking-normal text-slate-400 font-mono">
+            <svg className="w-3 h-3 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 6v6l4 2" />
+            </svg>
+            <span>{formatTime(match.timestamp)}</span>
+          </div>
         </div>
 
         {/* Teams + score — in player mode the viewer's side always sits on
@@ -357,29 +369,45 @@ function MatchRow({ match, perspective, formatTime }) {
 }
 
 function TeamCell({ team, isYou, isWinner, align, label }) {
-  const names = team.players?.length
-    ? team.players.map((p) => p.firstName).join(' & ')
-    : '—';
   const justify = align === 'right' ? 'text-right items-end' : 'text-left items-start';
+  const players = team.players ?? [];
   return (
     <div className={`flex flex-col ${justify} min-w-0`}>
-      <span
-        className={[
-          'text-[9px] font-black uppercase tracking-widest mb-1',
-          isYou ? 'text-emerald-600' : 'text-slate-400',
-        ].join(' ')}
-      >
-        {label}
-      </span>
-      <span
-        className={[
-          'text-xs md:text-[13px] font-bold truncate max-w-full',
-          isWinner ? 'text-slate-900' : 'text-slate-500',
-        ].join(' ')}
-        title={names}
-      >
-        {names}
-      </span>
+      {isYou ? (
+        <span className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700 bg-emerald-50 border border-emerald-100/60 rounded px-1.5 py-0.5 mb-1.5">
+          {label}
+        </span>
+      ) : (
+        <span className="text-[9px] font-extrabold uppercase tracking-[0.16em] text-slate-400 mb-1.5 px-0.5">
+          {label}
+        </span>
+      )}
+      
+      <div className={`flex flex-wrap gap-1.5 ${align === 'right' ? 'justify-end' : 'justify-start'} max-w-full`}>
+        {players.length === 0 ? (
+          <span className="text-xs md:text-[13px] font-medium text-slate-400">—</span>
+        ) : (
+          players.map((p, idx) => (
+            <span
+              key={idx}
+              className={[
+                'inline-flex items-center gap-1 text-xs md:text-[13px] font-bold max-w-full truncate px-2 py-0.5 rounded-lg border transition-all duration-300',
+                isWinner 
+                  ? 'text-slate-900 bg-slate-50 border-slate-200/60 shadow-3xs' 
+                  : 'text-slate-500 bg-slate-50/40 border-slate-100/40',
+                isYou && 'border-emerald-100 bg-emerald-50/20 text-emerald-950 font-black',
+              ].filter(Boolean).join(' ')}
+              title={p.firstName}
+            >
+              <svg className={`w-3.5 h-3.5 ${isYou ? 'text-emerald-500' : 'text-slate-400/80'} shrink-0`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
+              <span className="truncate">{p.firstName}</span>
+            </span>
+          ))
+        )}
+      </div>
     </div>
   );
 }
@@ -399,29 +427,32 @@ function labelFor(side, perspective, youOn) {
 function ScoreBlock({ scoreLeft, scoreRight, leftWon, rightWon, differential, perspective, youWon }) {
   const diffSign = differential > 0 ? '+' : differential < 0 ? '−' : '';
   const diffMag = Math.abs(differential);
-  const diffTone = perspective === 'player'
-    ? youWon
-      ? 'bg-emerald-50 text-emerald-700 ring-emerald-100'
-      : 'bg-slate-50 text-slate-500 ring-slate-200'
-    : differential > 0
-      ? 'bg-emerald-50 text-emerald-700 ring-emerald-100'
-      : differential < 0
-        ? 'bg-sky-50 text-sky-700 ring-sky-100'
-        : 'bg-slate-50 text-slate-500 ring-slate-200';
+
+  const isPos = perspective === 'player' ? youWon === true : differential > 0;
+  const isNeg = perspective === 'player' ? youWon === false : differential < 0;
+  
+  const diffPillClass = isPos
+    ? 'bg-emerald-500 text-white shadow-xs shadow-emerald-500/10'
+    : isNeg
+      ? 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/50'
+      : 'bg-slate-50 text-slate-400 ring-1 ring-slate-100';
 
   return (
-    <div className="flex flex-col items-center">
-      <div className="flex items-baseline gap-2 font-display font-extrabold tabular-nums leading-none">
-        <span className={`text-2xl md:text-[28px] ${leftWon ? 'text-slate-900' : 'text-slate-400'}`}>
+    <div className="flex flex-col items-center justify-center shrink-0">
+      <div className="flex items-center justify-center bg-slate-50/70 border border-slate-200/40 px-3.5 py-1 rounded-full shadow-3xs gap-2 font-display tabular-nums leading-none">
+        <span className={`text-xl md:text-2xl font-extrabold transition-colors duration-300 ${leftWon ? 'text-slate-900' : 'text-slate-400'}`}>
           {scoreLeft}
         </span>
-        <span className="text-base text-slate-300 font-normal">:</span>
-        <span className={`text-2xl md:text-[28px] ${rightWon ? 'text-slate-900' : 'text-slate-400'}`}>
+        <span className="text-xs text-slate-300 font-bold">:</span>
+        <span className={`text-xl md:text-2xl font-extrabold transition-colors duration-300 ${rightWon ? 'text-slate-900' : 'text-slate-400'}`}>
           {scoreRight}
         </span>
       </div>
       <span
-        className={`mt-1.5 text-[9px] font-extrabold uppercase tracking-widest tabular-nums px-1.5 py-0.5 rounded ring-1 ${diffTone}`}
+        className={[
+          'mt-2 text-[9px] font-black uppercase tracking-wider tabular-nums px-2 py-0.5 rounded-full transition-all duration-300',
+          diffPillClass
+        ].join(' ')}
       >
         {diffSign}
         {diffMag}
