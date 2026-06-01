@@ -170,7 +170,7 @@ export function PaddleRackStack({
       </div>
 
       {/* List */}
-      <div className="custom-scrollbar max-h-[500px] space-y-2 overflow-y-auto bg-slate-50/30 p-3 sm:p-4">
+      <div className="custom-scrollbar space-y-2 bg-slate-50/30 p-3 sm:max-h-[500px] sm:overflow-y-auto sm:p-4">
         {queue.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-white py-14 text-center">
             <span className="grid h-12 w-12 place-items-center rounded-full bg-slate-50 text-slate-300">
