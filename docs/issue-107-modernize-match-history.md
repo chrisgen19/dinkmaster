@@ -10,7 +10,7 @@ We need to upgrade the design to blend seamlessly with Dinkmaster's existing aes
 2. **Inline SVG Icons**: Introduce clean, lightweight SVG icons for Court and Time/Calendar to elevate the presentation.
 3. **Typographic Score Capsule**: Present the scores side-by-side inside a beautiful, unified score capsule with high-contrast font weights and modern pill tags for score differentials.
 4. **Glassmorphic Sticky Headers**: Transition the sticky day headers into elegant glass backdrop ribbons with matching match-count emerald badges.
-5. **Ｒoster & Highlight Upgrades**: Stylize player names and highlight the active viewer's side using clear, modern styling.
+5. **Roster & Highlight Upgrades**: Stylize player names and highlight the active viewer's side using clear, modern styling.
 
 ## Verification
 - Vitest test suite should remain 100% green.

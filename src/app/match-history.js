@@ -283,25 +283,34 @@ function MatchRow({ match, perspective, formatTime }) {
   const desktopGlowClass = isPos
     ? 'sm:border-emerald-200/70 sm:shadow-[0_6px_24px_rgba(16,185,129,0.03)] sm:hover:border-emerald-400 sm:hover:shadow-[0_12px_32px_rgba(16,185,129,0.07)]'
     : isTie
-      ? 'sm:border-slate-200/70 sm:hover:border-slate-350 sm:hover:shadow-[0_8px_24px_rgba(15,23,42,0.03)]'
+      ? 'sm:border-slate-200/70 sm:hover:border-slate-300 sm:hover:shadow-[0_8px_24px_rgba(15,23,42,0.03)]'
       : 'sm:border-slate-200/50 sm:hover:border-slate-300 sm:hover:shadow-[0_8px_24px_rgba(15,23,42,0.03)]';
 
   const indicatorClass = isPos
     ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'
     : isTie
-      ? 'bg-slate-350'
+      ? 'bg-slate-400'
       : 'bg-slate-200';
 
   return (
     <article
       className={[
-        'relative overflow-hidden bg-white px-0 py-5 sm:p-5',
+        'relative overflow-hidden bg-white pl-4 pr-0 sm:pl-8 sm:pr-5 py-5',
         'border-b border-x-0 border-dashed border-slate-300 rounded-none',
         'sm:border sm:border-solid sm:rounded-3xl',
         desktopGlowClass,
         'transition-all duration-300 ease-out sm:hover:-translate-y-0.5 group',
       ].join(' ')}
     >
+      {/* Elegant vertical outcome pill nested on the left edge */}
+      <div 
+        className={[
+          'absolute left-1.5 sm:left-3 top-1/2 -translate-y-1/2 w-1 h-12 rounded-full transition-colors duration-300',
+          indicatorClass
+        ].join(' ')}
+        aria-hidden="true" 
+      />
+
       {/* Top glowing accent line (hover revealed) */}
       <div 
         className={[
@@ -314,7 +323,10 @@ function MatchRow({ match, perspective, formatTime }) {
       {/* Meta Row */}
       <div className="flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 mb-4 pb-3 border-b border-slate-100/70">
         <div className="flex items-center gap-2.5 min-w-0">
-          <span className={`w-2 h-2 rounded-full ${indicatorClass} shrink-0`} />
+          <svg className="w-3.5 h-3.5 text-slate-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M3 12h18M12 4v16" />
+          </svg>
           <span className="font-display font-black text-slate-800 tracking-[0.12em] truncate">{match.courtName}</span>
           {match.arenaName && (
             <span className="truncate font-sans font-extrabold text-[8px] tracking-wider text-slate-500 bg-slate-100 border border-slate-200/40 rounded-full px-2.5 py-0.5 normal-case">
@@ -491,7 +503,7 @@ function ScoreBlock({ scoreLeft, scoreRight, leftWon, rightWon, differential, pe
     ? 'bg-emerald-500 text-white shadow-xs shadow-emerald-500/15'
     : isNeg
       ? 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/50'
-      : 'bg-slate-50 text-slate-400 ring-1 ring-slate-150';
+      : 'bg-slate-50 text-slate-400 ring-1 ring-slate-200/50';
 
   return (
     <div className="flex flex-col items-center justify-center shrink-0 px-2">
@@ -530,10 +542,6 @@ function ScoreBlock({ scoreLeft, scoreRight, leftWon, rightWon, differential, pe
       </span>
     </div>
   );
-}
-
-function Dot() {
-  return <span className="text-slate-300" aria-hidden="true">·</span>;
 }
 
 const DEFAULT_EMPTY = {
