@@ -1,4 +1,4 @@
-# Issue #107: Modernize Match History Design and Score Card Layout
+# Modernize Match History Design and Score Card Layout
 
 ## Description
 The current design of the `<MatchHistory>` scorecards is functional but looks generic and slightly cluttered. It relies on full-height solid color rails (`bg-emerald-500` / `bg-slate-200`) and simple text layouts that do not fully capture a premium, modern, and minimalist feel.

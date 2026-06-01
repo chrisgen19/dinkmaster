@@ -7,6 +7,8 @@ import {
   summarise,
   viewerWon,
   winnerSide,
+  scoreSpreadClass,
+  scoreSplitColors,
 } from '@/lib/match-history';
 
 /**
@@ -15,7 +17,7 @@ import {
  *
  *   - `neutral` — Team A vs Team B, no viewer bias. Used by the arena's
  *     History tab to show every game played on every court.
- *   - `player`  — viewer is always on side A; outcome rail, score order, and
+ *   - `player`  — viewer is always on side A; outcome vertical indicator pill, score order, and
  *     differential are colored from their perspective. Adds the optional
  *     summary header (W/L/streak) and All/Wins/Losses filter chips.
  *
@@ -410,15 +412,12 @@ function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie }) {
       )}
 
       {/* 2. Team Category Label (Below win/lose) */}
-      {isYou && perspective === 'player' ? (
-        <span className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700 bg-emerald-50 border border-emerald-100/60 rounded px-1.5 py-0.5">
-          {label}
-        </span>
-      ) : (
-        <span className="text-[9px] font-extrabold uppercase tracking-[0.16em] text-slate-400 px-0.5">
-          {label}
-        </span>
-      )}
+      <span className={[
+        'text-[9px] font-extrabold uppercase tracking-[0.16em] px-0.5',
+        isYou && perspective === 'player' ? 'text-emerald-600 font-black' : 'text-slate-400'
+      ].join(' ')}>
+        {label}
+      </span>
       
       {/* 3. Roster of Player Badges (with explicit gap below the team label) */}
       <div className={`flex flex-wrap gap-2 ${align === 'right' ? 'justify-end' : 'justify-start'} max-w-full mt-2.5`}>
@@ -488,7 +487,7 @@ function labelFor(side, perspective, youOn) {
 
 /** Dumb score renderer — receives already-ordered values from the parent so
  *  the team columns and the score columns can't get out of sync. */
-function ScoreBlock({ scoreLeft, scoreRight, leftWon, rightWon, differential, perspective, youWon }) {
+export function ScoreBlock({ scoreLeft, scoreRight, leftWon, rightWon, differential, perspective, youWon }) {
   const diffSign = differential > 0 ? '+' : differential < 0 ? '−' : '';
   const diffMag = Math.abs(differential);
 
@@ -498,12 +497,11 @@ function ScoreBlock({ scoreLeft, scoreRight, leftWon, rightWon, differential, pe
 
   const isPos = perspective === 'player' ? youWon === true : differential > 0;
   const isNeg = perspective === 'player' ? youWon === false : differential < 0;
-  
-  const diffClass = isPos
-    ? 'bg-emerald-500 text-white shadow-xs shadow-emerald-500/15'
-    : isNeg
-      ? 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/50'
-      : 'bg-slate-50 text-slate-400 ring-1 ring-slate-200/50';
+
+  const diffClass = scoreSpreadClass(isPos, isNeg, perspective);
+
+  const winner = leftWon ? 'a' : rightWon ? 'b' : 'tie';
+  const { leftBarColor, rightBarColor } = scoreSplitColors(winner, perspective, youWon);
 
   return (
     <div className="flex flex-col items-center justify-center shrink-0 px-2">
@@ -521,11 +519,11 @@ function ScoreBlock({ scoreLeft, scoreRight, leftWon, rightWon, differential, pe
       {/* Visual Balance Bar */}
       <div className="w-16 h-1.5 rounded-full overflow-hidden bg-slate-100 border border-slate-200/10 mt-2.5 flex shadow-4xs shrink-0">
         <div 
-          className="h-full bg-emerald-500 transition-all duration-500" 
+          className={`h-full ${leftBarColor} transition-all duration-500`}
           style={{ width: `${pctLeft}%` }} 
         />
         <div 
-          className="h-full bg-slate-300 transition-all duration-500" 
+          className={`h-full ${rightBarColor} transition-all duration-500`}
           style={{ width: `${100 - pctLeft}%` }} 
         />
       </div>
