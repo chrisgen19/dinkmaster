@@ -292,31 +292,16 @@ function MatchRow({ match, perspective, formatTime }) {
       ? 'sm:border-slate-200/70 sm:hover:border-slate-300 sm:hover:shadow-[0_8px_24px_rgba(15,23,42,0.03)]'
       : 'sm:border-slate-200/50 sm:hover:border-slate-300 sm:hover:shadow-[0_8px_24px_rgba(15,23,42,0.03)]';
 
-  const indicatorClass = isPos
-    ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'
-    : isTie
-      ? 'bg-slate-400'
-      : 'bg-slate-200';
-
   return (
     <article
       className={[
-        'relative overflow-hidden bg-white pl-4 pr-0 sm:pl-8 sm:pr-5 py-5',
+        'relative overflow-hidden bg-white px-0 sm:px-5 py-5',
         'border-b border-x-0 border-dashed border-slate-300 rounded-none',
         'sm:border sm:border-solid sm:rounded-3xl',
         desktopGlowClass,
         'transition-all duration-300 ease-out sm:hover:-translate-y-0.5 group',
       ].join(' ')}
     >
-      {/* Elegant vertical outcome pill nested on the left edge */}
-      <div 
-        className={[
-          'absolute left-1.5 sm:left-3 top-1/2 -translate-y-1/2 w-1 h-12 rounded-full transition-colors duration-300',
-          indicatorClass
-        ].join(' ')}
-        aria-hidden="true" 
-      />
-
       {/* Top glowing accent line (hover revealed) */}
       <div 
         className={[
