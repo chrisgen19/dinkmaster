@@ -52,6 +52,9 @@ next-env.d.ts
 # claude code — machine-local settings
 .claude/settings.local.json
 
+# qwen code — machine-local assistant dir
+.qwen/
+
 /src/generated/prisma
 
 # local screenshots
