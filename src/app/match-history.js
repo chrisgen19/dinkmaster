@@ -114,8 +114,12 @@ export function MatchHistory({
       )}
 
       <div
-        className="px-5 md:px-6 pb-5 md:pb-6 overflow-y-auto custom-scrollbar"
-        style={{ maxHeight }}
+        // Internal scroll is desktop-only (sm+). On mobile the list expands with
+        // its content and scrolls with the page instead of a nested scroll box.
+        // maxHeight rides on a CSS var so the cap can be gated behind `sm:`
+        // (inline styles can't be made responsive).
+        className="px-5 md:px-6 pb-5 md:pb-6 sm:overflow-y-auto custom-scrollbar sm:max-h-[var(--match-history-max-h)]"
+        style={{ '--match-history-max-h': maxHeight }}
       >
         {filtered.length === 0 ? (
           <EmptyState {...empty} filtered={matches.length > 0} />
