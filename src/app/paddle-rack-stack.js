@@ -65,6 +65,9 @@ export function PaddleRackStack({
   emergencyWait,
   skipRestoresPriority = true,
   errorMsg,
+  // Distinguishes the DOM ids of multiple mounted instances (e.g. the
+  // desktop sidebar vs. the mobile block) so they don't collide.
+  idPrefix = 'rack',
 }) {
   // Which row's action panel is open. Only one open at a time; `null` = all collapsed.
   const [expandedPlayerId, setExpandedPlayerId] = useState(null);
@@ -191,7 +194,7 @@ export function PaddleRackStack({
             const emergency = badge === 'emergency';
             const hasActions = canSkip || canManage;
             const isExpanded = expandedPlayerId === player.id;
-            const panelId = `rack-row-panel-${player.id}`;
+            const panelId = `${idPrefix}-row-panel-${player.id}`;
 
             return (
               <Fragment key={playerId}>

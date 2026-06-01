@@ -941,6 +941,7 @@ export default function Arena({
           className="hidden lg:block lg:col-span-5 lg:sticky lg:self-start space-y-6"
         >
           <PaddleRackStack
+            idPrefix="rack-desktop"
             queue={queue}
             players={displayPlayers}
             canManage={canManage}
@@ -1124,6 +1125,7 @@ export default function Arena({
             so mobile keyboard focus flows top → bottom (courts → rack). */}
         <div className={`space-y-6 ${activeTab === 'courts' ? 'lg:hidden' : 'hidden'}`}>
           <PaddleRackStack
+            idPrefix="rack-mobile"
             queue={queue}
             players={displayPlayers}
             canManage={canManage}
