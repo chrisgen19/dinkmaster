@@ -315,7 +315,7 @@ function MatchRow({ match, perspective, formatTime }) {
       <div className="flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 mb-4 pb-3 border-b border-slate-100/70">
         <div className="flex items-center gap-2.5 min-w-0">
           <span className={`w-2 h-2 rounded-full ${indicatorClass} shrink-0`} />
-          <span className="font-display font-black text-slate-800 tracking-[0.12em]">{match.courtName}</span>
+          <span className="font-display font-black text-slate-800 tracking-[0.12em] truncate">{match.courtName}</span>
           {match.arenaName && (
             <span className="truncate font-sans font-extrabold text-[8px] tracking-wider text-slate-500 bg-slate-100 border border-slate-200/40 rounded-full px-2.5 py-0.5 normal-case">
               {match.arenaName}
