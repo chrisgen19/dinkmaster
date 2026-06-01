@@ -280,11 +280,11 @@ function MatchRow({ match, perspective, formatTime }) {
   const isPos = perspective === 'player' ? youWon === true : winner === 'a';
   const isTie = winner === 'tie';
   
-  const borderGlowClass = isPos
-    ? 'border-emerald-200/70 shadow-[0_6px_24px_rgba(16,185,129,0.03)] hover:border-emerald-400 hover:shadow-[0_12px_32px_rgba(16,185,129,0.07)]'
+  const desktopGlowClass = isPos
+    ? 'sm:border-emerald-200/70 sm:shadow-[0_6px_24px_rgba(16,185,129,0.03)] sm:hover:border-emerald-400 sm:hover:shadow-[0_12px_32px_rgba(16,185,129,0.07)]'
     : isTie
-      ? 'border-slate-200/70 hover:border-slate-350 hover:shadow-[0_8px_24px_rgba(15,23,42,0.03)]'
-      : 'border-slate-200/50 hover:border-slate-300 hover:shadow-[0_8px_24px_rgba(15,23,42,0.03)]';
+      ? 'sm:border-slate-200/70 sm:hover:border-slate-350 sm:hover:shadow-[0_8px_24px_rgba(15,23,42,0.03)]'
+      : 'sm:border-slate-200/50 sm:hover:border-slate-300 sm:hover:shadow-[0_8px_24px_rgba(15,23,42,0.03)]';
 
   const indicatorClass = isPos
     ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'
@@ -295,9 +295,11 @@ function MatchRow({ match, perspective, formatTime }) {
   return (
     <article
       className={[
-        'relative overflow-hidden bg-white border rounded-3xl p-5',
-        borderGlowClass,
-        'transition-all duration-300 ease-out hover:-translate-y-0.5 group',
+        'relative overflow-hidden bg-white px-0 py-5 sm:p-5',
+        'border-y border-x-0 border-dashed border-slate-200/60 rounded-none',
+        'sm:border sm:border-solid sm:rounded-3xl',
+        desktopGlowClass,
+        'transition-all duration-300 ease-out sm:hover:-translate-y-0.5 group',
       ].join(' ')}
     >
       {/* Top glowing accent line (hover revealed) */}
