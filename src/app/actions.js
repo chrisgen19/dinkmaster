@@ -178,6 +178,13 @@ async function removeArenaMember(tx, arenaId, userId) {
   // odd orderings — a leaver should not be left with a lingering request).
   await tx.joinRequest.deleteMany({ where: { arenaId, userId } });
   await tx.linkRequest.deleteMany({ where: { arenaId, userId } });
+  // Revoke any invite links this user issued: leaving or being removed strips
+  // their authority, and a copied AUTO_JOIN link would otherwise keep granting
+  // instant membership until a current manager noticed and revoked it.
+  await tx.arenaInvite.updateMany({
+    where: { arenaId, createdBy: userId, active: true },
+    data: { active: false },
+  });
   return true;
 }
 
@@ -2211,6 +2218,14 @@ export async function updateMemberRole(arenaId, userId, role) {
     data: { role },
   });
   if (updated.count === 0) return { error: 'That user is not a member of this arena.' };
+  // Demotion strips manager rights — revoke any invite links they issued so a
+  // now-ordinary member can't keep handing out (esp. instant AUTO_JOIN) links.
+  if (role === ROLES.MEMBER) {
+    await prisma.arenaInvite.updateMany({
+      where: { arenaId, createdBy: userId, active: true },
+      data: { active: false },
+    });
+  }
   return { ok: true };
 }
 

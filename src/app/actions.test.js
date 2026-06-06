@@ -648,6 +648,23 @@ describe('arena server actions — authorization', () => {
       expect(prisma.arenaMembership.updateMany).not.toHaveBeenCalled();
     });
 
+    it('updateMemberRole() revokes the demoted member’s invite links', async () => {
+      prisma.arenaMembership.updateMany.mockResolvedValue({ count: 1 });
+      const result = await actions.updateMemberRole(ARENA, 'u2', ROLES.MEMBER);
+      expect(result.error).toBeUndefined();
+      expect(prisma.arenaInvite.updateMany).toHaveBeenCalledWith({
+        where: { arenaId: ARENA, createdBy: 'u2', active: true },
+        data: { active: false },
+      });
+    });
+
+    it('updateMemberRole() does not touch invites when promoting to organizer', async () => {
+      prisma.arenaMembership.updateMany.mockResolvedValue({ count: 1 });
+      const result = await actions.updateMemberRole(ARENA, 'u2', ROLES.ORGANIZER);
+      expect(result.error).toBeUndefined();
+      expect(prisma.arenaInvite.updateMany).not.toHaveBeenCalled();
+    });
+
     it('transferOwnership() rejects transferring to the current owner', async () => {
       const result = await actions.transferOwnership(ARENA, 'u1');
       expect(result.error).toBeTruthy();
@@ -924,6 +941,7 @@ describe('arena server actions — authorization', () => {
         arenaMembership: { deleteMany: vi.fn() },
         joinRequest: { deleteMany: vi.fn() },
         linkRequest: { deleteMany: vi.fn() },
+        arenaInvite: { updateMany: vi.fn() },
       };
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
@@ -939,6 +957,11 @@ describe('arena server actions — authorization', () => {
       // LinkRequest (mirrors the existing JoinRequest cleanup).
       expect(tx.linkRequest.deleteMany).toHaveBeenCalledWith({
         where: { arenaId: ARENA, userId: 'u2' },
+      });
+      // Removed members can't keep handing out invite links they created.
+      expect(tx.arenaInvite.updateMany).toHaveBeenCalledWith({
+        where: { arenaId: ARENA, createdBy: 'u2', active: true },
+        data: { active: false },
       });
     });
 
