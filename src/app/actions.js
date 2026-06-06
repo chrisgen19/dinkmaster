@@ -1935,9 +1935,15 @@ export async function revokeArenaInvite(arenaId, inviteId) {
   if (guard.error) return { error: guard.error };
   if (!inviteId) return { error: 'Invite not found.' };
 
-  await prisma.arenaInvite.updateMany({
-    where: { id: inviteId, arenaId, active: true },
-    data: { active: false },
+  // Serialize against an in-flight redeem (same per-arena invite lock) so a
+  // revoke is authoritative — a redeem mid-flight on a leaked link can't slip a
+  // join past it.
+  await prisma.$transaction(async (tx) => {
+    await lockArenaInvites(tx, arenaId);
+    await tx.arenaInvite.updateMany({
+      where: { id: inviteId, arenaId, active: true },
+      data: { active: false },
+    });
   });
   return { ok: true };
 }
@@ -1961,7 +1967,7 @@ export async function redeemArenaInvite(code) {
   });
   if (!invite) return { error: 'This invite link is no longer valid.' };
 
-  const { arenaId } = invite;
+  const { arenaId, mode } = invite;
   const userId = guard.user.id;
 
   // Already in (owner or existing member) — nothing to do.
@@ -1973,9 +1979,22 @@ export async function redeemArenaInvite(code) {
   });
   if (membership) return { ok: true, status: 'ALREADY_MEMBER', arenaId };
 
-  if (invite.mode === INVITE_MODES.AUTO_JOIN) {
-    let reason = '';
-    await prisma.$transaction(async (tx) => {
+  // Take the per-arena invite lock and re-check liveness inside the same
+  // transaction as the write, so a revoke that lands between the read above and
+  // the membership/request write wins (closes the redeem-vs-revoke TOCTOU).
+  let outcome = null;
+  await prisma.$transaction(async (tx) => {
+    await lockArenaInvites(tx, arenaId);
+    const live = await tx.arenaInvite.findFirst({
+      where: { code, active: true },
+      select: { id: true },
+    });
+    if (!live) {
+      outcome = { error: 'This invite link is no longer valid.' };
+      return;
+    }
+
+    if (mode === INVITE_MODES.AUTO_JOIN) {
       await lockQueue(tx, arenaId);
       // Resolve the user first and bail if the row vanished (concurrent account
       // deletion), mirroring approveJoinRequest — activateArenaPlayer would
@@ -1985,7 +2004,7 @@ export async function redeemArenaInvite(code) {
         select: { id: true, firstName: true, lastName: true },
       });
       if (!user) {
-        reason = 'NO_USER';
+        outcome = { error: 'Your account could not be found.' };
         return;
       }
       await tx.arenaMembership.upsert({
@@ -1996,18 +2015,20 @@ export async function redeemArenaInvite(code) {
       await activateArenaPlayer(tx, arenaId, user);
       // Clear any stale pending request now that they're a full member.
       await tx.joinRequest.deleteMany({ where: { arenaId, userId } });
-    });
-    if (reason === 'NO_USER') return { error: 'Your account could not be found.' };
-    return { ok: true, status: 'JOINED', arenaId };
-  }
+      outcome = { ok: true, status: 'JOINED', arenaId };
+      return;
+    }
 
-  // APPROVAL — same effect as requestToJoin: file a pending request (idempotent).
-  await prisma.joinRequest.upsert({
-    where: { arenaId_userId: { arenaId, userId } },
-    create: { arenaId, userId },
-    update: {},
+    // APPROVAL — same effect as requestToJoin: file a pending request (idempotent).
+    await tx.joinRequest.upsert({
+      where: { arenaId_userId: { arenaId, userId } },
+      create: { arenaId, userId },
+      update: {},
+    });
+    outcome = { ok: true, status: 'PENDING', arenaId };
   });
-  return { ok: true, status: 'PENDING', arenaId };
+
+  return outcome;
 }
 
 /**

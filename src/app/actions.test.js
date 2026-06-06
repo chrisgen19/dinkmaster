@@ -2164,11 +2164,17 @@ describe('invite links', () => {
   });
 
   describe('revokeArenaInvite()', () => {
-    it('deactivates the invite scoped to the arena', async () => {
-      prisma.arenaInvite.updateMany.mockResolvedValue({ count: 1 });
+    it('locks the arena and deactivates the invite scoped to the arena', async () => {
+      const tx = {
+        $executeRaw: vi.fn(),
+        arenaInvite: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
       const result = await actions.revokeArenaInvite(ARENA, 'inv1');
       expect(result.ok).toBe(true);
-      expect(prisma.arenaInvite.updateMany).toHaveBeenCalledWith({
+      expect(tx.$executeRaw).toHaveBeenCalled(); // serialized against redeem
+      expect(tx.arenaInvite.updateMany).toHaveBeenCalledWith({
         where: { id: 'inv1', arenaId: ARENA, active: true },
         data: { active: false },
       });
@@ -2206,14 +2212,20 @@ describe('invite links', () => {
         mode: 'APPROVAL', arenaId: ARENA, arena: { ownerId: 'owner' },
       });
       prisma.arenaMembership.findUnique.mockResolvedValue(null);
+      const tx = {
+        $executeRaw: vi.fn(),
+        arenaInvite: { findFirst: vi.fn().mockResolvedValue({ id: 'inv1' }) }, // still live
+        joinRequest: { upsert: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
       const result = await actions.redeemArenaInvite('code123');
       expect(result).toMatchObject({ ok: true, status: 'PENDING', arenaId: ARENA });
-      expect(prisma.joinRequest.upsert).toHaveBeenCalledWith({
+      expect(tx.joinRequest.upsert).toHaveBeenCalledWith({
         where: { arenaId_userId: { arenaId: ARENA, userId: 'u1' } },
         create: { arenaId: ARENA, userId: 'u1' },
         update: {},
       });
-      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('auto-joins as a MEMBER + queued player for an AUTO_JOIN invite', async () => {
@@ -2223,6 +2235,7 @@ describe('invite links', () => {
       prisma.arenaMembership.findUnique.mockResolvedValue(null);
       const tx = {
         $executeRaw: vi.fn(),
+        arenaInvite: { findFirst: vi.fn().mockResolvedValue({ id: 'inv1' }) }, // re-check: still live
         arenaMembership: { upsert: vi.fn() },
         user: { findUnique: vi.fn().mockResolvedValue({ id: 'u1', firstName: 'Al', lastName: 'Pal' }) },
         // Existing active player → activateArenaPlayer returns early, no create.
@@ -2238,7 +2251,27 @@ describe('invite links', () => {
         create: { arenaId: ARENA, userId: 'u1', role: ROLES.MEMBER },
         update: {},
       });
-      expect(prisma.joinRequest.upsert).not.toHaveBeenCalled();
+    });
+
+    it('aborts when the invite is revoked between the read and the write (in-tx re-check)', async () => {
+      prisma.arenaInvite.findFirst.mockResolvedValue({
+        mode: 'AUTO_JOIN', arenaId: ARENA, arena: { ownerId: 'owner' },
+      });
+      prisma.arenaMembership.findUnique.mockResolvedValue(null);
+      const tx = {
+        $executeRaw: vi.fn(),
+        arenaInvite: { findFirst: vi.fn().mockResolvedValue(null) }, // revoked mid-redeem
+        arenaMembership: { upsert: vi.fn() },
+        user: { findUnique: vi.fn() },
+        player: { findUnique: vi.fn() },
+        joinRequest: { upsert: vi.fn(), deleteMany: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.redeemArenaInvite('code123');
+      expect(result.error).toMatch(/no longer valid/i);
+      expect(tx.arenaMembership.upsert).not.toHaveBeenCalled();
+      expect(tx.joinRequest.upsert).not.toHaveBeenCalled();
     });
 
     it('aborts AUTO_JOIN cleanly when the user row is gone (no membership written)', async () => {
@@ -2248,6 +2281,7 @@ describe('invite links', () => {
       prisma.arenaMembership.findUnique.mockResolvedValue(null);
       const tx = {
         $executeRaw: vi.fn(),
+        arenaInvite: { findFirst: vi.fn().mockResolvedValue({ id: 'inv1' }) }, // still live
         arenaMembership: { upsert: vi.fn() },
         user: { findUnique: vi.fn().mockResolvedValue(null) }, // account vanished mid-redeem
         player: { findUnique: vi.fn() },
