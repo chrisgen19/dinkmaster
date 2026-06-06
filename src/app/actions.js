@@ -3,7 +3,7 @@
 import { prisma } from '@/lib/prisma';
 import { getState } from '@/lib/data';
 import { getCurrentUser, requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
-import { ROLES } from '@/lib/roles';
+import { ROLES, canManageArena } from '@/lib/roles';
 import { generateInviteCode } from '@/lib/invite-code';
 import { INVITE_MODES, isInviteMode } from '@/lib/invites';
 import { MAX_WAIT_THRESHOLD, ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
@@ -69,6 +69,22 @@ function lockQueue(tx, arenaId) {
 const INVITE_LOCK_KEY = 920426;
 function lockArenaInvites(tx, arenaId) {
   return tx.$executeRaw`SELECT pg_advisory_xact_lock(${INVITE_LOCK_KEY}, hashtext(${arenaId}))`;
+}
+
+/**
+ * Whether `userId` may still manage this arena's invites (owner or organizer),
+ * read inside the caller's transaction. The owner's membership row mirrors their
+ * role as OWNER, so a single membership lookup covers everyone. Used to
+ * re-validate authority *under* `lockArenaInvites` after the pre-lock
+ * `requireArenaManager`/`requireArenaOwner`, so a concurrently demoted or removed
+ * manager can't mint or mutate invites with stale auth.
+ */
+async function callerCanManageInvites(tx, arenaId, userId) {
+  const membership = await tx.arenaMembership.findUnique({
+    where: { arenaId_userId: { arenaId, userId } },
+    select: { role: true },
+  });
+  return !!membership && canManageArena(membership.role);
 }
 
 /** Unbiased Fisher-Yates shuffle (returns a new array). */
@@ -1907,6 +1923,13 @@ export async function createArenaInvite(arenaId, mode) {
     try {
       return await prisma.$transaction(async (tx) => {
         await lockArenaInvites(tx, arenaId);
+        // Re-validate authority under the lock: requireArenaManager ran before
+        // the transaction, so a manager demoted/removed in the meantime could
+        // otherwise mint a fresh active link (createdBy = themselves) that
+        // escapes the very revocation their role-loss triggers.
+        if (!(await callerCanManageInvites(tx, arenaId, guard.user.id))) {
+          return { error: 'You no longer have permission to manage invite links.' };
+        }
         const existing = await tx.arenaInvite.findFirst({
           where: { arenaId, mode, active: true },
           select: { id: true, code: true, mode: true, createdAt: true },
@@ -1940,14 +1963,20 @@ export async function revokeArenaInvite(arenaId, inviteId) {
   // Serialize against an in-flight redeem (same per-arena invite lock) so a
   // revoke is authoritative — a redeem mid-flight on a leaked link can't slip a
   // join past it.
+  let outcome = { ok: true };
   await prisma.$transaction(async (tx) => {
     await lockArenaInvites(tx, arenaId);
+    // Re-validate authority under the lock (see createArenaInvite).
+    if (!(await callerCanManageInvites(tx, arenaId, guard.user.id))) {
+      outcome = { error: 'You no longer have permission to manage invite links.' };
+      return;
+    }
     await tx.arenaInvite.updateMany({
       where: { id: inviteId, arenaId, active: true },
       data: { active: false },
     });
   });
-  return { ok: true };
+  return outcome;
 }
 
 /**
@@ -2239,26 +2268,27 @@ export async function updateMemberRole(arenaId, userId, role) {
     return { error: "The owner's role cannot be changed here." };
   }
 
-  // role: { not: OWNER } is belt-and-suspenders — never touch the owner row.
-  const updated = await prisma.arenaMembership.updateMany({
-    where: { arenaId, userId, role: { not: ROLES.OWNER } },
-    data: { role },
-  });
-  if (updated.count === 0) return { error: 'That user is not a member of this arena.' };
-  // Demotion strips manager rights — revoke any invite links they issued so a
-  // now-ordinary member can't keep handing out (esp. instant AUTO_JOIN) links.
-  // Under the per-arena invite lock so this is authoritative against an
-  // in-flight redeem, exactly like revokeArenaInvite.
-  if (role === ROLES.MEMBER) {
-    await prisma.$transaction(async (tx) => {
-      await lockArenaInvites(tx, arenaId);
+  // Update the role and revoke a demoted manager's links in ONE transaction
+  // under the invite lock. Doing both atomically (vs role-update then a separate
+  // revoke tx) closes the window where a just-demoted organizer could race a
+  // createArenaInvite — which now re-checks role under the same lock — to mint a
+  // fresh link, and avoids leaving links live if a second tx failed.
+  return prisma.$transaction(async (tx) => {
+    await lockArenaInvites(tx, arenaId);
+    // role: { not: OWNER } is belt-and-suspenders — never touch the owner row.
+    const updated = await tx.arenaMembership.updateMany({
+      where: { arenaId, userId, role: { not: ROLES.OWNER } },
+      data: { role },
+    });
+    if (updated.count === 0) return { error: 'That user is not a member of this arena.' };
+    if (role === ROLES.MEMBER) {
       await tx.arenaInvite.updateMany({
         where: { arenaId, createdBy: userId, active: true },
         data: { active: false },
       });
-    });
-  }
-  return { ok: true };
+    }
+    return { ok: true };
+  });
 }
 
 /**

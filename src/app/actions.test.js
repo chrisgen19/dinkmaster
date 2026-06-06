@@ -639,26 +639,28 @@ describe('arena server actions — authorization', () => {
     it('updateMemberRole() rejects an unknown role', async () => {
       const result = await actions.updateMemberRole(ARENA, 'u2', 'SUPERUSER');
       expect(result.error).toBeTruthy();
-      expect(prisma.arenaMembership.updateMany).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('updateMemberRole() refuses to change the owner', async () => {
       const result = await actions.updateMemberRole(ARENA, 'u1', ROLES.MEMBER);
       expect(result.error).toBeTruthy();
-      expect(prisma.arenaMembership.updateMany).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it('updateMemberRole() revokes the demoted member’s invite links under the invite lock', async () => {
-      prisma.arenaMembership.updateMany.mockResolvedValue({ count: 1 });
+    it('updateMemberRole() demotes and revokes invite links in one locked transaction', async () => {
       const tx = {
         $executeRaw: vi.fn(),
+        arenaMembership: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
         arenaInvite: { updateMany: vi.fn() },
       };
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
       const result = await actions.updateMemberRole(ARENA, 'u2', ROLES.MEMBER);
       expect(result.error).toBeUndefined();
-      expect(tx.$executeRaw).toHaveBeenCalled(); // serialized against redeem
+      expect(tx.$executeRaw).toHaveBeenCalled(); // invite lock held
+      // Role flip and link revocation share the same transaction.
+      expect(tx.arenaMembership.updateMany).toHaveBeenCalled();
       expect(tx.arenaInvite.updateMany).toHaveBeenCalledWith({
         where: { arenaId: ARENA, createdBy: 'u2', active: true },
         data: { active: false },
@@ -666,10 +668,16 @@ describe('arena server actions — authorization', () => {
     });
 
     it('updateMemberRole() does not touch invites when promoting to organizer', async () => {
-      prisma.arenaMembership.updateMany.mockResolvedValue({ count: 1 });
+      const tx = {
+        $executeRaw: vi.fn(),
+        arenaMembership: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+        arenaInvite: { updateMany: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
       const result = await actions.updateMemberRole(ARENA, 'u2', ROLES.ORGANIZER);
       expect(result.error).toBeUndefined();
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.arenaInvite.updateMany).not.toHaveBeenCalled();
     });
 
     it('transferOwnership() rejects transferring to the current owner', async () => {
@@ -2132,6 +2140,7 @@ describe('invite links', () => {
     it('takes the per-arena lock and reuses an existing active invite of that mode', async () => {
       const tx = {
         $executeRaw: vi.fn(),
+        arenaMembership: { findUnique: vi.fn().mockResolvedValue({ role: ROLES.OWNER }) },
         arenaInvite: {
           findFirst: vi.fn().mockResolvedValue({
             id: 'inv1', code: 'abc', mode: 'APPROVAL', createdAt: new Date('2026-01-01'),
@@ -2151,6 +2160,7 @@ describe('invite links', () => {
     it('mints a fresh invite when none of that mode is active', async () => {
       const tx = {
         $executeRaw: vi.fn(),
+        arenaMembership: { findUnique: vi.fn().mockResolvedValue({ role: ROLES.ORGANIZER }) },
         arenaInvite: {
           findFirst: vi.fn().mockResolvedValue(null),
           create: vi.fn().mockResolvedValue({
@@ -2168,12 +2178,28 @@ describe('invite links', () => {
       expect(arg.data).toMatchObject({ arenaId: ARENA, mode: 'AUTO_JOIN', createdBy: 'u1' });
       expect(typeof arg.data.code).toBe('string');
     });
+
+    it('aborts under the lock when the caller no longer manages the arena', async () => {
+      const tx = {
+        $executeRaw: vi.fn(),
+        // Demoted/removed between requireArenaManager and acquiring the lock.
+        arenaMembership: { findUnique: vi.fn().mockResolvedValue({ role: ROLES.MEMBER }) },
+        arenaInvite: { findFirst: vi.fn(), create: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.createArenaInvite(ARENA, 'AUTO_JOIN');
+      expect(result.error).toMatch(/no longer have permission/i);
+      expect(tx.arenaInvite.findFirst).not.toHaveBeenCalled();
+      expect(tx.arenaInvite.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('revokeArenaInvite()', () => {
     it('locks the arena and deactivates the invite scoped to the arena', async () => {
       const tx = {
         $executeRaw: vi.fn(),
+        arenaMembership: { findUnique: vi.fn().mockResolvedValue({ role: ROLES.OWNER }) },
         arenaInvite: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
       };
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
@@ -2185,6 +2211,19 @@ describe('invite links', () => {
         where: { id: 'inv1', arenaId: ARENA, active: true },
         data: { active: false },
       });
+    });
+
+    it('aborts under the lock when the caller no longer manages the arena', async () => {
+      const tx = {
+        $executeRaw: vi.fn(),
+        arenaMembership: { findUnique: vi.fn().mockResolvedValue({ role: ROLES.MEMBER }) },
+        arenaInvite: { updateMany: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.revokeArenaInvite(ARENA, 'inv1');
+      expect(result.error).toMatch(/no longer have permission/i);
+      expect(tx.arenaInvite.updateMany).not.toHaveBeenCalled();
     });
   });
 
