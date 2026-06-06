@@ -298,6 +298,50 @@ export async function getArenaInviteByCode(code) {
 }
 
 /**
+ * Whether two users share at least one arena (both have a membership in it).
+ * The owner's membership row mirrors role OWNER, so memberships cover owners
+ * too. Powers the access gate for viewing another user's profile.
+ * @param {string} viewerUserId
+ * @param {string} targetUserId
+ * @returns {Promise<boolean>}
+ */
+export async function usersShareArena(viewerUserId, targetUserId) {
+  if (!viewerUserId || !targetUserId) return false;
+  const row = await prisma.arenaMembership.findFirst({
+    where: {
+      userId: viewerUserId,
+      arena: { memberships: { some: { userId: targetUserId } } },
+    },
+    select: { id: true },
+  });
+  return !!row;
+}
+
+/**
+ * Load another user's public profile for a viewer, gated on a shared arena.
+ * Returns `null` when ids are missing, the two users share no arena, or the
+ * target doesn't exist — the `/u/[userId]` route turns that into a 404 so it
+ * never reveals whether an account exists. Name only (no email): the only PII
+ * on the profile is excluded for non-self viewers.
+ * @param {string} targetUserId
+ * @param {string} viewerUserId
+ * @returns {Promise<{name:string, stats:Awaited<ReturnType<typeof getUserPlayerStats>>}|null>}
+ */
+export async function getViewableUserProfile(targetUserId, viewerUserId) {
+  if (!targetUserId || !viewerUserId) return null;
+  if (!(await usersShareArena(viewerUserId, targetUserId))) return null;
+
+  const user = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { name: true },
+  });
+  if (!user) return null;
+
+  const stats = await getUserPlayerStats(targetUserId);
+  return { name: user.name, stats };
+}
+
+/**
  * Aggregate a user's player record across every arena they play in — powers
  * the global `/profile` page.
  * @param {string} userId

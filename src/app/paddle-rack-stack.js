@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import {
   ArrowDownToLine,
   ChevronRight,
@@ -37,6 +38,7 @@ function GroupLabel({ children, accent = false, className = '' }) {
  * @param {Array<{id:string,userId:string|null,firstName:string,lastName:string|null,gamesPlayed:number,wins:number,losses:number,waitRounds:number,skipBoosted?:boolean}>} props.players
  * @param {boolean} props.canManage - gates the manager-only actions
  * @param {string|null} props.viewerUserId - to flag the "you" row
+ * @param {boolean} props.viewerIsMember - viewer belongs to this arena; gates the name→profile link (a non-member shares no arena, so the profile would 404)
  * @param {boolean} props.autoMix - re-shuffle the rack after every finished game
  * @param {(next:boolean) => void} props.onToggleAutoMix
  * @param {() => void} props.onAddPlayers - open the Prep Roster modal
@@ -54,6 +56,7 @@ export function PaddleRackStack({
   players,
   canManage,
   viewerUserId,
+  viewerIsMember = false,
   autoMix,
   onToggleAutoMix,
   onAddPlayers,
@@ -195,6 +198,17 @@ export function PaddleRackStack({
             const hasActions = canSkip || canManage;
             const isExpanded = expandedPlayerId === player.id;
             const panelId = `${idPrefix}-row-panel-${player.id}`;
+            // Link the name to a profile only when it resolves: your own row →
+            // /profile; another registered player → /u/[userId] but only for a
+            // fellow member (a non-member shares no arena, so it would 404).
+            // Walk-ins (no userId) stay plain text.
+            const profileHref = player.userId
+              ? player.userId === viewerUserId
+                ? '/profile'
+                : viewerIsMember
+                  ? `/u/${player.userId}`
+                  : null
+              : null;
 
             return (
               <Fragment key={playerId}>
@@ -244,7 +258,17 @@ export function PaddleRackStack({
                     {/* Identity */}
                     <div className="min-w-0 flex-1">
                       <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm font-semibold text-slate-800 sm:flex-nowrap">
-                        <span className="w-full min-w-0 truncate sm:w-auto sm:max-w-full">{name}</span>
+                        {profileHref ? (
+                          <Link
+                            href={profileHref}
+                            className="w-full min-w-0 truncate rounded sm:w-auto sm:max-w-full hover:text-emerald-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+                            title={`View ${name}’s profile`}
+                          >
+                            {name}
+                          </Link>
+                        ) : (
+                          <span className="w-full min-w-0 truncate sm:w-auto sm:max-w-full">{name}</span>
+                        )}
                         {isYou && (
                           <span className="shrink-0 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
                             You

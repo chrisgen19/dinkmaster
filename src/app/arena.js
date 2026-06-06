@@ -999,6 +999,7 @@ export default function Arena({
             players={displayPlayers}
             canManage={canManage}
             viewerUserId={viewerUserId}
+            viewerIsMember={viewerRole !== null}
             autoMix={autoMix}
             onToggleAutoMix={setAutoMix}
             onAddPlayers={() => setRosterModalOpen(true)}
@@ -1184,6 +1185,7 @@ export default function Arena({
             players={displayPlayers}
             canManage={canManage}
             viewerUserId={viewerUserId}
+            viewerIsMember={viewerRole !== null}
             autoMix={autoMix}
             onToggleAutoMix={setAutoMix}
             onAddPlayers={() => setRosterModalOpen(true)}
