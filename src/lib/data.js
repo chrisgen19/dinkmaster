@@ -20,6 +20,16 @@ export async function getState(arenaId) {
   // entirely, which would read every arena's data instead of one.
   if (!arenaId) throw new Error('getState requires an arenaId');
 
+  // Stamp at read START, not finish. Concurrent getState calls exist by
+  // design (SSE initial snapshot vs. hub pump vs. action responses), and a
+  // slow read that began BEFORE a commit must not outrank a fast read that
+  // began after it. With a start stamp the ordering is sound: every board
+  // commit fires a NOTIFY trigger, the resulting pump read starts after the
+  // commit (so it sees it — READ COMMITTED) and carries a higher stamp than
+  // any pre-commit read, so the fresh frame always wins the client's
+  // monotonic guard and a stale late-finisher is discarded.
+  const fetchedAt = Date.now();
+
   const [players, courts, matches, partnerships, arena] = await Promise.all([
     // Active players only: a departed member's row is kept (leftAt set) for
     // history but must not appear on the rack, matrix, or player count.
@@ -80,10 +90,10 @@ export async function getState(arenaId) {
   }
 
   return {
-    // Monotonic-ish stamp (same Node clock for a given process) so the client
-    // can discard a snapshot older than one it already applied — preventing a
-    // slow action response from clobbering a newer SSE push, and vice-versa.
-    fetchedAt: Date.now(),
+    // Read-start stamp (see above) so the client can discard a snapshot older
+    // than one it already applied — preventing a slow action response from
+    // clobbering a newer SSE push, and vice-versa.
+    fetchedAt,
     players: players.map((p) => ({
       id: p.id,
       userId: p.userId,
