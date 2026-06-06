@@ -10,7 +10,7 @@
     "dev": "next dev -p 3020",
     "build": "prisma generate && next build",
     "vercel-build": "prisma generate && prisma migrate deploy && next build",
-    "start": "next start -p ${PORT:-3020}",
+    "start": "prisma migrate deploy && next start -p ${PORT:-3020}",
     "lint": "eslint",
     "pwa:icons": "node scripts/generate-pwa-icons.mjs",
     "test": "vitest run",
