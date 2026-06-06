@@ -4,6 +4,8 @@ import { prisma } from '@/lib/prisma';
 import { getState } from '@/lib/data';
 import { getCurrentUser, requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
 import { ROLES } from '@/lib/roles';
+import { generateInviteCode } from '@/lib/invite-code';
+import { INVITE_MODES, isInviteMode } from '@/lib/invites';
 import { MAX_WAIT_THRESHOLD, ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
 import {
   DEFAULT_TARGET_SCORE,
@@ -1852,6 +1854,127 @@ export async function rejectJoinRequest(arenaId, userId) {
 
   await prisma.joinRequest.deleteMany({ where: { arenaId, userId } });
   return { ok: true };
+}
+
+// --- Invite links ---------------------------------------------------------
+
+/** Shape an ArenaInvite row for the client (ISO date, no creator PII). */
+function serializeInvite(invite) {
+  return {
+    id: invite.id,
+    code: invite.code,
+    mode: invite.mode,
+    createdAt: new Date(invite.createdAt).toISOString(),
+  };
+}
+
+/**
+ * Create (or reuse) an active invite link of a given mode for an arena
+ * (owner/organizer only). Idempotent per active mode: if a link of that mode is
+ * already live it is returned as-is, so managers never accumulate duplicates —
+ * "Regenerate" in the UI revokes first, then calls this to mint a fresh code.
+ */
+export async function createArenaInvite(arenaId, mode) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+  if (!isInviteMode(mode)) return { error: 'Invalid invite type.' };
+
+  const existing = await prisma.arenaInvite.findFirst({
+    where: { arenaId, mode, active: true },
+    select: { id: true, code: true, mode: true, createdAt: true },
+  });
+  if (existing) return { ok: true, invite: serializeInvite(existing) };
+
+  // Retry on the vanishingly rare unique-code collision (P2002).
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const invite = await prisma.arenaInvite.create({
+        data: { arenaId, mode, code: generateInviteCode(), createdBy: guard.user.id },
+        select: { id: true, code: true, mode: true, createdAt: true },
+      });
+      return { ok: true, invite: serializeInvite(invite) };
+    } catch (err) {
+      if (err?.code === 'P2002') continue;
+      throw err;
+    }
+  }
+  return { error: 'Could not create an invite link. Please try again.' };
+}
+
+/**
+ * Revoke an invite link (owner/organizer only): flips `active` off so the link
+ * 404s, keeping the row for auditing. Scoped to `arenaId` so a manager can only
+ * revoke their own arena's invites.
+ */
+export async function revokeArenaInvite(arenaId, inviteId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+  if (!inviteId) return { error: 'Invite not found.' };
+
+  await prisma.arenaInvite.updateMany({
+    where: { id: inviteId, arenaId, active: true },
+    data: { active: false },
+  });
+  return { ok: true };
+}
+
+/**
+ * Redeem an invite link (any signed-in user). Resolves the active invite by
+ * `code`, then either auto-joins the user as a MEMBER + queued player
+ * (AUTO_JOIN) or files a pending JoinRequest (APPROVAL). Owners and existing
+ * members short-circuit to ALREADY_MEMBER. Returns a `status` the `/join`
+ * route uses to route + message:
+ * `JOINED` | `PENDING` | `ALREADY_MEMBER`, each with `arenaId`.
+ */
+export async function redeemArenaInvite(code) {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error };
+  if (!code) return { error: 'This invite link is no longer valid.' };
+
+  const invite = await prisma.arenaInvite.findFirst({
+    where: { code, active: true },
+    select: { mode: true, arenaId: true, arena: { select: { ownerId: true } } },
+  });
+  if (!invite) return { error: 'This invite link is no longer valid.' };
+
+  const { arenaId } = invite;
+  const userId = guard.user.id;
+
+  // Already in (owner or existing member) — nothing to do.
+  if (invite.arena.ownerId === userId) {
+    return { ok: true, status: 'ALREADY_MEMBER', arenaId };
+  }
+  const membership = await prisma.arenaMembership.findUnique({
+    where: { arenaId_userId: { arenaId, userId } },
+  });
+  if (membership) return { ok: true, status: 'ALREADY_MEMBER', arenaId };
+
+  if (invite.mode === INVITE_MODES.AUTO_JOIN) {
+    await prisma.$transaction(async (tx) => {
+      await lockQueue(tx, arenaId);
+      await tx.arenaMembership.upsert({
+        where: { arenaId_userId: { arenaId, userId } },
+        create: { arenaId, userId, role: ROLES.MEMBER },
+        update: {}, // already a member somehow — keep their role
+      });
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { id: true, firstName: true, lastName: true },
+      });
+      await activateArenaPlayer(tx, arenaId, user);
+      // Clear any stale pending request now that they're a full member.
+      await tx.joinRequest.deleteMany({ where: { arenaId, userId } });
+    });
+    return { ok: true, status: 'JOINED', arenaId };
+  }
+
+  // APPROVAL — same effect as requestToJoin: file a pending request (idempotent).
+  await prisma.joinRequest.upsert({
+    where: { arenaId_userId: { arenaId, userId } },
+    create: { arenaId, userId },
+    update: {},
+  });
+  return { ok: true, status: 'PENDING', arenaId };
 }
 
 /**

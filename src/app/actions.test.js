@@ -37,6 +37,8 @@ vi.mock('@/lib/prisma', () => ({
       findUnique: vi.fn(),
       findFirst: vi.fn(),
     },
+    arenaInvite: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
+    user: { findUnique: vi.fn() },
   },
 }));
 
@@ -68,6 +70,8 @@ const PLAY = [
   ['updateArenaMatchDefaults', () => actions.updateArenaMatchDefaults(ARENA, { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true })],
   ['updateArenaSessions', () => actions.updateArenaSessions(ARENA, { autoResetOnSession: true })],
   ['prepareNextSession', () => actions.prepareNextSession(ARENA)],
+  ['createArenaInvite', () => actions.createArenaInvite(ARENA, 'APPROVAL')],
+  ['revokeArenaInvite', () => actions.revokeArenaInvite(ARENA, 'inv1')],
   ['checkInPlayer', () => actions.checkInPlayer(ARENA, 'p1')],
   ['checkOutPlayer', () => actions.checkOutPlayer(ARENA, 'p1')],
   ['approveJoinRequest', () => actions.approveJoinRequest(ARENA, 'u2')],
@@ -90,6 +94,7 @@ const USER_GATED = [
   ['leaveArena', () => actions.leaveArena(ARENA)],
   ['requestLinkPlayer', () => actions.requestLinkPlayer(ARENA, 'p1')],
   ['cancelLinkRequest', () => actions.cancelLinkRequest(ARENA)],
+  ['redeemArenaInvite', () => actions.redeemArenaInvite('code123')],
 ];
 
 describe('arena server actions — authorization', () => {
@@ -2073,5 +2078,129 @@ describe('editCourtLineup() — manual partner swap / substitution', () => {
     const result = await actions.editCourtLineup(ARENA, COURT, ['p1', 'p2'], ['p3', 'p5']);
     expect(result.error).toMatch(/no longer available|try again/i);
     expect(tx.courtSlot.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('invite links', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireArenaManager.mockResolvedValue({
+      user: { id: 'u1' },
+      arena: { id: ARENA, ownerId: 'u1' },
+      role: ROLES.OWNER,
+    });
+    requireUser.mockResolvedValue({ user: { id: 'u1' } });
+  });
+
+  describe('createArenaInvite()', () => {
+    it('rejects an unknown mode and writes nothing', async () => {
+      const result = await actions.createArenaInvite(ARENA, 'BOGUS');
+      expect(result.error).toMatch(/invalid invite/i);
+      expect(prisma.arenaInvite.findFirst).not.toHaveBeenCalled();
+      expect(prisma.arenaInvite.create).not.toHaveBeenCalled();
+    });
+
+    it('reuses an existing active invite of that mode instead of creating a duplicate', async () => {
+      prisma.arenaInvite.findFirst.mockResolvedValue({
+        id: 'inv1', code: 'abc', mode: 'APPROVAL', createdAt: new Date('2026-01-01'),
+      });
+      const result = await actions.createArenaInvite(ARENA, 'APPROVAL');
+      expect(result.ok).toBe(true);
+      expect(result.invite).toMatchObject({ id: 'inv1', code: 'abc', mode: 'APPROVAL' });
+      expect(prisma.arenaInvite.create).not.toHaveBeenCalled();
+    });
+
+    it('mints a fresh invite when none of that mode is active', async () => {
+      prisma.arenaInvite.findFirst.mockResolvedValue(null);
+      prisma.arenaInvite.create.mockResolvedValue({
+        id: 'inv2', code: 'xyz', mode: 'AUTO_JOIN', createdAt: new Date('2026-02-02'),
+      });
+      const result = await actions.createArenaInvite(ARENA, 'AUTO_JOIN');
+      expect(result.ok).toBe(true);
+      expect(result.invite).toMatchObject({ id: 'inv2', code: 'xyz', mode: 'AUTO_JOIN' });
+      expect(prisma.arenaInvite.create).toHaveBeenCalledTimes(1);
+      const arg = prisma.arenaInvite.create.mock.calls[0][0];
+      expect(arg.data).toMatchObject({ arenaId: ARENA, mode: 'AUTO_JOIN', createdBy: 'u1' });
+      expect(typeof arg.data.code).toBe('string');
+    });
+  });
+
+  describe('revokeArenaInvite()', () => {
+    it('deactivates the invite scoped to the arena', async () => {
+      prisma.arenaInvite.updateMany.mockResolvedValue({ count: 1 });
+      const result = await actions.revokeArenaInvite(ARENA, 'inv1');
+      expect(result.ok).toBe(true);
+      expect(prisma.arenaInvite.updateMany).toHaveBeenCalledWith({
+        where: { id: 'inv1', arenaId: ARENA, active: true },
+        data: { active: false },
+      });
+    });
+  });
+
+  describe('redeemArenaInvite()', () => {
+    it('errors on an unknown or revoked code', async () => {
+      prisma.arenaInvite.findFirst.mockResolvedValue(null);
+      const result = await actions.redeemArenaInvite('nope');
+      expect(result.error).toMatch(/no longer valid/i);
+    });
+
+    it('short-circuits to ALREADY_MEMBER when the redeemer owns the arena', async () => {
+      prisma.arenaInvite.findFirst.mockResolvedValue({
+        mode: 'AUTO_JOIN', arenaId: ARENA, arena: { ownerId: 'u1' },
+      });
+      const result = await actions.redeemArenaInvite('code123');
+      expect(result).toMatchObject({ ok: true, status: 'ALREADY_MEMBER', arenaId: ARENA });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('short-circuits to ALREADY_MEMBER for an existing member', async () => {
+      prisma.arenaInvite.findFirst.mockResolvedValue({
+        mode: 'AUTO_JOIN', arenaId: ARENA, arena: { ownerId: 'owner' },
+      });
+      prisma.arenaMembership.findUnique.mockResolvedValue({ role: ROLES.MEMBER });
+      const result = await actions.redeemArenaInvite('code123');
+      expect(result).toMatchObject({ ok: true, status: 'ALREADY_MEMBER' });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('files a pending JoinRequest for an APPROVAL invite', async () => {
+      prisma.arenaInvite.findFirst.mockResolvedValue({
+        mode: 'APPROVAL', arenaId: ARENA, arena: { ownerId: 'owner' },
+      });
+      prisma.arenaMembership.findUnique.mockResolvedValue(null);
+      const result = await actions.redeemArenaInvite('code123');
+      expect(result).toMatchObject({ ok: true, status: 'PENDING', arenaId: ARENA });
+      expect(prisma.joinRequest.upsert).toHaveBeenCalledWith({
+        where: { arenaId_userId: { arenaId: ARENA, userId: 'u1' } },
+        create: { arenaId: ARENA, userId: 'u1' },
+        update: {},
+      });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('auto-joins as a MEMBER + queued player for an AUTO_JOIN invite', async () => {
+      prisma.arenaInvite.findFirst.mockResolvedValue({
+        mode: 'AUTO_JOIN', arenaId: ARENA, arena: { ownerId: 'owner' },
+      });
+      prisma.arenaMembership.findUnique.mockResolvedValue(null);
+      const tx = {
+        $executeRaw: vi.fn(),
+        arenaMembership: { upsert: vi.fn() },
+        user: { findUnique: vi.fn().mockResolvedValue({ id: 'u1', firstName: 'Al', lastName: 'Pal' }) },
+        // Existing active player → activateArenaPlayer returns early, no create.
+        player: { findUnique: vi.fn().mockResolvedValue({ id: 'p1', gamesPlayed: 0, leftAt: null, queueOrder: 1 }) },
+        joinRequest: { deleteMany: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.redeemArenaInvite('code123');
+      expect(result).toMatchObject({ ok: true, status: 'JOINED', arenaId: ARENA });
+      expect(tx.arenaMembership.upsert).toHaveBeenCalledWith({
+        where: { arenaId_userId: { arenaId: ARENA, userId: 'u1' } },
+        create: { arenaId: ARENA, userId: 'u1', role: ROLES.MEMBER },
+        update: {},
+      });
+      expect(prisma.joinRequest.upsert).not.toHaveBeenCalled();
+    });
   });
 });

@@ -167,6 +167,7 @@ export default function Arena({
   viewerPending = false,
   pendingLinkRequests = [],
   viewerLinkContext = null,
+  invites = [],
 }) {
   const router = useRouter();
   const [players, setPlayers] = useState(initialState.players);
@@ -816,6 +817,7 @@ export default function Arena({
         queueLength={queue.length}
         liveCourtCount={liveCourtCount}
         canManage={canManage}
+        invites={invites}
       />
 
       <ArenaSessionPrepBanner
