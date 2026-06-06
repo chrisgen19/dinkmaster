@@ -1,18 +1,7 @@
 /**
- * Compact display + tooltip variants of a player's name. Shared by the
- * CourtCard and the score-entry modal so the rule lives in exactly one place.
- *
- * Display rule: first word of `firstName` + last-name initial — e.g.
- *   { firstName: "Christian Genesis", lastName: "Diomampo" } -> "Christian D."
- *   { firstName: "Ace",               lastName: null       } -> "Ace"
- *
- * @param {{firstName?: string, lastName?: string|null}|null|undefined} player
- * @returns {{display: string, full: string}}
- */
-/**
  * Where a player's name should link, shared by every surface that renders a
  * clickable player name (paddle rack, Player of the Week, Match History Log,
- * Members tab) so the rule lives in exactly one place:
+ * Members tab, court cards) so the rule lives in exactly one place:
  *
  *   - the viewer's own player/account → `/profile`
  *   - another registered user        → `/u/<userId>`   (member viewers only)
@@ -35,6 +24,17 @@ export function profileHref(
   return playerId && viewerIsMember ? `/p/${playerId}` : null;
 }
 
+/**
+ * Compact display + tooltip variants of a player's name. Shared by the
+ * CourtCard and the score-entry modal so the rule lives in exactly one place.
+ *
+ * Display rule: first word of `firstName` + last-name initial — e.g.
+ *   { firstName: "Christian Genesis", lastName: "Diomampo" } -> "Christian D."
+ *   { firstName: "Ace",               lastName: null       } -> "Ace"
+ *
+ * @param {{firstName?: string, lastName?: string|null}|null|undefined} player
+ * @returns {{display: string, full: string}}
+ */
 export function formatShortName(player) {
   if (!player) return { display: 'Unknown', full: 'Unknown' };
   const firstName = (player.firstName ?? 'Unknown').trim();
