@@ -1107,6 +1107,7 @@ export default function Arena({
               onCancelCourt={handleRequestCancelFill}
               onFillCourt={handleFillCourt}
               onRemoveCourt={handleRemoveCourt}
+              profileHrefFor={playerProfileHrefFor}
             />
           )}
 

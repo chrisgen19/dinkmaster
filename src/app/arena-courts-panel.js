@@ -19,6 +19,9 @@ import { CourtCard } from './court-card';
  * @param {(court: object) => void} props.onCancelCourt - Cancel a fill and return its four to the rack.
  * @param {(courtId: string) => void} props.onFillCourt - Stack the next four onto a court.
  * @param {(courtId: string) => void} props.onRemoveCourt - Close a vacant court.
+ * @param {(playerId: string) => string|null} [props.profileHrefFor] - resolves a
+ *   slot's playerId to a profile link (rack rules); null/omitted renders names
+ *   as plain text.
  */
 export function ArenaCourtsPanel({
   courts,
@@ -32,6 +35,7 @@ export function ArenaCourtsPanel({
   onCancelCourt,
   onFillCourt,
   onRemoveCourt,
+  profileHrefFor = null,
 }) {
   const liveCourtCount = courts.filter((c) => c.status === 'playing').length;
 
@@ -89,6 +93,7 @@ export function ArenaCourtsPanel({
             onCancel={onCancelCourt}
             onFill={onFillCourt}
             onRemove={onRemoveCourt}
+            profileHrefFor={profileHrefFor}
           />
         ))}
       </div>
