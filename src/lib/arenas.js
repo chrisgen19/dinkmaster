@@ -298,6 +298,55 @@ export async function getArenaInviteByCode(code) {
 }
 
 /**
+ * Whether two users share at least one arena (both have a membership in it).
+ * The owner's membership row mirrors role OWNER, so memberships cover owners
+ * too. Powers the access gate for viewing another user's profile.
+ * @param {string} viewerUserId
+ * @param {string} targetUserId
+ * @returns {Promise<boolean>}
+ */
+export async function usersShareArena(viewerUserId, targetUserId) {
+  if (!viewerUserId || !targetUserId) return false;
+  // "Belongs to an arena" = a membership row OR being its owner. `Arena.ownerId`
+  // is the canonical owner record (the OWNER membership row only mirrors it), so
+  // honor it on both sides — same ownerId fallback `requireArenaManager` and
+  // `partitionArenaDirectory` use — rather than 404ing an owner whose mirror row
+  // is ever missing.
+  const inArena = (userId) => ({
+    OR: [{ ownerId: userId }, { memberships: { some: { userId } } }],
+  });
+  const arena = await prisma.arena.findFirst({
+    where: { AND: [inArena(viewerUserId), inArena(targetUserId)] },
+    select: { id: true },
+  });
+  return !!arena;
+}
+
+/**
+ * Load another user's public profile for a viewer, gated on a shared arena.
+ * Returns `null` when ids are missing, the two users share no arena, or the
+ * target doesn't exist — the `/u/[userId]` route turns that into a 404 so it
+ * never reveals whether an account exists. Name only (no email): the only PII
+ * on the profile is excluded for non-self viewers.
+ * @param {string} targetUserId
+ * @param {string} viewerUserId
+ * @returns {Promise<{name:string, stats:Awaited<ReturnType<typeof getUserPlayerStats>>}|null>}
+ */
+export async function getViewableUserProfile(targetUserId, viewerUserId) {
+  if (!targetUserId || !viewerUserId) return null;
+  if (!(await usersShareArena(viewerUserId, targetUserId))) return null;
+
+  const user = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { name: true },
+  });
+  if (!user) return null;
+
+  const stats = await getUserPlayerStats(targetUserId);
+  return { name: user.name, stats };
+}
+
+/**
  * Aggregate a user's player record across every arena they play in — powers
  * the global `/profile` page.
  * @param {string} userId
@@ -318,7 +367,19 @@ export async function getUserPlayerStats(userId) {
     include: { arena: { select: { name: true } } },
     orderBy: { createdAt: 'asc' },
   });
+  return buildPlayerStats(players);
+}
 
+/**
+ * Shared aggregation: turn a list of Player rows (each with `arena.name`) into
+ * the profile stats bundle — totals, per-arena cards, weekly standing, recent
+ * matches, and insights. Backs both the cross-arena account profile
+ * (`getUserPlayerStats`, many rows) and the single-row walk-in profile
+ * (`getViewablePlayerProfile`, one row). All the downstream logic already
+ * operates over a list of players, so a walk-in is just a list of one.
+ * @param {Array<object>} players
+ */
+async function buildPlayerStats(players) {
   const sum = players.reduce(
     (acc, p) => ({
       gamesPlayed: acc.gamesPlayed + p.gamesPlayed,
@@ -451,4 +512,50 @@ export async function getUserPlayerStats(userId) {
     recentMatches,
     insights,
   };
+}
+
+/**
+ * Load a single Player's profile for a viewer — the walk-in counterpart to
+ * `getViewableUserProfile`. Returns:
+ *  - `null` when the player is missing, or it's a walk-in whose (only) arena the
+ *    viewer doesn't belong to (the `/p/[playerId]` route 404s either way);
+ *  - `{ redirectUserId }` when the player is linked to an account — its
+ *    canonical, cross-arena profile lives at `/u/[userId]`, so the route
+ *    redirects there;
+ *  - `{ name, stats }` for an accessible walk-in (single-arena record).
+ * @param {string} playerId
+ * @param {string} viewerUserId
+ */
+export async function getViewablePlayerProfile(playerId, viewerUserId) {
+  if (!playerId || !viewerUserId) return null;
+
+  const player = await prisma.player.findUnique({
+    where: { id: playerId },
+    include: { arena: { select: { name: true } } },
+  });
+  if (!player) return null;
+
+  // Linked players have a richer cross-arena profile keyed by their account.
+  // Gate the redirect on the same shared-arena rule `/u/[userId]` enforces, so
+  // a viewer who couldn't see that profile can't learn the account id from the
+  // redirect (the destination would 404 anyway).
+  if (player.userId) {
+    if (!(await usersShareArena(viewerUserId, player.userId))) return null;
+    return { redirectUserId: player.userId };
+  }
+
+  // Walk-in: gate on the viewer belonging to the walk-in's (only) arena — as a
+  // member or its owner (canonical ownerId fallback, as in usersShareArena).
+  const inArena = await prisma.arena.findFirst({
+    where: {
+      id: player.arenaId,
+      OR: [{ ownerId: viewerUserId }, { memberships: { some: { userId: viewerUserId } } }],
+    },
+    select: { id: true },
+  });
+  if (!inArena) return null;
+
+  const stats = await buildPlayerStats([player]);
+  const name = player.lastName ? `${player.firstName} ${player.lastName}` : player.firstName;
+  return { name, stats };
 }
