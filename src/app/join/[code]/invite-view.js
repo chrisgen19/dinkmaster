@@ -119,17 +119,23 @@ export function InviteView({ code, invite, isAuthenticated }) {
   const handleRedeem = () => {
     setError('');
     startTransition(async () => {
-      const result = await redeemArenaInvite(code);
-      if (result?.error) {
-        setError(result.error);
-        return;
+      try {
+        const result = await redeemArenaInvite(code);
+        if (result?.error) {
+          setError(result.error);
+          return;
+        }
+        if (result.status === 'PENDING') {
+          setPendingArenaId(result.arenaId);
+          return;
+        }
+        // JOINED or ALREADY_MEMBER — straight into the arena.
+        router.push(`/arena/${result.arenaId}`);
+      } catch (err) {
+        // Network / serialization failure — surface inline so the user can retry
+        // instead of hitting an error boundary.
+        setError(err?.message || 'Something went wrong. Please try again.');
       }
-      if (result.status === 'PENDING') {
-        setPendingArenaId(result.arenaId);
-        return;
-      }
-      // JOINED or ALREADY_MEMBER — straight into the arena.
-      router.push(`/arena/${result.arenaId}`);
     });
   };
 

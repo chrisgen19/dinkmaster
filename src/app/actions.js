@@ -62,6 +62,15 @@ function lockQueue(tx, arenaId) {
   return tx.$executeRaw`SELECT pg_advisory_xact_lock(${QUEUE_LOCK_KEY}, hashtext(${arenaId}))`;
 }
 
+// Separate advisory-lock namespace for invite creation, keyed per arena, so two
+// managers minting a link for the same arena are serialized and can't both pass
+// the "one active link per mode" check. Distinct key from the queue lock so
+// invite creation never contends with rack mutations. Released on commit/rollback.
+const INVITE_LOCK_KEY = 920426;
+function lockArenaInvites(tx, arenaId) {
+  return tx.$executeRaw`SELECT pg_advisory_xact_lock(${INVITE_LOCK_KEY}, hashtext(${arenaId}))`;
+}
+
 /** Unbiased Fisher-Yates shuffle (returns a new array). */
 function shuffle(items) {
   const arr = [...items];
@@ -1879,28 +1888,30 @@ export async function createArenaInvite(arenaId, mode) {
   if (guard.error) return { error: guard.error };
   if (!isInviteMode(mode)) return { error: 'Invalid invite type.' };
 
-  // Best-effort idempotency: reuse the live link of this mode if one exists.
-  // Not a hard guarantee — two truly concurrent creates could both pass this
-  // check and mint a second active link of the same mode. That's harmless (the
-  // Share UI disables its button mid-flight and only renders one per mode; the
-  // extra row is inert), so we keep the read cheap rather than add a DB-level
-  // partial-unique constraint Prisma can't express declaratively.
-  const existing = await prisma.arenaInvite.findFirst({
-    where: { arenaId, mode, active: true },
-    select: { id: true, code: true, mode: true, createdAt: true },
-  });
-  if (existing) return { ok: true, invite: serializeInvite(existing) };
-
-  // Retry on the vanishingly rare unique-code collision (P2002).
+  // Take a per-arena advisory lock, then check-or-create inside one transaction
+  // so concurrent managers can't both miss the existing-active check and mint
+  // duplicate links of the same mode (the lock guarantees one active link per
+  // mode without a DB-level partial-unique constraint Prisma can't express).
+  // Re-run the whole transaction on the vanishingly rare unique-code collision,
+  // since a failed `create` poisons the surrounding transaction.
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      const invite = await prisma.arenaInvite.create({
-        data: { arenaId, mode, code: generateInviteCode(), createdBy: guard.user.id },
-        select: { id: true, code: true, mode: true, createdAt: true },
+      return await prisma.$transaction(async (tx) => {
+        await lockArenaInvites(tx, arenaId);
+        const existing = await tx.arenaInvite.findFirst({
+          where: { arenaId, mode, active: true },
+          select: { id: true, code: true, mode: true, createdAt: true },
+        });
+        if (existing) return { ok: true, invite: serializeInvite(existing) };
+
+        const invite = await tx.arenaInvite.create({
+          data: { arenaId, mode, code: generateInviteCode(), createdBy: guard.user.id },
+          select: { id: true, code: true, mode: true, createdAt: true },
+        });
+        return { ok: true, invite: serializeInvite(invite) };
       });
-      return { ok: true, invite: serializeInvite(invite) };
     } catch (err) {
-      if (err?.code === 'P2002') continue;
+      if (err?.code === 'P2002') continue; // code collision — fresh tx + code
       throw err;
     }
   }
@@ -1956,21 +1967,30 @@ export async function redeemArenaInvite(code) {
   if (membership) return { ok: true, status: 'ALREADY_MEMBER', arenaId };
 
   if (invite.mode === INVITE_MODES.AUTO_JOIN) {
+    let reason = '';
     await prisma.$transaction(async (tx) => {
       await lockQueue(tx, arenaId);
+      // Resolve the user first and bail if the row vanished (concurrent account
+      // deletion), mirroring approveJoinRequest — activateArenaPlayer would
+      // otherwise dereference a null user.
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { id: true, firstName: true, lastName: true },
+      });
+      if (!user) {
+        reason = 'NO_USER';
+        return;
+      }
       await tx.arenaMembership.upsert({
         where: { arenaId_userId: { arenaId, userId } },
         create: { arenaId, userId, role: ROLES.MEMBER },
         update: {}, // already a member somehow — keep their role
       });
-      const user = await tx.user.findUnique({
-        where: { id: userId },
-        select: { id: true, firstName: true, lastName: true },
-      });
       await activateArenaPlayer(tx, arenaId, user);
       // Clear any stale pending request now that they're a full member.
       await tx.joinRequest.deleteMany({ where: { arenaId, userId } });
     });
+    if (reason === 'NO_USER') return { error: 'Your account could not be found.' };
     return { ok: true, status: 'JOINED', arenaId };
   }
 

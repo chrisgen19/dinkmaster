@@ -15,13 +15,10 @@ const MODE_BLURB = {
 };
 
 /**
- * Manager-only Share control in the arena hero. Mints, shares, and revokes the
- * arena's invite links (one Auto-join + one Approval). Each link renders a QR
- * code (react-qr-code) plus copy / native-share affordances, so a manager can
- * hand the arena to a new player or walk-in on the spot.
- *
- * Absolute URLs are built from `window.location.origin` after mount, so the
- * component never needs the request host on the server.
+ * Manager-only Share control in the arena hero. Owns the invite list + the
+ * create/revoke/regenerate actions; the dialog itself is a separate component
+ * mounted only while open (see {@link InviteModal}) so its scroll-lock / Escape
+ * lifecycle and client-only URL reads behave exactly like the other modals.
  *
  * @param {object} props
  * @param {string} props.arenaId
@@ -31,12 +28,6 @@ const MODE_BLURB = {
 export function ArenaInviteShare({ arenaId, arenaName, initialInvites = [] }) {
   const [open, setOpen] = useState(false);
   const [invites, setInvites] = useState(initialInvites);
-  // Lazily read at mount (never rendered until the modal opens, so SSR's empty
-  // string can't cause a hydration mismatch). Avoids a setState-in-effect.
-  const [origin] = useState(() => (typeof window !== 'undefined' ? window.location.origin : ''));
-  const [canNativeShare] = useState(
-    () => typeof navigator !== 'undefined' && typeof navigator.share === 'function',
-  );
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState('');
 
@@ -46,9 +37,6 @@ export function ArenaInviteShare({ arenaId, arenaName, initialInvites = [] }) {
     setLastSeed(initialInvites);
     setInvites(initialInvites);
   }
-
-  const inviteFor = (mode) => invites.find((i) => i.mode === mode) ?? null;
-  const urlFor = (code) => (origin ? `${origin}/join/${code}` : '');
 
   const handleCreate = (mode) =>
     startTransition(async () => {
@@ -66,18 +54,18 @@ export function ArenaInviteShare({ arenaId, arenaName, initialInvites = [] }) {
       setInvites((prev) => prev.filter((i) => i.id !== id));
     });
 
-  // Rotate a link: revoke the old code, mint a fresh one of the same mode.
+  // Rotate a link: revoke the old code, then mint a fresh one of the same mode.
+  // Drop the old invite from view as soon as the revoke succeeds so a failed
+  // create can't leave a now-dead link (and its QR) on screen.
   const handleRegenerate = (mode, id) =>
     startTransition(async () => {
       setError('');
       const revoked = await revokeArenaInvite(arenaId, id);
       if (revoked?.error) return setError(revoked.error);
+      setInvites((prev) => prev.filter((i) => i.id !== id));
       const created = await createArenaInvite(arenaId, mode);
       if (created?.error) return setError(created.error);
-      setInvites((prev) => [
-        created.invite,
-        ...prev.filter((i) => i.id !== id && i.id !== created.invite.id),
-      ]);
+      setInvites((prev) => [created.invite, ...prev.filter((i) => i.id !== created.invite.id)]);
     });
 
   return (
@@ -97,57 +85,121 @@ export function ArenaInviteShare({ arenaId, arenaName, initialInvites = [] }) {
         Share / Invite
       </button>
 
-      {open && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="arena-invite-title"
-            className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 shadow-2xl animate-scale-up max-h-[85vh] overflow-y-auto"
-          >
-            <div className="mb-4">
-              <h3 id="arena-invite-title" className="text-base font-extrabold text-slate-900">
-                Invite people to {arenaName}
-              </h3>
-              <p className="text-xs text-slate-400 mt-1">
-                Share a link or QR code. Auto-join adds people instantly; approval
-                links route them to you first.
-              </p>
-            </div>
-
-            {error && <p className="text-xs font-semibold text-red-600 mb-3">{error}</p>}
-
-            <div className="space-y-4">
-              {MODES.map((mode) => (
-                <InviteCard
-                  key={mode}
-                  mode={mode}
-                  invite={inviteFor(mode)}
-                  url={urlFor(inviteFor(mode)?.code)}
-                  arenaName={arenaName}
-                  canNativeShare={canNativeShare}
-                  isPending={isPending}
-                  onCreate={() => handleCreate(mode)}
-                  onRevoke={(id) => handleRevoke(id)}
-                  onRegenerate={(id) => handleRegenerate(mode, id)}
-                />
-              ))}
-            </div>
-
-            <div className="flex justify-end mt-6">
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body,
+      {open && (
+        <InviteModal
+          arenaName={arenaName}
+          invites={invites}
+          isPending={isPending}
+          error={error}
+          onClose={() => setOpen(false)}
+          onCreate={handleCreate}
+          onRevoke={handleRevoke}
+          onRegenerate={handleRegenerate}
+        />
       )}
     </>
+  );
+}
+
+/**
+ * The invite dialog. Mounted only while open, so the iOS-safe scroll lock and
+ * Escape handler run for the dialog's lifetime, and the client-only `origin` /
+ * `navigator.share` reads happen after a user gesture (never during SSR). Mirrors
+ * the portal + scroll-lock + backdrop/Escape pattern in `court-edit-modal.js`.
+ */
+function InviteModal({ arenaName, invites, isPending, error, onClose, onCreate, onRevoke, onRegenerate }) {
+  // Safe to read directly: this component only ever mounts client-side after a click.
+  const [origin] = useState(() => (typeof window !== 'undefined' ? window.location.origin : ''));
+  const [canNativeShare] = useState(
+    () => typeof navigator !== 'undefined' && typeof navigator.share === 'function',
+  );
+
+  // iOS-safe scroll lock: pin <body> with position:fixed offset by scrollY for
+  // the modal's lifetime; plain overflow:hidden doesn't stop PWA rubber-banding.
+  useEffect(() => {
+    const { style } = document.body;
+    const y = window.scrollY;
+    style.position = 'fixed';
+    style.top = `-${y}px`;
+    style.left = '0';
+    style.right = '0';
+    style.width = '100%';
+    return () => {
+      style.position = '';
+      style.top = '';
+      style.left = '';
+      style.right = '';
+      style.width = '';
+      window.scrollTo(0, y);
+    };
+  }, []);
+
+  // Escape closes while idle; suppressed mid-action so a race-error keeps context.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape' && !isPending) onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isPending, onClose]);
+
+  const inviteFor = (mode) => invites.find((i) => i.mode === mode) ?? null;
+  const urlFor = (code) => (origin && code ? `${origin}/join/${code}` : '');
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isPending) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="arena-invite-title"
+        className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 shadow-2xl animate-scale-up max-h-[85vh] overflow-y-auto"
+      >
+        <div className="mb-4">
+          <h3 id="arena-invite-title" className="text-base font-extrabold text-slate-900">
+            Invite people to {arenaName}
+          </h3>
+          <p className="text-xs text-slate-400 mt-1">
+            Share a link or QR code. Auto-join adds people instantly; approval
+            links route them to you first.
+          </p>
+        </div>
+
+        {error && <p className="text-xs font-semibold text-red-600 mb-3">{error}</p>}
+
+        <div className="space-y-4">
+          {MODES.map((mode) => (
+            <InviteCard
+              key={mode}
+              mode={mode}
+              invite={inviteFor(mode)}
+              url={urlFor(inviteFor(mode)?.code)}
+              arenaName={arenaName}
+              canNativeShare={canNativeShare}
+              isPending={isPending}
+              onCreate={() => onCreate(mode)}
+              onRevoke={(id) => onRevoke(id)}
+              onRegenerate={(id) => onRegenerate(mode, id)}
+            />
+          ))}
+        </div>
+
+        <div className="flex justify-end mt-6">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

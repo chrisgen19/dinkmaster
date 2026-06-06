@@ -2096,30 +2096,45 @@ describe('invite links', () => {
     it('rejects an unknown mode and writes nothing', async () => {
       const result = await actions.createArenaInvite(ARENA, 'BOGUS');
       expect(result.error).toMatch(/invalid invite/i);
-      expect(prisma.arenaInvite.findFirst).not.toHaveBeenCalled();
-      expect(prisma.arenaInvite.create).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it('reuses an existing active invite of that mode instead of creating a duplicate', async () => {
-      prisma.arenaInvite.findFirst.mockResolvedValue({
-        id: 'inv1', code: 'abc', mode: 'APPROVAL', createdAt: new Date('2026-01-01'),
-      });
+    it('takes the per-arena lock and reuses an existing active invite of that mode', async () => {
+      const tx = {
+        $executeRaw: vi.fn(),
+        arenaInvite: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: 'inv1', code: 'abc', mode: 'APPROVAL', createdAt: new Date('2026-01-01'),
+          }),
+          create: vi.fn(),
+        },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
       const result = await actions.createArenaInvite(ARENA, 'APPROVAL');
       expect(result.ok).toBe(true);
       expect(result.invite).toMatchObject({ id: 'inv1', code: 'abc', mode: 'APPROVAL' });
-      expect(prisma.arenaInvite.create).not.toHaveBeenCalled();
+      expect(tx.$executeRaw).toHaveBeenCalled(); // advisory lock acquired
+      expect(tx.arenaInvite.create).not.toHaveBeenCalled();
     });
 
     it('mints a fresh invite when none of that mode is active', async () => {
-      prisma.arenaInvite.findFirst.mockResolvedValue(null);
-      prisma.arenaInvite.create.mockResolvedValue({
-        id: 'inv2', code: 'xyz', mode: 'AUTO_JOIN', createdAt: new Date('2026-02-02'),
-      });
+      const tx = {
+        $executeRaw: vi.fn(),
+        arenaInvite: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          create: vi.fn().mockResolvedValue({
+            id: 'inv2', code: 'xyz', mode: 'AUTO_JOIN', createdAt: new Date('2026-02-02'),
+          }),
+        },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
       const result = await actions.createArenaInvite(ARENA, 'AUTO_JOIN');
       expect(result.ok).toBe(true);
       expect(result.invite).toMatchObject({ id: 'inv2', code: 'xyz', mode: 'AUTO_JOIN' });
-      expect(prisma.arenaInvite.create).toHaveBeenCalledTimes(1);
-      const arg = prisma.arenaInvite.create.mock.calls[0][0];
+      expect(tx.arenaInvite.create).toHaveBeenCalledTimes(1);
+      const arg = tx.arenaInvite.create.mock.calls[0][0];
       expect(arg.data).toMatchObject({ arenaId: ARENA, mode: 'AUTO_JOIN', createdBy: 'u1' });
       expect(typeof arg.data.code).toBe('string');
     });
@@ -2201,6 +2216,25 @@ describe('invite links', () => {
         update: {},
       });
       expect(prisma.joinRequest.upsert).not.toHaveBeenCalled();
+    });
+
+    it('aborts AUTO_JOIN cleanly when the user row is gone (no membership written)', async () => {
+      prisma.arenaInvite.findFirst.mockResolvedValue({
+        mode: 'AUTO_JOIN', arenaId: ARENA, arena: { ownerId: 'owner' },
+      });
+      prisma.arenaMembership.findUnique.mockResolvedValue(null);
+      const tx = {
+        $executeRaw: vi.fn(),
+        arenaMembership: { upsert: vi.fn() },
+        user: { findUnique: vi.fn().mockResolvedValue(null) }, // account vanished mid-redeem
+        player: { findUnique: vi.fn() },
+        joinRequest: { deleteMany: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.redeemArenaInvite('code123');
+      expect(result.error).toBeTruthy();
+      expect(tx.arenaMembership.upsert).not.toHaveBeenCalled();
     });
   });
 });
