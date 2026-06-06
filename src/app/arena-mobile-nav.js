@@ -15,11 +15,32 @@ import { TabIcon, TabBadge as Badge } from './arena-tab-icons';
  * reading order matches the visual order. Hidden at `md` and above.
  */
 function ArenaMobileTabStrip({ navTabs, activeTab, onSelectTab }) {
+  const rootRef = useRef(null);
   const [emblaRef, emblaApi] = useEmblaCarousel({
     dragFree: true,
     containScroll: 'trimSnaps',
     align: 'center',
   });
+
+  // Publish the strip's height as `--arena-tab-strip-h` (same pattern as the
+  // `--site-header-h` ResizeObserver in arena.js), so content that needs to
+  // stick BELOW the mobile nav — the Match Log's sticky day labels — can
+  // offset by header + strip instead of tucking underneath them. Reports 0
+  // at `md+` (display: none → offsetHeight 0) and is removed on unmount, so
+  // pages without the strip fall back to the var's 0px default.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const publish = () =>
+      document.documentElement.style.setProperty('--arena-tab-strip-h', `${el.offsetHeight}px`);
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      document.documentElement.style.removeProperty('--arena-tab-strip-h');
+    };
+  }, []);
 
   // The parent rebuilds `navTabs` on every render, so depending on it directly
   // would re-snap the strip on every Arena state change (court updates, score
@@ -37,6 +58,7 @@ function ArenaMobileTabStrip({ navTabs, activeTab, onSelectTab }) {
 
   return (
     <div
+      ref={rootRef}
       className="md:hidden sticky top-[var(--site-header-h,64px)] z-30
         bg-slate-50/85 backdrop-blur-md border-b border-slate-200/70"
     >
