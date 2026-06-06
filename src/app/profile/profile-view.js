@@ -134,9 +134,11 @@ export function ProfileView({ name, email = null, stats, backHref = '/arenas', b
                   ? insights.streak.count === 1
                     ? 'Just the latest match'
                     : `${insights.streak.count} in a row`
-                  : isSelf
-                    ? 'Waiting on your first match'
-                    : 'No matches played yet'
+                  : hasGames
+                    ? 'No active streak'
+                    : isSelf
+                      ? 'Waiting on your first match'
+                      : 'No matches played yet'
               }
               accent={insights.streak?.kind === 'W' ? 'emerald' : insights.streak?.kind === 'L' ? 'slate-dim' : 'slate'}
               monospace

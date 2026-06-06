@@ -10,7 +10,7 @@ import {
   getArenaInvites,
 } from '@/lib/arenas';
 import { getCurrentUser } from '@/lib/session';
-import { canManageArena } from '@/lib/roles';
+import { canManageArena, ROLES } from '@/lib/roles';
 import Arena from '../../arena';
 
 // Always read fresh arena state from the database on each request.
@@ -28,7 +28,15 @@ export default async function ArenaPage({ params }) {
     getCurrentUser(),
   ]);
 
-  const viewerRole = user ? (members.find((m) => m.userId === user.id)?.role ?? null) : null;
+  // `Arena.ownerId` is the canonical owner record (the OWNER membership row only
+  // mirrors it), so fall back to it when the viewer is the owner but has no
+  // membership row — mirroring `requireArenaManager`/`usersShareArena`. Without
+  // this an owner missing that mirror row would lose canManage and the rack's
+  // name→profile links even though the server still authorizes them.
+  const viewerRole = user
+    ? (members.find((m) => m.userId === user.id)?.role ??
+        (arena.ownerId === user.id ? ROLES.OWNER : null))
+    : null;
   const canManage = canManageArena(viewerRole);
 
   // Managers see the pending-request queue; a signed-in non-member sees whether
