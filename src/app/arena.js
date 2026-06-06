@@ -24,7 +24,7 @@ import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leader
 import { createStateFreshnessGuard } from '@/lib/state-freshness';
 import { computeSessionStats } from '@/lib/session-stats';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
-import { formatShortName } from '@/lib/player-display';
+import { formatShortName, profileHref } from '@/lib/player-display';
 import { AuthStatus } from './auth-status';
 import { SiteHeader } from './site-header';
 import { ArenaMembers } from './arena-members';
@@ -450,6 +450,20 @@ export default function Arena({
   const myPlayer = viewerUserId
     ? displayPlayers.find((p) => p.userId === viewerUserId) ?? null
     : null;
+  // Resolve an arena playerId to a profile link, with the same rules as the
+  // rack (shared `profileHref` in @/lib/player-display). Looks the player up
+  // in the LIVE roster: leaderboard entries and match-history snapshots carry
+  // ids of players who may since have left or been deleted — those resolve to
+  // null and render as plain text instead of a dead link. Passed to the This
+  // Week leaderboard and the History tab's roster badges.
+  const playerProfileHrefFor = useMemo(() => {
+    const byId = new Map(players.map((p) => [p.id, p]));
+    const viewer = { viewerUserId, viewerIsMember: viewerRole !== null };
+    return (playerId) => {
+      const p = playerId ? byId.get(playerId) : null;
+      return p ? profileHref({ userId: p.userId, playerId: p.id }, viewer) : null;
+    };
+  }, [players, viewerUserId, viewerRole]);
   // Courts with a match in progress — surfaced in the header stats and the
   // tab badge, so compute it once.
   const liveCourtCount = courts.filter((c) => c.status === 'playing').length;
@@ -1105,6 +1119,7 @@ export default function Arena({
               <ArenaThisWeek
                 leaderboard={leaderboard}
                 myPlayerId={myPlayer?.id ?? null}
+                profileHrefFor={playerProfileHrefFor}
                 scheduleLabel={hasConfiguredSchedule(schedule) ? describeSchedule(schedule) : null}
                 canManage={canManage}
                 onEditSchedule={() => setScheduleModalOpen(true)}
@@ -1194,7 +1209,11 @@ export default function Arena({
           )}
 
           {activeTab === 'history' && (
-            <ArenaHistory matches={matchHistory} formatTimestamp={formatTimestamp} />
+            <ArenaHistory
+              matches={matchHistory}
+              formatTimestamp={formatTimestamp}
+              profileHrefFor={playerProfileHrefFor}
+            />
           )}
 
           {activeTab === 'members' && (

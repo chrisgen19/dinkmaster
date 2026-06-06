@@ -17,8 +17,10 @@ import {
   cancelLinkRequest,
   linkPlayerToMember,
 } from './actions';
+import Link from 'next/link';
 import { ROLES } from '@/lib/roles';
 import { monogram } from '@/lib/user-insights';
+import { profileHref } from '@/lib/player-display';
 import { ArenaRequestsList } from './arena-requests-list';
 
 /** Locale-aware case-insensitive name compare for sorting people lists. */
@@ -271,6 +273,7 @@ export function ArenaMembers({
           <MembersList
             members={sortedMembers}
             viewerUserId={viewerUserId}
+            viewerIsMember={isMember}
             isOwner={isOwner}
             isPending={isPending}
             onCourtUserIds={onCourtUserIds}
@@ -285,6 +288,7 @@ export function ArenaMembers({
         <div className="animate-fade-in">
           <WalkInsList
             orphans={sortedOrphans}
+            viewerIsMember={isMember}
             canManage={canManage}
             isPending={isPending}
             onCourtPlayerIds={onCourtPlayerIds}
@@ -399,7 +403,7 @@ function SelfLinkPanel({ pendingRequest, onOpenModal, onCancel, disabled }) {
   );
 }
 
-function MembersList({ members, viewerUserId, isOwner, isPending, onCourtUserIds, onPromoteToggle, onTransfer, onRemove }) {
+function MembersList({ members, viewerUserId, viewerIsMember = false, isOwner, isPending, onCourtUserIds, onPromoteToggle, onTransfer, onRemove }) {
   if (members.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center">
@@ -412,6 +416,9 @@ function MembersList({ members, viewerUserId, isOwner, isPending, onCourtUserIds
       {members.map((m) => {
         const isViewer = m.userId === viewerUserId;
         const onCourt = onCourtUserIds?.has(m.userId) ?? false;
+        // Same link rules as the rack (shared profileHref): self → /profile,
+        // others → /u/<userId> for member viewers, plain text otherwise.
+        const href = profileHref({ userId: m.userId }, { viewerUserId, viewerIsMember });
         return (
           <li
             key={m.membershipId}
@@ -421,7 +428,17 @@ function MembersList({ members, viewerUserId, isOwner, isPending, onCourtUserIds
               <Avatar name={m.name} tone={isViewer ? 'sky' : 'slate'} />
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-900 truncate">
-                  {m.name}
+                  {href ? (
+                    <Link
+                      href={href}
+                      className="rounded hover:text-emerald-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+                      title={`View ${m.name}’s profile`}
+                    >
+                      {m.name}
+                    </Link>
+                  ) : (
+                    m.name
+                  )}
                   {isViewer && <span className="text-slate-400 font-normal"> (you)</span>}
                 </p>
                 <span
@@ -456,7 +473,7 @@ function MembersList({ members, viewerUserId, isOwner, isPending, onCourtUserIds
   );
 }
 
-function WalkInsList({ orphans, canManage, isPending, onCourtPlayerIds, onLink, onRemove }) {
+function WalkInsList({ orphans, viewerIsMember = false, canManage, isPending, onCourtPlayerIds, onLink, onRemove }) {
   if (orphans.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center">
@@ -473,6 +490,9 @@ function WalkInsList({ orphans, canManage, isPending, onCourtPlayerIds, onLink, 
     <ul className="divide-y divide-slate-100">
       {orphans.map((p) => {
         const onCourt = onCourtPlayerIds?.has(p.id) ?? false;
+        // Walk-ins have no account: /p/<playerId> for member viewers (same
+        // rule as the rack via shared profileHref), plain text otherwise.
+        const href = profileHref({ playerId: p.id }, { viewerIsMember });
         return (
         <li
           key={p.id}
@@ -481,7 +501,17 @@ function WalkInsList({ orphans, canManage, isPending, onCourtPlayerIds, onLink, 
           <div className="flex items-center gap-3 min-w-0">
             <Avatar name={p.displayName} />
             <div className="min-w-0 flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="text-sm font-semibold text-slate-900 truncate">{p.displayName}</span>
+              {href ? (
+                <Link
+                  href={href}
+                  className="text-sm font-semibold text-slate-900 truncate rounded hover:text-emerald-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+                  title={`View ${p.displayName}’s profile`}
+                >
+                  {p.displayName}
+                </Link>
+              ) : (
+                <span className="text-sm font-semibold text-slate-900 truncate">{p.displayName}</span>
+              )}
               <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 ring-1 ring-slate-200">
                 walk-in
               </span>
