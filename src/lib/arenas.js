@@ -31,6 +31,10 @@ export async function listArenas() {
     playerCount: a._count.players,
     courtCount: a._count.courts,
     matchCount: a._count.matches,
+    scheduleDays: a.scheduleDays,
+    scheduleStart: a.scheduleStart,
+    scheduleEnd: a.scheduleEnd,
+    timezone: a.timezone,
   }));
 }
 

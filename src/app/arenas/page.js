@@ -4,54 +4,127 @@ import { partitionArenaDirectory } from '@/lib/arena-directory';
 import { getCurrentUser } from '@/lib/session';
 import { AuthStatus } from '../auth-status';
 import { SiteHeader } from '../site-header';
+import { Users, Layers, Trophy, ArrowRight, Sparkles, MapPin, Calendar } from 'lucide-react';
+import { hasConfiguredSchedule, describeSchedule } from '@/lib/schedule-format';
 
 // Always read the fresh arena list on each request.
 export const dynamic = 'force-dynamic';
 
+/** Adapt a directory row's flat `schedule*` columns to the canonical
+ *  `{days, start, end, timezone}` shape the shared schedule helpers take. */
+const toSchedule = (a) => ({
+  days: a.scheduleDays ?? [],
+  start: a.scheduleStart,
+  end: a.scheduleEnd,
+  timezone: a.timezone,
+});
+
 const ROLE_BADGE = {
-  OWNER: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-  ORGANIZER: 'bg-sky-50 text-sky-700 ring-sky-200',
-  MEMBER: 'bg-slate-100 text-slate-600 ring-slate-200',
+  OWNER: 'bg-emerald-500/10 text-emerald-700 ring-emerald-600/20 border border-emerald-500/20 shadow-sm shadow-emerald-500/5',
+  ORGANIZER: 'bg-sky-500/10 text-sky-700 ring-sky-600/20 border border-sky-500/20 shadow-sm shadow-sky-500/5',
+  MEMBER: 'bg-slate-500/10 text-slate-600 ring-slate-600/20 border border-slate-500/10 shadow-sm shadow-slate-500/5',
 };
 
 function ArenaCard({ arena, role, isPending }) {
+  // Resolve the schedule label once per card: null = nothing configured
+  // (renders the "Flexible play schedule" fallback).
+  const schedule = toSchedule(arena);
+  const scheduleLabel = hasConfiguredSchedule(schedule) ? describeSchedule(schedule) : null;
   return (
     <Link
       href={`/arena/${arena.id}`}
-      className="group relative bg-white border border-slate-200 rounded-2xl p-5
+      className="group relative bg-white border border-slate-200/80 rounded-2xl p-5
         shadow-[0_1px_2px_rgba(15,23,42,0.04)]
-        hover:border-emerald-300 hover:shadow-[0_10px_30px_-18px_rgba(16,185,129,0.55)]
-        transition duration-200 flex flex-col"
+        hover:border-emerald-500/50 hover:shadow-[0_16px_32px_-12px_rgba(16,185,129,0.18),0_4px_12px_rgba(16,185,129,0.04)]
+        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2
+        transition duration-300 flex flex-col hover:-translate-y-1 overflow-hidden"
     >
-      <div className="flex items-start justify-between gap-2">
-        <h3 className="font-display text-base font-extrabold text-slate-900 group-hover:text-emerald-700 transition leading-snug">
-          {arena.name}
-        </h3>
-        {role ? (
-          <span
-            className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 ring-1 ${ROLE_BADGE[role]}`}
-          >
-            {role}
-          </span>
-        ) : isPending ? (
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 bg-amber-50 text-amber-700 ring-1 ring-amber-200">
-            Requested
-          </span>
-        ) : null}
+      {/* Premium top gradient line */}
+      <div 
+        className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 to-teal-400 transform origin-left scale-x-0 group-hover:scale-x-100 transition-transform duration-500 z-20" 
+        aria-hidden="true" 
+      />
+
+      {/* Radial soft glow */}
+      <div 
+        className="absolute top-0 right-0 w-36 h-36 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none z-0" 
+        aria-hidden="true" 
+      />
+
+      {/* Card Header */}
+      <div className="flex items-start justify-between gap-3 relative z-10">
+        <div className="min-w-0">
+          <h3 className="font-display text-base font-extrabold text-slate-900 group-hover:text-emerald-700 transition leading-snug truncate">
+            {arena.name}
+          </h3>
+          <p className="text-[10px] text-slate-400 mt-0.5 truncate" title={`Organized by ${arena.ownerName}`}>
+            Organized by <span className="font-semibold text-slate-600">{arena.ownerName}</span>
+          </p>
+        </div>
+        <div className="shrink-0 flex items-center gap-1.5 mt-0.5">
+          {role ? (
+            <span
+              className={`text-[9px] font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider shrink-0 ring-1 ${ROLE_BADGE[role]}`}
+            >
+              {role}
+            </span>
+          ) : isPending ? (
+            <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider shrink-0 bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/20 border border-amber-500/15">
+              Requested
+            </span>
+          ) : null}
+        </div>
       </div>
 
-      {arena.description ? (
-        <p className="text-xs text-slate-500 mt-2 line-clamp-2 leading-relaxed">{arena.description}</p>
-      ) : (
-        <p className="text-xs text-slate-400 mt-2 italic">No description yet.</p>
+      {/* Description Block */}
+      {arena.description && (
+        <div className="mt-3.5 flex items-start relative z-10">
+          <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
+            {arena.description}
+          </p>
+        </div>
       )}
 
-      <div className="mt-auto pt-4 flex items-center gap-4 text-[11px] text-slate-500">
-        <span><strong className="text-slate-800 font-extrabold">{arena.playerCount}</strong> players</span>
-        <span className="w-px h-3 bg-slate-200" aria-hidden="true" />
-        <span><strong className="text-slate-800 font-extrabold">{arena.courtCount}</strong> courts</span>
-        <span className="w-px h-3 bg-slate-200" aria-hidden="true" />
-        <span><strong className="text-slate-800 font-extrabold">{arena.matchCount}</strong> matches</span>
+      {/* Unified Metadata & Property Panel */}
+      <div className="mt-auto pt-4 border-t border-slate-100/80 relative z-10 flex flex-col gap-3 text-[11px] text-slate-500">
+        {/* Play Schedule Property */}
+        <div className="flex items-center gap-2 min-w-0">
+          <Calendar className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 transition shrink-0" />
+          {scheduleLabel ? (
+            <span className="font-medium text-slate-700 truncate" title={scheduleLabel}>
+              {scheduleLabel}
+            </span>
+          ) : (
+            <span className="text-slate-400 italic">Flexible play schedule</span>
+          )}
+        </div>
+
+        {/* Counts & Hover Arrow Indicator */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="flex items-center gap-1.5 shrink-0" title={`${arena.playerCount} active players`}>
+              <Users className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 transition shrink-0" />
+              <span><strong className="text-slate-800 font-extrabold tabular-nums">{arena.playerCount}</strong> players</span>
+            </span>
+            <span className="w-1 h-1 rounded-full bg-slate-200 shrink-0" aria-hidden="true" />
+            <span className="flex items-center gap-1.5 shrink-0" title={`${arena.courtCount} courts`}>
+              <Layers className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 transition shrink-0" />
+              <span><strong className="text-slate-800 font-extrabold tabular-nums">{arena.courtCount}</strong> courts</span>
+            </span>
+            <span className="w-1 h-1 rounded-full bg-slate-200 shrink-0" aria-hidden="true" />
+            <span className="flex items-center gap-1.5 shrink-0" title={`${arena.matchCount} total matches`}>
+              <Trophy className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 transition shrink-0" />
+              <span><strong className="text-slate-800 font-extrabold tabular-nums">{arena.matchCount}</strong> matches</span>
+            </span>
+          </div>
+
+          <div 
+            className="w-5 h-5 rounded-full bg-slate-50 text-slate-400 group-hover:bg-emerald-50 group-hover:text-emerald-600 flex items-center justify-center transition-all duration-300 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0"
+            aria-hidden="true"
+          >
+            <ArrowRight className="w-3 h-3" />
+          </div>
+        </div>
       </div>
     </Link>
   );
@@ -59,7 +132,7 @@ function ArenaCard({ arena, role, isPending }) {
 
 function ArenaGrid({ arenas, roleByArena, pendingArenaIds }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
       {arenas.map((arena) => (
         <ArenaCard
           key={arena.id}
@@ -74,22 +147,30 @@ function ArenaGrid({ arenas, roleByArena, pendingArenaIds }) {
 
 function SectionHeading({ eyebrow, title, count }) {
   return (
-    <div className="flex items-baseline gap-3 mb-4">
-      <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-700">
-        {eyebrow}
-      </span>
-      <span className="flex-1 h-px bg-slate-200" aria-hidden="true" />
-      <span className="text-[11px] text-slate-400 font-bold tabular-nums">
+    <div className="flex items-center gap-3 mb-5">
+      <div className="flex items-center gap-2">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" aria-hidden="true" />
+        <span className="font-display text-xs font-bold uppercase tracking-wider text-slate-950">
+          {eyebrow}
+        </span>
+      </div>
+      <span className="flex-1 h-px bg-slate-200/80" aria-hidden="true" />
+      <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest bg-slate-100 px-2 py-0.5 rounded-md tabular-nums border border-slate-200/50">
         {count} {title}
       </span>
     </div>
   );
 }
 
-function EmptyState({ children }) {
+function EmptyState({ children, icon: Icon = Sparkles }) {
   return (
-    <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-10 text-center text-sm text-slate-400">
-      {children}
+    <div className="bg-white border border-dashed border-slate-300/80 rounded-2xl p-10 flex flex-col items-center justify-center text-center shadow-[0_1px_2px_rgba(15,23,42,0.02)] max-w-md mx-auto my-4">
+      <div className="w-11 h-11 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mb-3.5 ring-6 ring-emerald-500/5">
+        <Icon className="w-5.5 h-5.5" />
+      </div>
+      <div className="text-sm text-slate-500 leading-relaxed max-w-xs">
+        {children}
+      </div>
     </div>
   );
 }
@@ -156,7 +237,7 @@ export default async function Page() {
           <section>
             <SectionHeading eyebrow="Your arenas" title="joined" count={yourArenas.length} />
             {yourArenas.length === 0 ? (
-              <EmptyState>
+              <EmptyState icon={Sparkles}>
                 You haven’t joined any arenas yet. Browse below, or{' '}
                 <Link href="/arenas/new" className="text-emerald-600 font-semibold hover:text-emerald-700">
                   start your own
@@ -177,7 +258,7 @@ export default async function Page() {
             count={publicArenas.length}
           />
           {publicArenas.length === 0 ? (
-            <EmptyState>
+            <EmptyState icon={MapPin}>
               {user
                 ? 'No other arenas outside your memberships right now.'
                 : 'No arenas yet. Sign in to create the first one.'}
