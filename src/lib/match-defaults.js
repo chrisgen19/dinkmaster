@@ -13,6 +13,8 @@ export const DEFAULT_TARGET_SCORE = 11;
 export const DEFAULT_AUTO_MIX = true;
 /** Default for whether games played outside the schedule still count. */
 export const DEFAULT_COUNT_OFF_SCHEDULE = true;
+/** Default for whether the Partnership Matrix tab is shown (opt-in per arena). */
+export const DEFAULT_SHOW_PARTNERSHIP_MATRIX = false;
 // (No DEFAULT_LEADERBOARD_SIZE here — it lives in `lib/leaderboard.js` next to
 // `computeWeeklyLeaderboard` where it's used as the function default.)
 

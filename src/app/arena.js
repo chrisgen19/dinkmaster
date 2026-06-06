@@ -19,7 +19,7 @@ import {
   prepareNextSession,
 } from './actions';
 import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT, ON_DECK_SIZE } from '@/lib/matchmaking';
-import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE } from '@/lib/match-defaults';
+import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE, DEFAULT_SHOW_PARTNERSHIP_MATRIX } from '@/lib/match-defaults';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
 import { computeSessionStats } from '@/lib/session-stats';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
@@ -156,7 +156,7 @@ export default function Arena({
     autoMixDefault: DEFAULT_AUTO_MIX,
     leaderboardSize: DEFAULT_LEADERBOARD_SIZE,
     countOffScheduleGames: DEFAULT_COUNT_OFF_SCHEDULE,
-    showPartnershipMatrix: false,
+    showPartnershipMatrix: DEFAULT_SHOW_PARTNERSHIP_MATRIX,
   },
   sessionPrep = { autoResetOnSession: true, lastSessionResetAt: null },
   canManage,
