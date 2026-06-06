@@ -151,8 +151,10 @@ async function activateArenaPlayer(tx, arenaId, user) {
 /**
  * Remove a user from an arena inside a transaction: deactivate their linked
  * player (kept for history — `leftAt` set, pulled off the rack) and delete
- * their non-owner membership. Returns false when the player is mid-match so the
- * caller can abort. Caller must hold `lockQueue`.
+ * their non-owner membership, and revoke any invite links they issued. Returns
+ * false when the player is mid-match so the caller can abort. Caller must hold
+ * `lockArenaInvites` then `lockQueue` (that order — the invite revocation is
+ * serialized against `redeemArenaInvite`).
  */
 async function removeArenaMember(tx, arenaId, userId) {
   const player = await tx.player.findUnique({
@@ -2212,6 +2214,10 @@ export async function leaveArena(arenaId) {
 
   let removed = true;
   await prisma.$transaction(async (tx) => {
+    // Invite lock before queue lock: keeps the global order consistent with
+    // redeemArenaInvite so role-loss invite revocation is serialized against an
+    // in-flight redeem (authoritative) without risking a deadlock.
+    await lockArenaInvites(tx, arenaId);
     await lockQueue(tx, arenaId);
     removed = await removeArenaMember(tx, arenaId, guard.user.id);
   });
@@ -2241,10 +2247,15 @@ export async function updateMemberRole(arenaId, userId, role) {
   if (updated.count === 0) return { error: 'That user is not a member of this arena.' };
   // Demotion strips manager rights — revoke any invite links they issued so a
   // now-ordinary member can't keep handing out (esp. instant AUTO_JOIN) links.
+  // Under the per-arena invite lock so this is authoritative against an
+  // in-flight redeem, exactly like revokeArenaInvite.
   if (role === ROLES.MEMBER) {
-    await prisma.arenaInvite.updateMany({
-      where: { arenaId, createdBy: userId, active: true },
-      data: { active: false },
+    await prisma.$transaction(async (tx) => {
+      await lockArenaInvites(tx, arenaId);
+      await tx.arenaInvite.updateMany({
+        where: { arenaId, createdBy: userId, active: true },
+        data: { active: false },
+      });
     });
   }
   return { ok: true };
@@ -2264,6 +2275,9 @@ export async function removeMember(arenaId, userId) {
 
   let removed = true;
   await prisma.$transaction(async (tx) => {
+    // Invite lock before queue lock — see leaveArena: serializes this member's
+    // invite revocation against an in-flight redeem, deadlock-free.
+    await lockArenaInvites(tx, arenaId);
     await lockQueue(tx, arenaId);
     removed = await removeArenaMember(tx, arenaId, userId);
   });
