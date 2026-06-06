@@ -264,12 +264,21 @@ function FilterPills({ active, onChange, stats }) {
   );
 }
 
-/** Sticky day-bucket header. Uses `sticky` so it pins as the user scrolls
- *  through long ledgers — the scroll container above gives it something to
- *  stick against. */
+/** Sticky day-bucket header — pins as the user scrolls long ledgers so they
+ *  always know which day they're looking at. Two sticky contexts:
+ *
+ *  - `sm+`: the list's internal scroll box (sm:overflow-y-auto above) is the
+ *    container, so the label pins to its top edge (`sm:top-0`).
+ *  - Mobile (<sm): the list scrolls with the PAGE, and the viewport top is
+ *    occupied by the sticky site header (z-50) and the arena's mobile tab
+ *    strip (z-30) — `top-0` would tuck the label underneath them. Offset by
+ *    both measured heights (`--site-header-h` from arena.js's ResizeObserver,
+ *    `--arena-tab-strip-h` from ArenaMobileTabStrip) so the label pins
+ *    visibly just below the nav. On pages without the strip (/profile) the
+ *    strip var falls back to 0px and the label pins below the header alone. */
 function GroupHeader({ label, count }) {
   return (
-    <div className="sticky top-0 z-10 -mx-5 md:-mx-6 px-5 md:px-6 py-2.5 bg-slate-50/85 backdrop-blur-md border-b border-slate-200/40 mb-3">
+    <div className="sticky top-[calc(var(--site-header-h,64px)+var(--arena-tab-strip-h,0px))] sm:top-0 z-10 -mx-5 md:-mx-6 px-5 md:px-6 py-2.5 bg-slate-50/85 backdrop-blur-md border-b border-slate-200/40 mb-3">
       <div className="flex items-center justify-between">
         <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-600">
           {label}

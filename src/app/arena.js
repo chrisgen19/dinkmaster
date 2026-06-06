@@ -321,7 +321,15 @@ export default function Arena({
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(header);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      // Remove the var on unmount: /profile's Match Log day labels consume it
+      // too (with a 64px fallback), and a stale arena-page measurement left on
+      // documentElement would pin them at the wrong offset after a client-side
+      // arena → profile navigation — and never update on rotate/resize, since
+      // only this page observes the header.
+      document.documentElement.style.removeProperty('--site-header-h');
+    };
   }, []);
 
   // Measure the desktop tab bar so the sticky PaddleRack can sit exactly below
