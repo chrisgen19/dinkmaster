@@ -1,6 +1,25 @@
 import { prisma } from '@/lib/prisma';
 
 /**
+ * Issue a strictly increasing read-start stamp. `Date.now()` alone has
+ * millisecond resolution, so two reads straddling a commit could start in the
+ * same millisecond and carry EQUAL stamps — the client guard accepts equals,
+ * letting the stale read overwrite the fresh frame (and rejecting equals would
+ * just drop the fresh frame instead; same-ms reads are simply unorderable by
+ * wall clock). `max(now, last + 1)` keeps stamps wall-clock anchored while
+ * guaranteeing uniqueness and read-START order within the process. Held on
+ * `globalThis` (like the realtime hub) because Next.js can give route
+ * handlers, server actions, and the hub separate module instances — a
+ * module-local counter would not be shared across those bundles.
+ */
+const nextStateStamp = () => {
+  const g = globalThis;
+  const stamp = Math.max(Date.now(), (g.__dinkStateStampLast ?? 0) + 1);
+  g.__dinkStateStampLast = stamp;
+  return stamp;
+};
+
+/**
  * Build the full arena state in the exact shape the UI consumes, scoped to a
  * single arena.
  *
@@ -23,12 +42,12 @@ export async function getState(arenaId) {
   // Stamp at read START, not finish. Concurrent getState calls exist by
   // design (SSE initial snapshot vs. hub pump vs. action responses), and a
   // slow read that began BEFORE a commit must not outrank a fast read that
-  // began after it. With a start stamp the ordering is sound: every board
-  // commit fires a NOTIFY trigger, the resulting pump read starts after the
-  // commit (so it sees it — READ COMMITTED) and carries a higher stamp than
-  // any pre-commit read, so the fresh frame always wins the client's
-  // monotonic guard and a stale late-finisher is discarded.
-  const fetchedAt = Date.now();
+  // began after it. With a strictly increasing start stamp the ordering is
+  // sound: every board commit fires a NOTIFY trigger, the resulting pump read
+  // starts after the commit (so it sees it — READ COMMITTED) and carries a
+  // strictly higher stamp than any pre-commit read, so the fresh frame always
+  // wins the client's monotonic guard and a stale late-finisher is discarded.
+  const fetchedAt = nextStateStamp();
 
   const [players, courts, matches, partnerships, arena] = await Promise.all([
     // Active players only: a departed member's row is kept (leftAt set) for
