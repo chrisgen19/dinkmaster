@@ -452,7 +452,7 @@ export async function updateArenaMatchmaking(
 }
 
 /**
- * Update an arena's match + leaderboard defaults. Manager-gated. All four
+ * Update an arena's match + leaderboard defaults. Manager-gated. All five
  * fields are required; the UI sends the current values for any unchanged
  * inputs so partial updates aren't a concern.
  */
