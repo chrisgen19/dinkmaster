@@ -544,6 +544,14 @@ export default function Arena({
 
     const connect = () => {
       if (disposed) return;
+      // Cancel any pending CLOSED-retry: if a staleness reconnect (page
+      // return) beats the timer — easy, since hidden tabs throttle/freeze
+      // setTimeout — the stale timer would otherwise fire afterwards and tear
+      // down the freshly-opened healthy stream for a pointless reconnect.
+      if (closedRetryTimer) {
+        clearTimeout(closedRetryTimer);
+        closedRetryTimer = null;
+      }
       source?.close();
       source = new EventSource(`/api/arena/${arenaId}/stream`);
       lastHeardAt = Date.now();
