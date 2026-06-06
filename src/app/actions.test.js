@@ -67,7 +67,7 @@ const PLAY = [
   ['updateArenaGeneral', () => actions.updateArenaGeneral(ARENA, { name: 'New' })],
   ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
   ['updateArenaMatchmaking', () => actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true })],
-  ['updateArenaMatchDefaults', () => actions.updateArenaMatchDefaults(ARENA, { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true })],
+  ['updateArenaMatchDefaults', () => actions.updateArenaMatchDefaults(ARENA, { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false })],
   ['updateArenaSessions', () => actions.updateArenaSessions(ARENA, { autoResetOnSession: true })],
   ['prepareNextSession', () => actions.prepareNextSession(ARENA)],
   ['createArenaInvite', () => actions.createArenaInvite(ARENA, 'APPROVAL')],
@@ -313,29 +313,31 @@ describe('arena server actions — authorization', () => {
           autoMixDefault: 'false',
           leaderboardSize: '10',
           countOffScheduleGames: 'true',
+          showPartnershipMatrix: 'true',
         });
         expect(result.error).toBeUndefined();
         expect(prisma.arena.updateMany).toHaveBeenCalledWith({
           where: { id: ARENA },
-          data: { targetScore: 15, autoMixDefault: false, leaderboardSize: 10, countOffScheduleGames: true },
+          data: { targetScore: 15, autoMixDefault: false, leaderboardSize: 10, countOffScheduleGames: true, showPartnershipMatrix: true },
         });
       });
 
       it('reports a clean error when the arena no longer exists', async () => {
         prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
         const result = await actions.updateArenaMatchDefaults(ARENA, {
-          targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true,
+          targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false,
         });
         expect(result.error).toMatch(/no longer exists/i);
       });
 
       it.each([
-        ['a zero target score', { targetScore: 0, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true }],
-        ['a fractional target score', { targetScore: 11.5, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true }],
-        ['an out-of-range target score', { targetScore: MAX_TARGET_SCORE + 1, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true }],
-        ['an out-of-range leaderboard size', { targetScore: 11, autoMixDefault: true, leaderboardSize: MAX_LEADERBOARD_SIZE + 1, countOffScheduleGames: true }],
-        ['a non-boolean autoMixDefault', { targetScore: 11, autoMixDefault: 'maybe', leaderboardSize: 5, countOffScheduleGames: true }],
-        ['a non-boolean countOffScheduleGames', { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: 1 }],
+        ['a zero target score', { targetScore: 0, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        ['a fractional target score', { targetScore: 11.5, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        ['an out-of-range target score', { targetScore: MAX_TARGET_SCORE + 1, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        ['an out-of-range leaderboard size', { targetScore: 11, autoMixDefault: true, leaderboardSize: MAX_LEADERBOARD_SIZE + 1, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        ['a non-boolean autoMixDefault', { targetScore: 11, autoMixDefault: 'maybe', leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        ['a non-boolean countOffScheduleGames', { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: 1, showPartnershipMatrix: false }],
+        ['a non-boolean showPartnershipMatrix', { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: 'maybe' }],
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaMatchDefaults(ARENA, input);
         expect(result.error).toBeTruthy();

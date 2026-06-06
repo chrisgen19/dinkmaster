@@ -67,6 +67,12 @@ model Arena {
   leaderboardSize       Int     @default(5)
   countOffScheduleGames Boolean @default(true)
 
+  // When on, the arena surfaces the "Partnership Matrix" tab (a pairing-count
+  // grid). Hidden by default — it's an advanced/diagnostic view — and opt-in
+  // per arena from Settings → Match Defaults. Visibility is arena-wide, not
+  // per-viewer.
+  showPartnershipMatrix Boolean @default(false)
+
   // Per-arena session prep state (Phase 10a). `lastSessionResetAt` records
   // when the rack/partnerships were last cleared via `prepareNextSession`,
   // so the manager prep banner can surface "last reset N days ago" and the

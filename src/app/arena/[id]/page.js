@@ -72,6 +72,7 @@ export default async function ArenaPage({ params }) {
         autoMixDefault: arena.autoMixDefault,
         leaderboardSize: arena.leaderboardSize,
         countOffScheduleGames: arena.countOffScheduleGames,
+        showPartnershipMatrix: arena.showPartnershipMatrix,
       }}
       sessionPrep={{
         autoResetOnSession: arena.autoResetOnSession,

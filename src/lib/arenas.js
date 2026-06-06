@@ -60,6 +60,7 @@ export async function getArena(id) {
       autoMixDefault: true,
       leaderboardSize: true,
       countOffScheduleGames: true,
+      showPartnershipMatrix: true,
       lastSessionResetAt: true,
       autoResetOnSession: true,
     },
