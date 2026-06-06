@@ -127,3 +127,29 @@ describe('deriveRackRow — canSkip gating', () => {
     expect(deriveRackRow(player({ userId: 'u-me' }), 0, opts).canSkip).toBe(false);
   });
 });
+
+describe('deriveRackRow — profileHref (name → profile link)', () => {
+  it('own row links to /profile regardless of membership', () => {
+    expect(deriveRackRow(player({ userId: 'u-me' }), 0, opts).profileHref).toBe('/profile');
+  });
+
+  it('another registered player links to /u/[userId] only for a member', () => {
+    expect(
+      deriveRackRow(player({ userId: 'u-1' }), 0, { ...opts, viewerIsMember: true }).profileHref,
+    ).toBe('/u/u-1');
+    // Non-member (spectator) gets no link — they share no arena, would 404.
+    expect(deriveRackRow(player({ userId: 'u-1' }), 0, { ...opts, viewerIsMember: false }).profileHref).toBeNull();
+  });
+
+  it('a walk-in links to /p/[playerId] only for a member', () => {
+    expect(
+      deriveRackRow(player({ id: 'p9', userId: null }), 0, { ...opts, viewerIsMember: true }).profileHref,
+    ).toBe('/p/p9');
+    expect(deriveRackRow(player({ userId: null }), 0, { ...opts, viewerIsMember: false }).profileHref).toBeNull();
+  });
+
+  it('defaults to no link when viewerIsMember is omitted', () => {
+    expect(deriveRackRow(player({ userId: 'u-1' }), 0, opts).profileHref).toBeNull();
+    expect(deriveRackRow(player({ userId: null }), 0, opts).profileHref).toBeNull();
+  });
+});

@@ -32,15 +32,20 @@ export const initials = (p) => `${p?.firstName?.[0] ?? ''}${p?.lastName?.[0] ?? 
  * (`queueLength > ON_DECK_SIZE`), and only for a manager or the viewer's own
  * paddle (self-service). The server re-authorizes regardless.
  *
- * @param {{userId?:string|null, firstName?:string, lastName?:string|null, waitRounds?:number, skipBoosted?:boolean}} player
+ * `profileHref` is where the player's name links: own row → `/profile`; another
+ * registered player → `/u/[userId]`; a walk-in (no account) → `/p/[playerId]`.
+ * The two other-player links require `viewerIsMember` (a non-member shares no
+ * arena, so the profile would 404); `null` means render the name as plain text.
+ *
+ * @param {{id?:string, userId?:string|null, firstName?:string, lastName?:string|null, waitRounds?:number, skipBoosted?:boolean}} player
  * @param {number} index - 0-based position in the queue (0 = front of rack)
- * @param {{viewerUserId:string|null, starveThreshold:number, emergencyWait:number, canManage?:boolean, queueLength?:number}} opts
- * @returns {{rank:number, isOnDeck:boolean, isYou:boolean, isWalkIn:boolean, badge:'none'|'warn'|'emergency'|'next-line', waitRounds:number, name:string, initials:string, canSkip:boolean}}
+ * @param {{viewerUserId:string|null, viewerIsMember?:boolean, starveThreshold:number, emergencyWait:number, canManage?:boolean, queueLength?:number}} opts
+ * @returns {{rank:number, isOnDeck:boolean, isYou:boolean, isWalkIn:boolean, badge:'none'|'warn'|'emergency'|'next-line', waitRounds:number, name:string, initials:string, canSkip:boolean, profileHref:string|null}}
  */
 export function deriveRackRow(
   player,
   index,
-  { viewerUserId, starveThreshold, emergencyWait, canManage = false, queueLength = 0 },
+  { viewerUserId, viewerIsMember = false, starveThreshold, emergencyWait, canManage = false, queueLength = 0 },
 ) {
   const waitRounds = player?.waitRounds ?? 0;
   const skipBoosted = Boolean(player?.skipBoosted);
@@ -52,6 +57,13 @@ export function deriveRackRow(
   const isOnDeck = index < ON_DECK_SIZE;
   const isYou = Boolean(player?.userId && player.userId === viewerUserId);
 
+  let profileHref = null;
+  if (player?.userId) {
+    profileHref = isYou ? '/profile' : viewerIsMember ? `/u/${player.userId}` : null;
+  } else if (player?.id && viewerIsMember) {
+    profileHref = `/p/${player.id}`;
+  }
+
   return {
     rank: index + 1,
     isOnDeck,
@@ -62,5 +74,6 @@ export function deriveRackRow(
     name: fullName(player),
     initials: initials(player),
     canSkip: isOnDeck && queueLength > ON_DECK_SIZE && (canManage || isYou),
+    profileHref,
   };
 }

@@ -24,8 +24,9 @@ import { MatchHistory } from '../match-history';
  * }} props.stats
  * @param {string} [props.backHref]
  * @param {string} [props.badge] - small chip by the name (e.g. "Walk-in")
+ * @param {boolean} [props.isSelf] - the viewer's own profile; selects first-person empty-state copy
  */
-export function ProfileView({ name, email = null, stats, backHref = '/arenas', badge = null }) {
+export function ProfileView({ name, email = null, stats, backHref = '/arenas', badge = null, isSelf = false }) {
   const { totals, arenas, recentMatches, insights } = stats;
   const hasGames = totals.gamesPlayed > 0;
   const decided = totals.wins + totals.losses;
@@ -79,7 +80,7 @@ export function ProfileView({ name, email = null, stats, backHref = '/arenas', b
             </div>
           </div>
 
-          <RatingDisplay rating={totals.rating} />
+          <RatingDisplay rating={totals.rating} isSelf={isSelf} />
         </header>
 
         {/* THIS WEEK ── small accent strip; hidden if nothing happened. */}
@@ -91,7 +92,16 @@ export function ProfileView({ name, email = null, stats, backHref = '/arenas', b
 
         {/* INSIGHTS ── three cards: best partner / favorite court / streak. */}
         <section className="animate-fade-in [animation-delay:240ms]">
-          <SectionHeader title="Insights" hint={hasGames ? null : 'A few matches in, patterns start to show.'} />
+          <SectionHeader
+            title="Insights"
+            hint={
+              hasGames
+                ? null
+                : isSelf
+                  ? 'Play a few matches and we’ll start showing patterns.'
+                  : 'A few matches in, patterns start to show.'
+            }
+          />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 mt-4">
             <InsightCard
               eyebrow="Best partner"
@@ -124,7 +134,9 @@ export function ProfileView({ name, email = null, stats, backHref = '/arenas', b
                   ? insights.streak.count === 1
                     ? 'Just the latest match'
                     : `${insights.streak.count} in a row`
-                  : 'No matches played yet'
+                  : isSelf
+                    ? 'Waiting on your first match'
+                    : 'No matches played yet'
               }
               accent={insights.streak?.kind === 'W' ? 'emerald' : insights.streak?.kind === 'L' ? 'slate-dim' : 'slate'}
               monospace
@@ -134,7 +146,7 @@ export function ProfileView({ name, email = null, stats, backHref = '/arenas', b
 
         {/* ARENAS ── card grid replaces the dense table. */}
         <section className="animate-fade-in [animation-delay:300ms]">
-          <SectionHeader title="Arenas" count={arenas.length} />
+          <SectionHeader title={isSelf ? 'My arenas' : 'Arenas'} count={arenas.length} />
           {arenas.length === 0 ? (
             <EmptyArenas />
           ) : (
@@ -162,7 +174,9 @@ export function ProfileView({ name, email = null, stats, backHref = '/arenas', b
               emptyState={{
                 icon: '🎾',
                 title: 'No matches yet',
-                hint: 'Finished games will appear here as they play.',
+                hint: isSelf
+                  ? 'Your finished games will appear here as you play.'
+                  : 'Finished games will appear here as they play.',
               }}
             />
           </div>
@@ -195,8 +209,9 @@ function Monogram({ name }) {
 
 /** Right-aligned rating block on the identity row. Shows '—' when unrated so
  *  the rhythm of the row stays intact for brand-new accounts. */
-function RatingDisplay({ rating }) {
+function RatingDisplay({ rating, isSelf = false }) {
   const dupr = rating !== null ? eloToDupr(rating).toFixed(3) : null;
+  const unrated = isSelf ? 'Play a match to seed your rating' : 'No rating yet — needs a match';
   return (
     <div className="md:text-right shrink-0">
       <p className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
@@ -205,7 +220,7 @@ function RatingDisplay({ rating }) {
       <p className="font-display font-extrabold tracking-tight tabular-nums text-slate-900 leading-none mt-1 text-4xl md:text-5xl">
         {dupr ?? '—'}
       </p>
-      <p className="text-xs text-slate-400 mt-1">{dupr ? 'DUPR-style' : 'No rating yet — needs a match'}</p>
+      <p className="text-xs text-slate-400 mt-1">{dupr ? 'DUPR-style' : unrated}</p>
     </div>
   );
 }
@@ -356,10 +371,12 @@ function ArenaCard({ arena }) {
   );
 }
 
+// Only rendered when arenas.length === 0, reachable only on the viewer's own
+// profile (others are gated on a shared arena), so the copy stays first-person.
 function EmptyArenas() {
   return (
     <div className="mt-4 py-12 text-center text-sm text-slate-500 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/40">
-      <p className="font-semibold text-slate-600">No arenas yet.</p>
+      <p className="font-semibold text-slate-600">You haven&apos;t joined an arena yet.</p>
       <p className="text-xs mt-1">
         <Link href="/arenas" className="text-emerald-600 font-semibold hover:text-emerald-700">
           Browse arenas

@@ -187,10 +187,10 @@ export function PaddleRackStack({
             const player = players.find((p) => p.id === playerId);
             if (!player) return null;
 
-            const { rank, isOnDeck, isYou, isWalkIn, badge, waitRounds, name, initials, canSkip } = deriveRackRow(
+            const { rank, isOnDeck, isYou, isWalkIn, badge, waitRounds, name, initials, canSkip, profileHref } = deriveRackRow(
               player,
               index,
-              { viewerUserId, starveThreshold, emergencyWait, canManage, queueLength: queue.length },
+              { viewerUserId, viewerIsMember, starveThreshold, emergencyWait, canManage, queueLength: queue.length },
             );
             const nextLine = badge === 'next-line';
             const starving = badge !== 'none' && !nextLine;
@@ -198,20 +198,6 @@ export function PaddleRackStack({
             const hasActions = canSkip || canManage;
             const isExpanded = expandedPlayerId === player.id;
             const panelId = `${idPrefix}-row-panel-${player.id}`;
-            // Link the name to a profile only when it resolves: your own row →
-            // /profile; another registered player → /u/[userId]; a walk-in (no
-            // account) → /p/[playerId] (their single-arena record). The two
-            // other-player links require the viewer to be a fellow member (a
-            // non-member shares no arena, so the profile would 404).
-            const profileHref = player.userId
-              ? player.userId === viewerUserId
-                ? '/profile'
-                : viewerIsMember
-                  ? `/u/${player.userId}`
-                  : null
-              : viewerIsMember
-                ? `/p/${player.id}`
-                : null;
 
             return (
               <Fragment key={playerId}>
