@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef, useTransition } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, useTransition } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -469,6 +469,27 @@ export default function Arena({
     [matchHistory, schedule, matchDefaults.countOffScheduleGames, matchDefaults.leaderboardSize],
   );
 
+  // Apply just the board state from a server `getState` payload. Shared by
+  // `applyResult` (this viewer's own actions) and the realtime SSE
+  // subscription (other users' changes), so a live push reconciles the board
+  // without touching this viewer's own error/notification banners. Stable
+  // identity (setters are stable) so the SSE effect doesn't re-subscribe.
+  const applyServerState = useCallback((state) => {
+    if (!state) return;
+    setPlayers(state.players);
+    setQueue(state.queue);
+    setCourts(state.courts);
+    setMatchHistory(state.matchHistory);
+    setHistory(state.history);
+    // Server-authoritative reset boundary: kept in sync on every action so
+    // session-scoped tallies (rack tile, My Stats) never key off a client-
+    // stamped timestamp that could disagree with `Match.createdAt` for a
+    // match finishing right around a reset.
+    if ('lastSessionResetAt' in state) {
+      setLastSessionResetAt(state.lastSessionResetAt);
+    }
+  }, []);
+
   // Apply a server action result to local state (state, error, notification).
   const applyResult = (result) => {
     if (!result) return;
@@ -477,21 +498,30 @@ export default function Arena({
       setNotification(result.notification);
       setTimeout(() => setNotification(''), 5000);
     }
-    if (result.state) {
-      setPlayers(result.state.players);
-      setQueue(result.state.queue);
-      setCourts(result.state.courts);
-      setMatchHistory(result.state.matchHistory);
-      setHistory(result.state.history);
-      // Server-authoritative reset boundary: kept in sync on every action
-      // so session-scoped tallies (rack tile, My Stats) never key off a
-      // client-stamped timestamp that could disagree with `Match.createdAt`
-      // for a match finishing right around a reset.
-      if ('lastSessionResetAt' in result.state) {
-        setLastSessionResetAt(result.state.lastSessionResetAt);
-      }
-    }
+    applyServerState(result.state);
   };
+
+  // Realtime: subscribe to this arena's SSE stream so changes made by other
+  // users (an organizer filling a court, a match being scored, the rack
+  // shuffling, a player joining/leaving) reflect on this screen within ~1s
+  // with no manual refresh. The stream emits the full getState payload; we
+  // reconcile only the board, leaving this viewer's own banners intact.
+  // EventSource auto-reconnects on drop and the route re-sends current state
+  // on (re)connect, so a transient disconnect self-heals. If the stream can't
+  // be established at all (e.g. a serverless host that can't hold it open),
+  // the app simply falls back to refresh-on-own-action behavior — no errors.
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof EventSource === 'undefined') return;
+    const source = new EventSource(`/api/arena/${arenaId}/stream`);
+    source.addEventListener('state', (event) => {
+      try {
+        applyServerState(JSON.parse(event.data));
+      } catch {
+        // Ignore a malformed frame; the next push will resync.
+      }
+    });
+    return () => source.close();
+  }, [arenaId, applyServerState]);
 
   // Run a server action inside a transition and reconcile the returned state.
   // `refresh` additionally re-fetches the server-rendered props (used when an
