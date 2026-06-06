@@ -307,14 +307,19 @@ export async function getArenaInviteByCode(code) {
  */
 export async function usersShareArena(viewerUserId, targetUserId) {
   if (!viewerUserId || !targetUserId) return false;
-  const row = await prisma.arenaMembership.findFirst({
-    where: {
-      userId: viewerUserId,
-      arena: { memberships: { some: { userId: targetUserId } } },
-    },
+  // "Belongs to an arena" = a membership row OR being its owner. `Arena.ownerId`
+  // is the canonical owner record (the OWNER membership row only mirrors it), so
+  // honor it on both sides — same ownerId fallback `requireArenaManager` and
+  // `partitionArenaDirectory` use — rather than 404ing an owner whose mirror row
+  // is ever missing.
+  const inArena = (userId) => ({
+    OR: [{ ownerId: userId }, { memberships: { some: { userId } } }],
+  });
+  const arena = await prisma.arena.findFirst({
+    where: { AND: [inArena(viewerUserId), inArena(targetUserId)] },
     select: { id: true },
   });
-  return !!row;
+  return !!arena;
 }
 
 /**
@@ -539,13 +544,16 @@ export async function getViewablePlayerProfile(playerId, viewerUserId) {
     return { redirectUserId: player.userId };
   }
 
-  // Walk-in: gate on the viewer belonging to the walk-in's arena (the only one
-  // it lives in), mirroring the shared-arena rule for accounts.
-  const membership = await prisma.arenaMembership.findUnique({
-    where: { arenaId_userId: { arenaId: player.arenaId, userId: viewerUserId } },
+  // Walk-in: gate on the viewer belonging to the walk-in's (only) arena — as a
+  // member or its owner (canonical ownerId fallback, as in usersShareArena).
+  const inArena = await prisma.arena.findFirst({
+    where: {
+      id: player.arenaId,
+      OR: [{ ownerId: viewerUserId }, { memberships: { some: { userId: viewerUserId } } }],
+    },
     select: { id: true },
   });
-  if (!membership) return null;
+  if (!inArena) return null;
 
   const stats = await buildPlayerStats([player]);
   const name = player.lastName ? `${player.firstName} ${player.lastName}` : player.firstName;
