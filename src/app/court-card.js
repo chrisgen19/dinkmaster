@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { formatShortName } from '@/lib/player-display';
 
 /**
@@ -20,6 +21,9 @@ import { formatShortName } from '@/lib/player-display';
  * @param {(court: object) => void} props.onCancel - Cancel this fill and send the four back to the rack.
  * @param {(courtId: string) => void} props.onFill - Stack the next four paddles onto this court.
  * @param {(courtId: string) => void} props.onRemove - Close this (vacant) court.
+ * @param {(playerId: string) => string|null} [props.profileHrefFor] - resolves a
+ *   slot's playerId to a profile link (rack rules); null/omitted renders names
+ *   as plain text.
  */
 export function CourtCard({
   court,
@@ -32,6 +36,7 @@ export function CourtCard({
   onCancel,
   onFill,
   onRemove,
+  profileHrefFor = null,
 }) {
   const isPlaying = court.status === 'playing';
 
@@ -44,17 +49,29 @@ export function CourtCard({
 
   // Stacked name list, left- or right-aligned, with per-row truncation so each
   // name ellipsizes independently and both teams render at the same height.
+  // Names link to player profiles when the resolver returns an href (rack
+  // rules — member viewers only); otherwise they stay plain text.
   const renderNames = (slots, align) => (
     <ul className={`space-y-1 ${align === 'right' ? 'text-right' : 'text-left'}`}>
       {slots.map((id) => {
         const p = resolvePlayer(id);
+        const href = profileHrefFor?.(id) ?? null;
         return (
           <li
             key={id}
             className="text-sm font-bold text-slate-800 truncate leading-tight"
-            title={p.full}
+            title={href ? `View ${p.full}’s profile` : p.full}
           >
-            {p.display}
+            {href ? (
+              <Link
+                href={href}
+                className="rounded hover:text-emerald-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+              >
+                {p.display}
+              </Link>
+            ) : (
+              p.display
+            )}
           </li>
         );
       })}

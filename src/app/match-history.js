@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   differential,
   groupByDay,
@@ -42,6 +43,10 @@ export function MatchHistory({
   formatTimestamp,
   emptyState,
   className = '',
+  // Optional: resolve a roster player (the normalised `{id, firstName, …}`
+  // snapshot) to a profile link; null/omitted renders names as plain badges.
+  // Supplied by the arena History tab; /profile and My Stats omit it.
+  profileHrefFor = null,
 }) {
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'wins' | 'losses'
 
@@ -135,6 +140,7 @@ export function MatchHistory({
                         match={m}
                         perspective={perspective}
                         formatTime={formatTime}
+                        profileHrefFor={profileHrefFor}
                       />
                     </li>
                   ))}
@@ -276,7 +282,7 @@ function GroupHeader({ label, count }) {
   );
 }
 
-function MatchRow({ match, perspective, formatTime }) {
+function MatchRow({ match, perspective, formatTime, profileHrefFor = null }) {
   const winner = winnerSide(match);
   const youOn = match.youOn;
   const youWon = perspective === 'player' ? viewerWon(match) : null;
@@ -349,6 +355,7 @@ function MatchRow({ match, perspective, formatTime }) {
               label={labelFor(leftSide, perspective, youOn)}
               perspective={perspective}
               isTie={winner === 'tie'}
+              profileHrefFor={profileHrefFor}
             />
 
             <ScoreBlock
@@ -369,6 +376,7 @@ function MatchRow({ match, perspective, formatTime }) {
               label={labelFor(rightSide, perspective, youOn)}
               perspective={perspective}
               isTie={winner === 'tie'}
+              profileHrefFor={profileHrefFor}
             />
           </div>
         );
@@ -377,7 +385,7 @@ function MatchRow({ match, perspective, formatTime }) {
   );
 }
 
-function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie }) {
+function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie, profileHrefFor = null }) {
   const justify = align === 'right' ? 'text-right items-end' : 'text-left items-start';
   const players = team.players ?? [];
   return (
@@ -441,20 +449,36 @@ function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie }) {
                 ? 'text-slate-300'
                 : 'text-slate-400';
 
-            return (
-              <span
-                key={idx}
-                className={[
-                  'inline-flex items-center gap-1.5 text-xs md:text-[13px] px-2.5 py-1 rounded-xl border transition-all duration-300 truncate max-w-full',
-                  badgeClass
-                ].join(' ')}
-                title={p.firstName}
-              >
+            // Roster names link to profiles when the caller can resolve the
+            // snapshot to a live player (arena History tab); otherwise the
+            // badge stays a plain span — including departed/deleted players,
+            // whose snapshot ids no longer resolve.
+            const href = profileHrefFor?.(p) ?? null;
+            const badgeProps = {
+              className: [
+                'inline-flex items-center gap-1.5 text-xs md:text-[13px] px-2.5 py-1 rounded-xl border transition-all duration-300 truncate max-w-full',
+                badgeClass,
+                href ? 'hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40' : '',
+              ].join(' '),
+              title: href ? `View ${p.firstName}’s profile` : p.firstName,
+            };
+            const badgeBody = (
+              <>
                 <svg className={`w-3.5 h-3.5 ${iconClass} shrink-0 hidden sm:block`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                   <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                   <circle cx="12" cy="7" r="4" />
                 </svg>
                 <span className="truncate">{p.firstName}</span>
+              </>
+            );
+
+            return href ? (
+              <Link key={idx} href={href} {...badgeProps}>
+                {badgeBody}
+              </Link>
+            ) : (
+              <span key={idx} {...badgeProps}>
+                {badgeBody}
               </span>
             );
           })

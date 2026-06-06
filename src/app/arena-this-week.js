@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import Link from 'next/link';
 
 /** Medal accent per podium rank (1–3); the rest fall through to slate. */
 const RANK_STYLES = {
@@ -21,6 +22,9 @@ const RANK_STYLES = {
  * @param {string|null} [props.scheduleLabel] - one-line schedule summary (e.g. "Mon, Wed, Fri · 6:00 PM–10:00 PM (Asia/Manila)") or null when no schedule is configured
  * @param {boolean} [props.canManage=false] - shows the "Edit schedule" affordance for owners/organizers
  * @param {() => void} [props.onEditSchedule] - opens the schedule editor modal (no-op when omitted)
+ * @param {(playerId: string) => string|null} [props.profileHrefFor] - resolves a
+ *   leader's playerId to a profile link (rack rules, live-roster lookup); null /
+ *   omitted renders the name as plain text
  */
 export function ArenaThisWeek({
   leaderboard,
@@ -28,6 +32,7 @@ export function ArenaThisWeek({
   scheduleLabel = null,
   canManage = false,
   onEditSchedule,
+  profileHrefFor = null,
 }) {
   return (
     <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-6 animate-fade-in">
@@ -68,6 +73,7 @@ export function ArenaThisWeek({
         <ol className="space-y-2">
           {leaderboard.leaders.map((p) => {
             const isMe = myPlayerId === p.playerId;
+            const href = profileHrefFor?.(p.playerId) ?? null;
             return (
               <li
                 key={p.playerId}
@@ -84,7 +90,17 @@ export function ArenaThisWeek({
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold text-slate-800 truncate flex items-center gap-2">
-                    <span className="truncate">{p.name}</span>
+                    {href ? (
+                      <Link
+                        href={href}
+                        className="truncate rounded hover:text-emerald-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+                        title={`View ${p.name}’s profile`}
+                      >
+                        {p.name}
+                      </Link>
+                    ) : (
+                      <span className="truncate">{p.name}</span>
+                    )}
                     {isMe && (
                       <span className="text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">
                         You

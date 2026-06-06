@@ -14,7 +14,7 @@ import { toMatch } from '@/lib/match-history';
  * `{team1, team2, score1, score2}` shape into the unified `Match` shape and
  * renders in `neutral` perspective.
  */
-export function ArenaHistory({ matches, formatTimestamp }) {
+export function ArenaHistory({ matches, formatTimestamp, profileHrefFor = null }) {
   const normalised = useMemo(() => matches.map((m) => toMatch(m)), [matches]);
 
   return (
@@ -29,6 +29,9 @@ export function ArenaHistory({ matches, formatTimestamp }) {
         title="Match History Log"
         description="Complete ledger of finished matches, final scores, and team results."
         formatTimestamp={formatTimestamp}
+        // Roster badges link to player profiles. Snapshot ids whose player has
+        // since left/been deleted resolve to null and stay plain text.
+        profileHrefFor={profileHrefFor ? (p) => profileHrefFor(p?.id) : null}
       />
     </div>
   );

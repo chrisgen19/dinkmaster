@@ -7,6 +7,7 @@
 // from here, while the single source of truth lives in @/lib/matchmaking
 // (shared with the fillCourt / skipPlayer server actions).
 import { ON_DECK_SIZE } from '@/lib/matchmaking';
+import { profileHref } from '@/lib/player-display';
 
 export { ON_DECK_SIZE };
 
@@ -32,10 +33,9 @@ export const initials = (p) => `${p?.firstName?.[0] ?? ''}${p?.lastName?.[0] ?? 
  * (`queueLength > ON_DECK_SIZE`), and only for a manager or the viewer's own
  * paddle (self-service). The server re-authorizes regardless.
  *
- * `profileHref` is where the player's name links: own row → `/profile`; another
- * registered player → `/u/[userId]`; a walk-in (no account) → `/p/[playerId]`.
- * The two other-player links require `viewerIsMember` (a non-member shares no
- * arena, so the profile would 404); `null` means render the name as plain text.
+ * `profileHref` is where the player's name links — see `profileHref` in
+ * `@/lib/player-display` (the shared rule used by every clickable-name
+ * surface); `null` means render the name as plain text.
  *
  * @param {{id?:string, userId?:string|null, firstName?:string, lastName?:string|null, waitRounds?:number, skipBoosted?:boolean}} player
  * @param {number} index - 0-based position in the queue (0 = front of rack)
@@ -57,13 +57,6 @@ export function deriveRackRow(
   const isOnDeck = index < ON_DECK_SIZE;
   const isYou = Boolean(player?.userId && player.userId === viewerUserId);
 
-  let profileHref = null;
-  if (player?.userId) {
-    profileHref = isYou ? '/profile' : viewerIsMember ? `/u/${player.userId}` : null;
-  } else if (player?.id && viewerIsMember) {
-    profileHref = `/p/${player.id}`;
-  }
-
   return {
     rank: index + 1,
     isOnDeck,
@@ -74,6 +67,9 @@ export function deriveRackRow(
     name: fullName(player),
     initials: initials(player),
     canSkip: isOnDeck && queueLength > ON_DECK_SIZE && (canManage || isYou),
-    profileHref,
+    profileHref: profileHref(
+      { userId: player?.userId, playerId: player?.id },
+      { viewerUserId, viewerIsMember },
+    ),
   };
 }
