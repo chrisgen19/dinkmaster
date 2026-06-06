@@ -22,11 +22,21 @@ import { getState } from '@/lib/data';
  */
 
 const CHANNEL = 'arena_events';
-const RECONNECT_DELAY_MS = 1000;
+const RECONNECT_DELAY_MS = 1000; // delay before re-establishing a dropped LISTEN connection
+const READ_RETRY_DELAY_MS = 1000; // delay before retrying a failed getState read
 
 const globalForRealtime = globalThis;
 
-function createHub() {
+/**
+ * Build a hub instance. Exported for tests; application code must use the
+ * `realtimeHub` singleton below.
+ *
+ * NOTE: the LISTEN connection must be a DIRECT Postgres connection. If a
+ * transaction-mode pooler (e.g. PgBouncer) is ever put in front of
+ * DATABASE_URL, LISTEN/NOTIFY silently breaks — point this client at the
+ * database directly (a separate env var) in that setup.
+ */
+export function createHub() {
   /** @type {Map<string, Set<(state: unknown) => void>>} arenaId → subscriber callbacks */
   const subscribers = new Map();
   /** @type {import('pg').Client | null} the live LISTEN client */
@@ -69,7 +79,7 @@ function createHub() {
               if (!subscribers.has(arenaId)) return; // everyone left meanwhile
               dirty.add(arenaId);
               pumpArena(arenaId);
-            }, RECONNECT_DELAY_MS);
+            }, READ_RETRY_DELAY_MS);
           }
           break;
         }

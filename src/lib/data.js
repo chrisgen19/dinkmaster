@@ -1,23 +1,5 @@
 import { prisma } from '@/lib/prisma';
-
-/**
- * Issue a strictly increasing read-start stamp. `Date.now()` alone has
- * millisecond resolution, so two reads straddling a commit could start in the
- * same millisecond and carry EQUAL stamps — the client guard accepts equals,
- * letting the stale read overwrite the fresh frame (and rejecting equals would
- * just drop the fresh frame instead; same-ms reads are simply unorderable by
- * wall clock). `max(now, last + 1)` keeps stamps wall-clock anchored while
- * guaranteeing uniqueness and read-START order within the process. Held on
- * `globalThis` (like the realtime hub) because Next.js can give route
- * handlers, server actions, and the hub separate module instances — a
- * module-local counter would not be shared across those bundles.
- */
-const nextStateStamp = () => {
-  const g = globalThis;
-  const stamp = Math.max(Date.now(), (g.__dinkStateStampLast ?? 0) + 1);
-  g.__dinkStateStampLast = stamp;
-  return stamp;
-};
+import { nextStateStamp } from '@/lib/state-freshness';
 
 /**
  * Build the full arena state in the exact shape the UI consumes, scoped to a

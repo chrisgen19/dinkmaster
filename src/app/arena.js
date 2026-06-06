@@ -21,6 +21,7 @@ import {
 import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT, ON_DECK_SIZE } from '@/lib/matchmaking';
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE, DEFAULT_SHOW_PARTNERSHIP_MATRIX } from '@/lib/match-defaults';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
+import { createStateFreshnessGuard } from '@/lib/state-freshness';
 import { computeSessionStats } from '@/lib/session-stats';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
 import { formatShortName } from '@/lib/player-display';
@@ -44,22 +45,15 @@ import { PaddleRackStack } from './paddle-rack-stack';
 const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
 
 /**
- * Highest `getState.fetchedAt` stamp applied per arena, so `applyServerState`
- * can discard an out-of-order (older) snapshot when a slow action response
- * races a newer SSE push (or vice-versa). Module-scoped (not a React ref):
- * it's bookkeeping, not render state — nothing re-renders off it, and keeping
- * it out of the component avoids reading a ref inside render-adjacent closures.
- * Returns true when the snapshot is fresh enough to apply (equal stamps apply;
- * a payload without a stamp — older shape — always applies).
+ * Per-arena monotonic apply-guard for `getState` snapshots, so an out-of-order
+ * (older) snapshot from a slow action response can't clobber a newer SSE push
+ * (or vice-versa). Module-scoped (not a React ref): it's bookkeeping, not
+ * render state — nothing re-renders off it, and keeping it out of the
+ * component avoids reading a ref inside render-adjacent closures. Semantics
+ * (equal stamps apply, stampless payloads apply) live in state-freshness.js
+ * alongside their tests.
  */
-const lastAppliedStateAt = new Map();
-const shouldApplyServerState = (arenaId, state) => {
-  const at = state.fetchedAt ?? 0;
-  const prev = lastAppliedStateAt.get(arenaId) ?? 0;
-  if (at && at < prev) return false;
-  if (at > prev) lastAppliedStateAt.set(arenaId, at);
-  return true;
-};
+const shouldApplyServerState = createStateFreshnessGuard();
 
 /** Weekday options for the schedule editor, Monday-first; value = JS getDay(). */
 const WEEKDAYS = [

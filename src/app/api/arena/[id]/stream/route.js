@@ -18,6 +18,11 @@ const HEARTBEAT_MS = 25_000;
  * and catches any changes it missed — and again on every subsequent change to
  * the arena. The arena board is publicly viewable (the page renders for
  * spectators), so this mirrors that and only requires the arena to exist.
+ *
+ * ACCESS NOTE: this deliberately matches the arena page's access model
+ * (anyone with the arena id can view). If arenas ever gain a private/
+ * members-only mode, this route MUST grow the same gate the page gets —
+ * otherwise live state would leak past the page's check.
  */
 export async function GET(request, { params }) {
   const { id } = await params;
