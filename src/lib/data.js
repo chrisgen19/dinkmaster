@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { nextStateStamp } from '@/lib/state-freshness';
 
 /**
  * Build the full arena state in the exact shape the UI consumes, scoped to a
@@ -6,6 +7,7 @@ import { prisma } from '@/lib/prisma';
  *
  * @param {string} arenaId - the arena whose players/courts/matches to read
  * @returns {Promise<{
+ *   fetchedAt: number,
  *   players: Array<{id:string,userId:string|null,firstName:string,lastName:string|null,gamesPlayed:number,wins:number,losses:number,waitRounds:number,rating:number,skipBoosted:boolean}>,
  *   queue: string[],
  *   courts: Array<{id:string,name:string,status:string,team1:string[],team2:string[]}>,
@@ -18,6 +20,16 @@ export async function getState(arenaId) {
   // Guard against an undefined arenaId: Prisma drops `where: { arenaId: undefined }`
   // entirely, which would read every arena's data instead of one.
   if (!arenaId) throw new Error('getState requires an arenaId');
+
+  // Stamp at read START, not finish. Concurrent getState calls exist by
+  // design (SSE initial snapshot vs. hub pump vs. action responses), and a
+  // slow read that began BEFORE a commit must not outrank a fast read that
+  // began after it. With a strictly increasing start stamp the ordering is
+  // sound: every board commit fires a NOTIFY trigger, the resulting pump read
+  // starts after the commit (so it sees it — READ COMMITTED) and carries a
+  // strictly higher stamp than any pre-commit read, so the fresh frame always
+  // wins the client's monotonic guard and a stale late-finisher is discarded.
+  const fetchedAt = nextStateStamp();
 
   const [players, courts, matches, partnerships, arena] = await Promise.all([
     // Active players only: a departed member's row is kept (leftAt set) for
@@ -79,6 +91,10 @@ export async function getState(arenaId) {
   }
 
   return {
+    // Read-start stamp (see above) so the client can discard a snapshot older
+    // than one it already applied — preventing a slow action response from
+    // clobbering a newer SSE push, and vice-versa.
+    fetchedAt,
     players: players.map((p) => ({
       id: p.id,
       userId: p.userId,

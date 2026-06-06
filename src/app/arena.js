@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef, useTransition } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, useTransition } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -21,6 +21,7 @@ import {
 import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT, ON_DECK_SIZE } from '@/lib/matchmaking';
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE, DEFAULT_SHOW_PARTNERSHIP_MATRIX } from '@/lib/match-defaults';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
+import { createStateFreshnessGuard } from '@/lib/state-freshness';
 import { computeSessionStats } from '@/lib/session-stats';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
 import { formatShortName } from '@/lib/player-display';
@@ -42,6 +43,17 @@ import { PaddleRackStack } from './paddle-rack-stack';
 
 /** Display name: "First Last", or just "First" when no last name is set. */
 const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
+
+/**
+ * Per-arena monotonic apply-guard for `getState` snapshots, so an out-of-order
+ * (older) snapshot from a slow action response can't clobber a newer SSE push
+ * (or vice-versa). Module-scoped (not a React ref): it's bookkeeping, not
+ * render state — nothing re-renders off it, and keeping it out of the
+ * component avoids reading a ref inside render-adjacent closures. Semantics
+ * (equal stamps apply, stampless payloads apply) live in state-freshness.js
+ * alongside their tests.
+ */
+const shouldApplyServerState = createStateFreshnessGuard();
 
 /** Weekday options for the schedule editor, Monday-first; value = JS getDay(). */
 const WEEKDAYS = [
@@ -192,17 +204,25 @@ export default function Arena({
   const [lastSyncedState, setLastSyncedState] = useState(initialState);
   if (initialState !== lastSyncedState) {
     setLastSyncedState(initialState);
-    setPlayers(initialState.players);
-    setQueue(initialState.queue);
-    setCourts(initialState.courts);
-    setMatchHistory(initialState.matchHistory);
-    setHistory(initialState.history);
-    // `lastSessionResetAt` is now the server-authoritative cutoff for the
-    // session-scoped overlay. Resync it alongside the other fields so a
-    // `router.refresh()` that doesn't flow through `applyResult` (e.g. a
-    // child component refreshing after a link approval) still surfaces a
-    // concurrent reset that happened on the server.
-    setLastSessionResetAt(initialState.lastSessionResetAt);
+    // Prop resyncs go through the same monotonic guard as SSE pushes and
+    // action results: a `router.refresh()` response rendered from an OLDER
+    // snapshot than an SSE frame that already applied must not roll the
+    // board backward. When the payload is fresh (the common case) it applies
+    // and advances the stamp, which also stops an older queued SSE frame
+    // from overwriting it afterwards.
+    if (shouldApplyServerState(arenaId, initialState)) {
+      setPlayers(initialState.players);
+      setQueue(initialState.queue);
+      setCourts(initialState.courts);
+      setMatchHistory(initialState.matchHistory);
+      setHistory(initialState.history);
+      // `lastSessionResetAt` is now the server-authoritative cutoff for the
+      // session-scoped overlay. Resync it alongside the other fields so a
+      // `router.refresh()` that doesn't flow through `applyResult` (e.g. a
+      // child component refreshing after a link approval) still surfaces a
+      // concurrent reset that happened on the server.
+      setLastSessionResetAt(initialState.lastSessionResetAt);
+    }
   }
 
   const [isPending, startTransition] = useTransition();
@@ -469,6 +489,31 @@ export default function Arena({
     [matchHistory, schedule, matchDefaults.countOffScheduleGames, matchDefaults.leaderboardSize],
   );
 
+  // Apply just the board state from a server `getState` payload. Shared by
+  // `applyResult` (this viewer's own actions) and the realtime SSE
+  // subscription (other users' changes), so a live push reconciles the board
+  // without touching this viewer's own error/notification banners. Stable
+  // identity (setters are stable) so the SSE effect doesn't re-subscribe.
+  const applyServerState = useCallback((state) => {
+    if (!state) return;
+    // Monotonic guard (see `shouldApplyServerState`): ignore a snapshot older
+    // than one already applied, so a slow action response can't clobber a
+    // newer SSE push that landed first (and vice-versa).
+    if (!shouldApplyServerState(arenaId, state)) return;
+    setPlayers(state.players);
+    setQueue(state.queue);
+    setCourts(state.courts);
+    setMatchHistory(state.matchHistory);
+    setHistory(state.history);
+    // Server-authoritative reset boundary: kept in sync on every action so
+    // session-scoped tallies (rack tile, My Stats) never key off a client-
+    // stamped timestamp that could disagree with `Match.createdAt` for a
+    // match finishing right around a reset.
+    if ('lastSessionResetAt' in state) {
+      setLastSessionResetAt(state.lastSessionResetAt);
+    }
+  }, [arenaId]);
+
   // Apply a server action result to local state (state, error, notification).
   const applyResult = (result) => {
     if (!result) return;
@@ -477,21 +522,30 @@ export default function Arena({
       setNotification(result.notification);
       setTimeout(() => setNotification(''), 5000);
     }
-    if (result.state) {
-      setPlayers(result.state.players);
-      setQueue(result.state.queue);
-      setCourts(result.state.courts);
-      setMatchHistory(result.state.matchHistory);
-      setHistory(result.state.history);
-      // Server-authoritative reset boundary: kept in sync on every action
-      // so session-scoped tallies (rack tile, My Stats) never key off a
-      // client-stamped timestamp that could disagree with `Match.createdAt`
-      // for a match finishing right around a reset.
-      if ('lastSessionResetAt' in result.state) {
-        setLastSessionResetAt(result.state.lastSessionResetAt);
-      }
-    }
+    applyServerState(result.state);
   };
+
+  // Realtime: subscribe to this arena's SSE stream so changes made by other
+  // users (an organizer filling a court, a match being scored, the rack
+  // shuffling, a player joining/leaving) reflect on this screen within ~1s
+  // with no manual refresh. The stream emits the full getState payload; we
+  // reconcile only the board, leaving this viewer's own banners intact.
+  // EventSource auto-reconnects on drop and the route re-sends current state
+  // on (re)connect, so a transient disconnect self-heals. If the stream can't
+  // be established at all (e.g. a serverless host that can't hold it open),
+  // the app simply falls back to refresh-on-own-action behavior — no errors.
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof EventSource === 'undefined') return;
+    const source = new EventSource(`/api/arena/${arenaId}/stream`);
+    source.addEventListener('state', (event) => {
+      try {
+        applyServerState(JSON.parse(event.data));
+      } catch {
+        // Ignore a malformed frame; the next push will resync.
+      }
+    });
+    return () => source.close();
+  }, [arenaId, applyServerState]);
 
   // Run a server action inside a transition and reconcile the returned state.
   // `refresh` additionally re-fetches the server-rendered props (used when an
