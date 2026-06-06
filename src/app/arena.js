@@ -552,21 +552,83 @@ export default function Arena({
   // shuffling, a player joining/leaving) reflect on this screen within ~1s
   // with no manual refresh. The stream emits the full getState payload; we
   // reconcile only the board, leaving this viewer's own banners intact.
-  // EventSource auto-reconnects on drop and the route re-sends current state
-  // on (re)connect, so a transient disconnect self-heals. If the stream can't
-  // be established at all (e.g. a serverless host that can't hold it open),
-  // the app simply falls back to refresh-on-own-action behavior — no errors.
+  // The route re-sends the full current state on every (re)connect, so any
+  // reconnect is also an instant catch-up. EventSource only self-reconnects
+  // when it sees an `error` event — but device sleep, tab backgrounding, and
+  // idle NAT timeouts kill the TCP stream SILENTLY: no error fires,
+  // readyState stays OPEN, and the stream is a zombie (connected-looking,
+  // receives nothing). So we track when we last heard ANYTHING (state frames
+  // or the route's 25s `ping` events) and force a fresh connection when the
+  // page returns (visibilitychange / pageshow / online) having gone quiet, or
+  // when the foreground watchdog notices the same staleness (desktop NAT
+  // drops, where visibility never changes). A CLOSED stream (fatal response —
+  // EventSource gives up) gets a delayed manual retry. If the stream can't be
+  // established at all (e.g. a serverless host that can't hold it open), the
+  // app simply falls back to refresh-on-own-action behavior — no errors.
   useEffect(() => {
     if (typeof window === 'undefined' || typeof EventSource === 'undefined') return;
-    const source = new EventSource(`/api/arena/${arenaId}/stream`);
-    source.addEventListener('state', (event) => {
-      try {
-        applyServerState(JSON.parse(event.data));
-      } catch {
-        // Ignore a malformed frame; the next push will resync.
-      }
-    });
-    return () => source.close();
+
+    const HEARTBEAT_MS = 25_000; // must match the stream route's ping cadence
+    const STALE_AFTER_MS = HEARTBEAT_MS * 2 + 5_000; // two missed pings ⇒ assume dead
+    const CLOSED_RETRY_MS = 5_000;
+    let source = null;
+    let lastHeardAt = Date.now();
+    let closedRetryTimer = null;
+    let disposed = false;
+
+    const connect = () => {
+      if (disposed) return;
+      source?.close();
+      source = new EventSource(`/api/arena/${arenaId}/stream`);
+      lastHeardAt = Date.now();
+      source.addEventListener('state', (event) => {
+        lastHeardAt = Date.now();
+        try {
+          applyServerState(JSON.parse(event.data));
+        } catch {
+          // Ignore a malformed frame; the next push will resync.
+        }
+      });
+      source.addEventListener('ping', () => {
+        lastHeardAt = Date.now();
+      });
+      source.addEventListener('error', () => {
+        // CONNECTING = EventSource is already retrying on its own (honoring
+        // the route's `retry: 3000`) — leave it alone. CLOSED = it gave up
+        // (e.g. a non-200 response); only that needs a manual delayed retry.
+        if (source?.readyState === EventSource.CLOSED && !disposed && !closedRetryTimer) {
+          closedRetryTimer = setTimeout(() => {
+            closedRetryTimer = null;
+            connect();
+          }, CLOSED_RETRY_MS);
+        }
+      });
+    };
+
+    // Reconnect when the stream has gone quiet past two heartbeats. Healthy
+    // streams never trip this (a ping lands every 25s); a zombie does. Runs
+    // on page-return signals and on a foreground interval — background tabs
+    // throttle timers, but that's fine: the page-return signals cover the
+    // wake-up, the interval covers quiet death while visible.
+    const reconnectIfStale = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastHeardAt > STALE_AFTER_MS) connect();
+    };
+    const watchdog = setInterval(reconnectIfStale, HEARTBEAT_MS);
+    document.addEventListener('visibilitychange', reconnectIfStale);
+    window.addEventListener('pageshow', reconnectIfStale); // bfcache restores
+    window.addEventListener('online', reconnectIfStale);
+
+    connect();
+    return () => {
+      disposed = true;
+      clearInterval(watchdog);
+      if (closedRetryTimer) clearTimeout(closedRetryTimer);
+      document.removeEventListener('visibilitychange', reconnectIfStale);
+      window.removeEventListener('pageshow', reconnectIfStale);
+      window.removeEventListener('online', reconnectIfStale);
+      source?.close();
+    };
   }, [arenaId, applyServerState]);
 
   // Run a server action inside a transition and reconcile the returned state.

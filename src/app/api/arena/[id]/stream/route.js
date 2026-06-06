@@ -106,7 +106,13 @@ export async function GET(request, { params }) {
       // schedule a heartbeat for a dead stream.
       if (closed) return;
 
-      heartbeat = setInterval(() => enqueue(': ping\n\n'), HEARTBEAT_MS);
+      // Named `ping` event, NOT an SSE comment (`: ping`): a comment keeps
+      // proxies from idle-killing the stream but is invisible to client JS.
+      // The client tracks last-heard time off these pings to detect a
+      // silently-dead ("zombie") connection — device sleep / NAT timeout
+      // kills the TCP stream without an error event, leaving EventSource
+      // OPEN-but-deaf forever. See the liveness watchdog in arena.js.
+      heartbeat = setInterval(() => enqueue('event: ping\ndata: 1\n\n'), HEARTBEAT_MS);
     },
     cancel() {
       cleanup();
