@@ -683,6 +683,7 @@ function MatchDefaultsSection({ arenaId, defaults }) {
   const [autoMixDefault, setAutoMixDefault] = useState(defaults.autoMixDefault);
   const [leaderboardSize, setLeaderboardSize] = useState(String(defaults.leaderboardSize));
   const [countOffScheduleGames, setCountOffScheduleGames] = useState(defaults.countOffScheduleGames);
+  const [showPartnershipMatrix, setShowPartnershipMatrix] = useState(defaults.showPartnershipMatrix);
   const [error, setError] = useState('');
   const [saved, flashSaved, clearSaved] = useSavedFlag();
   const [isPending, startTransition] = useTransition();
@@ -710,6 +711,7 @@ function MatchDefaultsSection({ arenaId, defaults }) {
           autoMixDefault,
           leaderboardSize: size,
           countOffScheduleGames,
+          showPartnershipMatrix,
         });
         if (result?.error) return setError(result.error);
         flashSaved();
@@ -779,6 +781,21 @@ function MatchDefaultsSection({ arenaId, defaults }) {
             <span className="block text-sm font-bold text-slate-800">Count off-schedule games</span>
             <span className="block text-[11px] text-slate-500 mt-0.5">
               When on (default), every game in the week counts toward the leaderboard. Turn off to only count games played on the schedule&apos;s days — <strong>only takes effect once the schedule has play days set</strong>; with no days configured the leaderboard treats every day as scheduled.
+            </span>
+          </span>
+        </label>
+
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showPartnershipMatrix}
+            onChange={(e) => setShowPartnershipMatrix(e.target.checked)}
+            className="mt-0.5 w-4 h-4 accent-emerald-600"
+          />
+          <span>
+            <span className="block text-sm font-bold text-slate-800">Show Partnership Matrix tab</span>
+            <span className="block text-[11px] text-slate-500 mt-0.5">
+              Off by default. When on, the arena gains a <strong>Partnership Matrix</strong> tab — a grid of how often each pair has played together. Visible to everyone viewing the arena.
             </span>
           </span>
         </label>

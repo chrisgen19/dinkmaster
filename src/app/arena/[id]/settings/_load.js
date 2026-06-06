@@ -50,6 +50,7 @@ export async function loadArenaForSettings(arenaId) {
         autoMixDefault: arena.autoMixDefault,
         leaderboardSize: arena.leaderboardSize,
         countOffScheduleGames: arena.countOffScheduleGames,
+        showPartnershipMatrix: arena.showPartnershipMatrix,
       },
       sessions: {
         autoResetOnSession: arena.autoResetOnSession,

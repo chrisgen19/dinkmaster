@@ -463,6 +463,7 @@ export async function updateArenaMatchDefaults(
     autoMixDefault: autoMixInput,
     leaderboardSize: sizeInput,
     countOffScheduleGames: countOffInput,
+    showPartnershipMatrix: showMatrixInput,
   } = {},
 ) {
   const guard = await requireArenaManager(arenaId);
@@ -483,16 +484,19 @@ export async function updateArenaMatchDefaults(
   const asBool = (v) => (v === true || v === 'true' ? true : v === false || v === 'false' ? false : null);
   const autoMixDefault = asBool(autoMixInput);
   const countOffScheduleGames = asBool(countOffInput);
-  if (autoMixDefault === null || countOffScheduleGames === null) {
-    return { error: 'Auto-mix and off-schedule settings must be true or false.' };
+  const showPartnershipMatrix = asBool(showMatrixInput);
+  if (autoMixDefault === null || countOffScheduleGames === null || showPartnershipMatrix === null) {
+    return { error: 'Auto-mix, off-schedule, and matrix-visibility settings must be true or false.' };
   }
 
   const updated = await prisma.arena.updateMany({
     where: { id: arenaId },
-    data: { targetScore, autoMixDefault, leaderboardSize, countOffScheduleGames },
+    data: { targetScore, autoMixDefault, leaderboardSize, countOffScheduleGames, showPartnershipMatrix },
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
-  return { matchDefaults: { targetScore, autoMixDefault, leaderboardSize, countOffScheduleGames } };
+  return {
+    matchDefaults: { targetScore, autoMixDefault, leaderboardSize, countOffScheduleGames, showPartnershipMatrix },
+  };
 }
 
 // --- Arena play (owner-gated, scoped by arenaId) --------------------------

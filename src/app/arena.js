@@ -156,6 +156,7 @@ export default function Arena({
     autoMixDefault: DEFAULT_AUTO_MIX,
     leaderboardSize: DEFAULT_LEADERBOARD_SIZE,
     countOffScheduleGames: DEFAULT_COUNT_OFF_SCHEDULE,
+    showPartnershipMatrix: false,
   },
   sessionPrep = { autoResetOnSession: true, lastSessionResetAt: null },
   canManage,
@@ -724,7 +725,10 @@ export default function Arena({
   const navTabs = [
     { id: 'courts', label: 'Active Courts' },
     { id: 'thisweek', label: 'This Week' },
-    { id: 'stats', label: 'Partnership Matrix' },
+    // Partnership Matrix is an opt-in, arena-wide view (Settings → Match
+    // Defaults); hidden by default. When absent, the guard below sends a viewer
+    // sitting on `stats` back to the courts tab.
+    ...(matchDefaults.showPartnershipMatrix ? [{ id: 'stats', label: 'Partnership Matrix' }] : []),
     { id: 'history', label: 'Match Log' },
     {
       id: 'members',
@@ -1053,7 +1057,7 @@ export default function Arena({
             </div>
           )}
 
-          {activeTab === 'stats' && (
+          {activeTab === 'stats' && matchDefaults.showPartnershipMatrix && (
             <div
               role="tabpanel"
               id="arena-panel-stats"
