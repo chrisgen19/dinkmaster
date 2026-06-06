@@ -1879,6 +1879,12 @@ export async function createArenaInvite(arenaId, mode) {
   if (guard.error) return { error: guard.error };
   if (!isInviteMode(mode)) return { error: 'Invalid invite type.' };
 
+  // Best-effort idempotency: reuse the live link of this mode if one exists.
+  // Not a hard guarantee — two truly concurrent creates could both pass this
+  // check and mint a second active link of the same mode. That's harmless (the
+  // Share UI disables its button mid-flight and only renders one per mode; the
+  // extra row is inert), so we keep the read cheap rather than add a DB-level
+  // partial-unique constraint Prisma can't express declaratively.
   const existing = await prisma.arenaInvite.findFirst({
     where: { arenaId, mode, active: true },
     select: { id: true, code: true, mode: true, createdAt: true },

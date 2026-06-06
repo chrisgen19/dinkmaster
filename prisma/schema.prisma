@@ -165,11 +165,14 @@ model ArenaInvite {
   active    Boolean    @default(true)
   createdAt DateTime   @default(now())
 
-  arena   Arena @relation(fields: [arenaId], references: [id], onDelete: Cascade)
-  creator User  @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  arena Arena @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  // Cascade on creator deletion is intentional: if the manager who issued a
+  // link loses their account, their live links die with them rather than
+  // letting a removed person keep funnelling people in.
+  creator User @relation(fields: [createdBy], references: [id], onDelete: Cascade)
 
+  // `code` is already uniquely indexed by `@unique`; no separate @@index needed.
   @@index([arenaId])
-  @@index([code])
 }
 
 /// A user's role within an arena. The owner is tracked canonically by
