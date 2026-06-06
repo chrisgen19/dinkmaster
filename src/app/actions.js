@@ -3,7 +3,9 @@
 import { prisma } from '@/lib/prisma';
 import { getState } from '@/lib/data';
 import { getCurrentUser, requireUser, requireArenaOwner, requireArenaManager } from '@/lib/session';
-import { ROLES } from '@/lib/roles';
+import { ROLES, canManageArena } from '@/lib/roles';
+import { generateInviteCode } from '@/lib/invite-code';
+import { INVITE_MODES, isInviteMode } from '@/lib/invites';
 import { MAX_WAIT_THRESHOLD, ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
 import {
   DEFAULT_TARGET_SCORE,
@@ -58,6 +60,31 @@ async function maxQueueOrder(tx, arenaId) {
 const QUEUE_LOCK_KEY = 920425;
 function lockQueue(tx, arenaId) {
   return tx.$executeRaw`SELECT pg_advisory_xact_lock(${QUEUE_LOCK_KEY}, hashtext(${arenaId}))`;
+}
+
+// Separate advisory-lock namespace for invite creation, keyed per arena, so two
+// managers minting a link for the same arena are serialized and can't both pass
+// the "one active link per mode" check. Distinct key from the queue lock so
+// invite creation never contends with rack mutations. Released on commit/rollback.
+const INVITE_LOCK_KEY = 920426;
+function lockArenaInvites(tx, arenaId) {
+  return tx.$executeRaw`SELECT pg_advisory_xact_lock(${INVITE_LOCK_KEY}, hashtext(${arenaId}))`;
+}
+
+/**
+ * Whether `userId` may still manage this arena's invites (owner or organizer),
+ * read inside the caller's transaction. The owner's membership row mirrors their
+ * role as OWNER, so a single membership lookup covers everyone. Used to
+ * re-validate authority *under* `lockArenaInvites` after the pre-lock
+ * `requireArenaManager`/`requireArenaOwner`, so a concurrently demoted or removed
+ * manager can't mint or mutate invites with stale auth.
+ */
+async function callerCanManageInvites(tx, arenaId, userId) {
+  const membership = await tx.arenaMembership.findUnique({
+    where: { arenaId_userId: { arenaId, userId } },
+    select: { role: true },
+  });
+  return !!membership && canManageArena(membership.role);
 }
 
 /** Unbiased Fisher-Yates shuffle (returns a new array). */
@@ -140,8 +167,10 @@ async function activateArenaPlayer(tx, arenaId, user) {
 /**
  * Remove a user from an arena inside a transaction: deactivate their linked
  * player (kept for history — `leftAt` set, pulled off the rack) and delete
- * their non-owner membership. Returns false when the player is mid-match so the
- * caller can abort. Caller must hold `lockQueue`.
+ * their non-owner membership, and revoke any invite links they issued. Returns
+ * false when the player is mid-match so the caller can abort. Caller must hold
+ * `lockArenaInvites` then `lockQueue` (that order — the invite revocation is
+ * serialized against `redeemArenaInvite`).
  */
 async function removeArenaMember(tx, arenaId, userId) {
   const player = await tx.player.findUnique({
@@ -167,6 +196,13 @@ async function removeArenaMember(tx, arenaId, userId) {
   // odd orderings — a leaver should not be left with a lingering request).
   await tx.joinRequest.deleteMany({ where: { arenaId, userId } });
   await tx.linkRequest.deleteMany({ where: { arenaId, userId } });
+  // Revoke any invite links this user issued: leaving or being removed strips
+  // their authority, and a copied AUTO_JOIN link would otherwise keep granting
+  // instant membership until a current manager noticed and revoked it.
+  await tx.arenaInvite.updateMany({
+    where: { arenaId, createdBy: userId, active: true },
+    data: { active: false },
+  });
   return true;
 }
 
@@ -1854,6 +1890,193 @@ export async function rejectJoinRequest(arenaId, userId) {
   return { ok: true };
 }
 
+// --- Invite links ---------------------------------------------------------
+
+/** Shape an ArenaInvite row for the client (ISO date, no creator PII). */
+function serializeInvite(invite) {
+  return {
+    id: invite.id,
+    code: invite.code,
+    mode: invite.mode,
+    createdAt: new Date(invite.createdAt).toISOString(),
+  };
+}
+
+/**
+ * Create (or reuse) an active invite link of a given mode for an arena
+ * (owner/organizer only). Idempotent per active mode: if a link of that mode is
+ * already live it is returned as-is, so managers never accumulate duplicates —
+ * "Regenerate" in the UI revokes first, then calls this to mint a fresh code.
+ */
+export async function createArenaInvite(arenaId, mode) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+  if (!isInviteMode(mode)) return { error: 'Invalid invite type.' };
+
+  // Take a per-arena advisory lock, then check-or-create inside one transaction
+  // so concurrent managers can't both miss the existing-active check and mint
+  // duplicate links of the same mode (the lock guarantees one active link per
+  // mode without a DB-level partial-unique constraint Prisma can't express).
+  // Re-run the whole transaction on the vanishingly rare unique-code collision,
+  // since a failed `create` poisons the surrounding transaction.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        await lockArenaInvites(tx, arenaId);
+        // Re-validate authority under the lock: requireArenaManager ran before
+        // the transaction, so a manager demoted/removed in the meantime could
+        // otherwise mint a fresh active link (createdBy = themselves) that
+        // escapes the very revocation their role-loss triggers.
+        if (!(await callerCanManageInvites(tx, arenaId, guard.user.id))) {
+          return { error: 'You no longer have permission to manage invite links.' };
+        }
+        const existing = await tx.arenaInvite.findFirst({
+          where: { arenaId, mode, active: true },
+          select: { id: true, code: true, mode: true, createdAt: true },
+        });
+        if (existing) return { ok: true, invite: serializeInvite(existing) };
+
+        const invite = await tx.arenaInvite.create({
+          data: { arenaId, mode, code: generateInviteCode(), createdBy: guard.user.id },
+          select: { id: true, code: true, mode: true, createdAt: true },
+        });
+        return { ok: true, invite: serializeInvite(invite) };
+      });
+    } catch (err) {
+      if (err?.code === 'P2002') continue; // code collision — fresh tx + code
+      throw err;
+    }
+  }
+  return { error: 'Could not create an invite link. Please try again.' };
+}
+
+/**
+ * Revoke an invite link (owner/organizer only): flips `active` off so the link
+ * 404s, keeping the row for auditing. Scoped to `arenaId` so a manager can only
+ * revoke their own arena's invites.
+ */
+export async function revokeArenaInvite(arenaId, inviteId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+  if (!inviteId) return { error: 'Invite not found.' };
+
+  // Serialize against an in-flight redeem (same per-arena invite lock) so a
+  // revoke is authoritative — a redeem mid-flight on a leaked link can't slip a
+  // join past it.
+  let outcome = { ok: true };
+  await prisma.$transaction(async (tx) => {
+    await lockArenaInvites(tx, arenaId);
+    // Re-validate authority under the lock (see createArenaInvite).
+    if (!(await callerCanManageInvites(tx, arenaId, guard.user.id))) {
+      outcome = { error: 'You no longer have permission to manage invite links.' };
+      return;
+    }
+    await tx.arenaInvite.updateMany({
+      where: { id: inviteId, arenaId, active: true },
+      data: { active: false },
+    });
+  });
+  return outcome;
+}
+
+/**
+ * Redeem an invite link (any signed-in user). Resolves the active invite by
+ * `code`, then either auto-joins the user as a MEMBER + queued player
+ * (AUTO_JOIN) or files a pending JoinRequest (APPROVAL). Owners and existing
+ * members short-circuit to ALREADY_MEMBER. Returns a `status` the `/join`
+ * route uses to route + message:
+ * `JOINED` | `PENDING` | `ALREADY_MEMBER`, each with `arenaId`.
+ */
+export async function redeemArenaInvite(code) {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error };
+  if (!code) return { error: 'This invite link is no longer valid.' };
+
+  const invite = await prisma.arenaInvite.findFirst({
+    where: { code, active: true },
+    select: { mode: true, arenaId: true, arena: { select: { ownerId: true } } },
+  });
+  if (!invite) return { error: 'This invite link is no longer valid.' };
+
+  const { arenaId, mode } = invite;
+  const userId = guard.user.id;
+
+  // Already in (owner or existing member) — nothing to do.
+  if (invite.arena.ownerId === userId) {
+    return { ok: true, status: 'ALREADY_MEMBER', arenaId };
+  }
+  const membership = await prisma.arenaMembership.findUnique({
+    where: { arenaId_userId: { arenaId, userId } },
+  });
+  if (membership) return { ok: true, status: 'ALREADY_MEMBER', arenaId };
+
+  // Take the per-arena invite lock and re-check liveness inside the same
+  // transaction as the write, so a revoke that lands between the read above and
+  // the membership/request write wins (closes the redeem-vs-revoke TOCTOU).
+  let outcome = null;
+  await prisma.$transaction(async (tx) => {
+    await lockArenaInvites(tx, arenaId);
+    const live = await tx.arenaInvite.findFirst({
+      where: { code, active: true },
+      select: { id: true },
+    });
+    if (!live) {
+      outcome = { error: 'This invite link is no longer valid.' };
+      return;
+    }
+
+    if (mode === INVITE_MODES.AUTO_JOIN) {
+      await lockQueue(tx, arenaId);
+      // Resolve the user first and bail if the row vanished (concurrent account
+      // deletion), mirroring approveJoinRequest — activateArenaPlayer would
+      // otherwise dereference a null user.
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { id: true, firstName: true, lastName: true },
+      });
+      if (!user) {
+        outcome = { error: 'Your account could not be found.' };
+        return;
+      }
+      await tx.arenaMembership.upsert({
+        where: { arenaId_userId: { arenaId, userId } },
+        create: { arenaId, userId, role: ROLES.MEMBER },
+        update: {}, // already a member somehow — keep their role
+      });
+      await activateArenaPlayer(tx, arenaId, user);
+      // Clear any stale pending request now that they're a full member.
+      await tx.joinRequest.deleteMany({ where: { arenaId, userId } });
+      outcome = { ok: true, status: 'JOINED', arenaId };
+      return;
+    }
+
+    // Re-check membership under the lock: the pre-transaction check ran before
+    // the lock, so the user may have been admitted in the meantime (e.g. a
+    // manager approved another of their requests). Filing a join request for an
+    // existing member would surface a confusing pending row, so short-circuit.
+    // (AUTO_JOIN needs no equivalent — its membership upsert + activateArenaPlayer
+    // are already idempotent.)
+    const memberNow = await tx.arenaMembership.findUnique({
+      where: { arenaId_userId: { arenaId, userId } },
+      select: { id: true },
+    });
+    if (memberNow) {
+      outcome = { ok: true, status: 'ALREADY_MEMBER', arenaId };
+      return;
+    }
+
+    // APPROVAL — same effect as requestToJoin: file a pending request (idempotent).
+    await tx.joinRequest.upsert({
+      where: { arenaId_userId: { arenaId, userId } },
+      create: { arenaId, userId },
+      update: {},
+    });
+    outcome = { ok: true, status: 'PENDING', arenaId };
+  });
+
+  return outcome;
+}
+
 /**
  * Request to be linked to an existing walk-in (orphan) Player in this arena.
  * Available to any member who does not already have a linked Player in this
@@ -2035,6 +2258,10 @@ export async function leaveArena(arenaId) {
 
   let removed = true;
   await prisma.$transaction(async (tx) => {
+    // Invite lock before queue lock: keeps the global order consistent with
+    // redeemArenaInvite so role-loss invite revocation is serialized against an
+    // in-flight redeem (authoritative) without risking a deadlock.
+    await lockArenaInvites(tx, arenaId);
     await lockQueue(tx, arenaId);
     removed = await removeArenaMember(tx, arenaId, guard.user.id);
   });
@@ -2056,13 +2283,27 @@ export async function updateMemberRole(arenaId, userId, role) {
     return { error: "The owner's role cannot be changed here." };
   }
 
-  // role: { not: OWNER } is belt-and-suspenders — never touch the owner row.
-  const updated = await prisma.arenaMembership.updateMany({
-    where: { arenaId, userId, role: { not: ROLES.OWNER } },
-    data: { role },
+  // Update the role and revoke a demoted manager's links in ONE transaction
+  // under the invite lock. Doing both atomically (vs role-update then a separate
+  // revoke tx) closes the window where a just-demoted organizer could race a
+  // createArenaInvite — which now re-checks role under the same lock — to mint a
+  // fresh link, and avoids leaving links live if a second tx failed.
+  return prisma.$transaction(async (tx) => {
+    await lockArenaInvites(tx, arenaId);
+    // role: { not: OWNER } is belt-and-suspenders — never touch the owner row.
+    const updated = await tx.arenaMembership.updateMany({
+      where: { arenaId, userId, role: { not: ROLES.OWNER } },
+      data: { role },
+    });
+    if (updated.count === 0) return { error: 'That user is not a member of this arena.' };
+    if (role === ROLES.MEMBER) {
+      await tx.arenaInvite.updateMany({
+        where: { arenaId, createdBy: userId, active: true },
+        data: { active: false },
+      });
+    }
+    return { ok: true };
   });
-  if (updated.count === 0) return { error: 'That user is not a member of this arena.' };
-  return { ok: true };
 }
 
 /**
@@ -2079,6 +2320,9 @@ export async function removeMember(arenaId, userId) {
 
   let removed = true;
   await prisma.$transaction(async (tx) => {
+    // Invite lock before queue lock — see leaveArena: serializes this member's
+    // invite revocation against an in-flight redeem, deadlock-free.
+    await lockArenaInvites(tx, arenaId);
     await lockQueue(tx, arenaId);
     removed = await removeArenaMember(tx, arenaId, userId);
   });

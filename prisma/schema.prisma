@@ -87,6 +87,7 @@ model Arena {
   memberships  ArenaMembership[]
   joinRequests JoinRequest[]
   linkRequests LinkRequest[]
+  invites      ArenaInvite[]
 
   @@index([ownerId])
 }
@@ -139,6 +140,39 @@ enum ArenaRole {
   OWNER
   ORGANIZER
   MEMBER
+}
+
+/// What happens when someone redeems an arena invite link.
+/// - AUTO_JOIN — they become a MEMBER + queued player immediately, no approval.
+/// - APPROVAL  — a JoinRequest is created for an owner/organizer to approve.
+enum InviteMode {
+  AUTO_JOIN
+  APPROVAL
+}
+
+/// A manager-issued invite link to an arena. `code` is a random, unguessable
+/// token (NOT the public arena id) carried in `/join/<code>`; auto-join links
+/// rely on it being unguessable. Multiple invites can be active per arena
+/// (e.g. one AUTO_JOIN and one APPROVAL link at once). Revoking sets
+/// `active=false` rather than deleting, so a redeemed/expired link 404s
+/// cleanly while the row survives for auditing.
+model ArenaInvite {
+  id        String     @id @default(cuid())
+  arenaId   String
+  code      String     @unique
+  mode      InviteMode @default(APPROVAL)
+  createdBy String // userId of the owner/organizer who created it
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now())
+
+  arena Arena @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  // Cascade on creator deletion is intentional: if the manager who issued a
+  // link loses their account, their live links die with them rather than
+  // letting a removed person keep funnelling people in.
+  creator User @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  // `code` is already uniquely indexed by `@unique`; no separate @@index needed.
+  @@index([arenaId])
 }
 
 /// A user's role within an arena. The owner is tracked canonically by
@@ -312,13 +346,14 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  sessions     Session[]
-  accounts     Account[]
-  arenas       Arena[]
-  memberships  ArenaMembership[]
-  players      Player[]
-  joinRequests JoinRequest[]
-  linkRequests LinkRequest[]
+  sessions       Session[]
+  accounts       Account[]
+  arenas         Arena[]
+  memberships    ArenaMembership[]
+  players        Player[]
+  joinRequests   JoinRequest[]
+  linkRequests   LinkRequest[]
+  createdInvites ArenaInvite[]
 }
 
 /// A signed-in session (cookie-backed).

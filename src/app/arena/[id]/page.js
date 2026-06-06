@@ -7,6 +7,7 @@ import {
   hasPendingJoinRequest,
   getArenaLinkRequests,
   getViewerLinkContext,
+  getArenaInvites,
 } from '@/lib/arenas';
 import { getCurrentUser } from '@/lib/session';
 import { canManageArena } from '@/lib/roles';
@@ -34,7 +35,7 @@ export default async function ArenaPage({ params }) {
   // their own request is pending. Managers also see pending link requests, and
   // every signed-in viewer gets their per-arena link-request context so the
   // Members tab can render the right self-link affordance.
-  const [pendingRequests, viewerPending, pendingLinkRequests, viewerLinkContext] =
+  const [pendingRequests, viewerPending, pendingLinkRequests, viewerLinkContext, invites] =
     await Promise.all([
       canManage ? getArenaJoinRequests(id) : Promise.resolve([]),
       user && !viewerRole && user.id !== arena.ownerId
@@ -44,6 +45,8 @@ export default async function ArenaPage({ params }) {
       // Only arena members (incl. managers) ever interact with the link UI,
       // so spectators skip the three DB queries `getViewerLinkContext` runs.
       user && viewerRole ? getViewerLinkContext(id, user.id) : Promise.resolve(null),
+      // Invite links are a manager-only affordance (the hero Share control).
+      canManage ? getArenaInvites(id) : Promise.resolve([]),
     ]);
 
   return (
@@ -84,6 +87,7 @@ export default async function ArenaPage({ params }) {
       viewerPending={viewerPending}
       pendingLinkRequests={pendingLinkRequests}
       viewerLinkContext={viewerLinkContext}
+      invites={invites}
     />
   );
 }

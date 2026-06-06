@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { BackPill } from './back-pill';
+import { ArenaInviteShare } from './arena-invite-share';
 
 /**
  * Arena hero strip — sits between the SiteHeader and the sticky tab bar. Holds
@@ -15,7 +16,8 @@ import { BackPill } from './back-pill';
  * @param {number} props.playerCount
  * @param {number} props.queueLength
  * @param {number} props.liveCourtCount
- * @param {boolean} props.canManage - Whether to render the Settings link.
+ * @param {boolean} props.canManage - Whether to render the Settings link + invite Share control.
+ * @param {Array<{id:string,code:string,mode:string,createdAt:string}>} [props.invites] - Active invite links (managers only).
  */
 export function ArenaHero({
   arenaId,
@@ -26,6 +28,7 @@ export function ArenaHero({
   queueLength,
   liveCourtCount,
   canManage,
+  invites = [],
 }) {
   return (
     <section className="relative isolate overflow-hidden">
@@ -82,6 +85,10 @@ export function ArenaHero({
               <p className="text-sm md:text-[15px] text-slate-500 leading-relaxed mt-2 md:mt-3 max-w-prose">
                 {description}
               </p>
+            )}
+
+            {canManage && (
+              <ArenaInviteShare arenaId={arenaId} arenaName={arenaName} initialInvites={invites} />
             )}
           </div>
 

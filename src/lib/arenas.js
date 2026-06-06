@@ -259,6 +259,44 @@ export async function hasPendingJoinRequest(arenaId, userId) {
 }
 
 /**
+ * An arena's active invite links, for the manager Share UI. Returns code +
+ * mode only (no creator PII); the client builds the absolute URL from
+ * `window.location.origin`. Newest first.
+ * @param {string} arenaId
+ * @returns {Promise<Array<{id:string,code:string,mode:string,createdAt:string}>>}
+ */
+export async function getArenaInvites(arenaId) {
+  const invites = await prisma.arenaInvite.findMany({
+    where: { arenaId, active: true },
+    select: { id: true, code: true, mode: true, createdAt: true },
+    orderBy: { createdAt: 'desc' },
+  });
+  return invites.map((i) => ({
+    id: i.id,
+    code: i.code,
+    mode: i.mode,
+    createdAt: new Date(i.createdAt).toISOString(),
+  }));
+}
+
+/**
+ * Resolve an active invite by its code for the `/join/[code]` route. Returns
+ * the arena identity + mode, or null when the code is unknown or revoked (so
+ * the route can render a clean "no longer valid" state).
+ * @param {string} code
+ * @returns {Promise<{arenaId:string,arenaName:string,mode:string}|null>}
+ */
+export async function getArenaInviteByCode(code) {
+  if (!code) return null;
+  const invite = await prisma.arenaInvite.findFirst({
+    where: { code, active: true },
+    select: { mode: true, arena: { select: { id: true, name: true } } },
+  });
+  if (!invite) return null;
+  return { arenaId: invite.arena.id, arenaName: invite.arena.name, mode: invite.mode };
+}
+
+/**
  * Aggregate a user's player record across every arena they play in — powers
  * the global `/profile` page.
  * @param {string} userId
