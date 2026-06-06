@@ -2050,6 +2050,21 @@ export async function redeemArenaInvite(code) {
       return;
     }
 
+    // Re-check membership under the lock: the pre-transaction check ran before
+    // the lock, so the user may have been admitted in the meantime (e.g. a
+    // manager approved another of their requests). Filing a join request for an
+    // existing member would surface a confusing pending row, so short-circuit.
+    // (AUTO_JOIN needs no equivalent — its membership upsert + activateArenaPlayer
+    // are already idempotent.)
+    const memberNow = await tx.arenaMembership.findUnique({
+      where: { arenaId_userId: { arenaId, userId } },
+      select: { id: true },
+    });
+    if (memberNow) {
+      outcome = { ok: true, status: 'ALREADY_MEMBER', arenaId };
+      return;
+    }
+
     // APPROVAL — same effect as requestToJoin: file a pending request (idempotent).
     await tx.joinRequest.upsert({
       where: { arenaId_userId: { arenaId, userId } },

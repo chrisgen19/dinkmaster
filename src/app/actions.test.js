@@ -2261,6 +2261,7 @@ describe('invite links', () => {
       const tx = {
         $executeRaw: vi.fn(),
         arenaInvite: { findFirst: vi.fn().mockResolvedValue({ id: 'inv1' }) }, // still live
+        arenaMembership: { findUnique: vi.fn().mockResolvedValue(null) }, // still not a member
         joinRequest: { upsert: vi.fn() },
       };
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
@@ -2272,6 +2273,25 @@ describe('invite links', () => {
         create: { arenaId: ARENA, userId: 'u1' },
         update: {},
       });
+    });
+
+    it('APPROVAL returns ALREADY_MEMBER (no request) if the user joined mid-redeem', async () => {
+      prisma.arenaInvite.findFirst.mockResolvedValue({
+        mode: 'APPROVAL', arenaId: ARENA, arena: { ownerId: 'owner' },
+      });
+      prisma.arenaMembership.findUnique.mockResolvedValue(null); // pre-tx: not a member
+      const tx = {
+        $executeRaw: vi.fn(),
+        arenaInvite: { findFirst: vi.fn().mockResolvedValue({ id: 'inv1' }) },
+        // In-tx re-check: admitted since the pre-check (e.g. another request approved).
+        arenaMembership: { findUnique: vi.fn().mockResolvedValue({ id: 'm1' }) },
+        joinRequest: { upsert: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.redeemArenaInvite('code123');
+      expect(result).toMatchObject({ ok: true, status: 'ALREADY_MEMBER', arenaId: ARENA });
+      expect(tx.joinRequest.upsert).not.toHaveBeenCalled();
     });
 
     it('auto-joins as a MEMBER + queued player for an AUTO_JOIN invite', async () => {
