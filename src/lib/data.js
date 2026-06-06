@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma';
  *
  * @param {string} arenaId - the arena whose players/courts/matches to read
  * @returns {Promise<{
+ *   fetchedAt: number,
  *   players: Array<{id:string,userId:string|null,firstName:string,lastName:string|null,gamesPlayed:number,wins:number,losses:number,waitRounds:number,rating:number,skipBoosted:boolean}>,
  *   queue: string[],
  *   courts: Array<{id:string,name:string,status:string,team1:string[],team2:string[]}>,
@@ -79,6 +80,10 @@ export async function getState(arenaId) {
   }
 
   return {
+    // Monotonic-ish stamp (same Node clock for a given process) so the client
+    // can discard a snapshot older than one it already applied — preventing a
+    // slow action response from clobbering a newer SSE push, and vice-versa.
+    fetchedAt: Date.now(),
     players: players.map((p) => ({
       id: p.id,
       userId: p.userId,

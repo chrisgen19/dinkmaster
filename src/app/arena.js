@@ -43,6 +43,24 @@ import { PaddleRackStack } from './paddle-rack-stack';
 /** Display name: "First Last", or just "First" when no last name is set. */
 const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
 
+/**
+ * Highest `getState.fetchedAt` stamp applied per arena, so `applyServerState`
+ * can discard an out-of-order (older) snapshot when a slow action response
+ * races a newer SSE push (or vice-versa). Module-scoped (not a React ref):
+ * it's bookkeeping, not render state — nothing re-renders off it, and keeping
+ * it out of the component avoids reading a ref inside render-adjacent closures.
+ * Returns true when the snapshot is fresh enough to apply (equal stamps apply;
+ * a payload without a stamp — older shape — always applies).
+ */
+const lastAppliedStateAt = new Map();
+const shouldApplyServerState = (arenaId, state) => {
+  const at = state.fetchedAt ?? 0;
+  const prev = lastAppliedStateAt.get(arenaId) ?? 0;
+  if (at && at < prev) return false;
+  if (at > prev) lastAppliedStateAt.set(arenaId, at);
+  return true;
+};
+
 /** Weekday options for the schedule editor, Monday-first; value = JS getDay(). */
 const WEEKDAYS = [
   { value: 1, short: 'Mon' },
@@ -192,6 +210,10 @@ export default function Arena({
   const [lastSyncedState, setLastSyncedState] = useState(initialState);
   if (initialState !== lastSyncedState) {
     setLastSyncedState(initialState);
+    // Prop resyncs apply unconditionally (deliberate full reset from the
+    // server), but still advance the monotonic stamp so an older queued SSE
+    // frame can't immediately overwrite this fresher payload.
+    shouldApplyServerState(arenaId, initialState);
     setPlayers(initialState.players);
     setQueue(initialState.queue);
     setCourts(initialState.courts);
@@ -476,6 +498,10 @@ export default function Arena({
   // identity (setters are stable) so the SSE effect doesn't re-subscribe.
   const applyServerState = useCallback((state) => {
     if (!state) return;
+    // Monotonic guard (see `shouldApplyServerState`): ignore a snapshot older
+    // than one already applied, so a slow action response can't clobber a
+    // newer SSE push that landed first (and vice-versa).
+    if (!shouldApplyServerState(arenaId, state)) return;
     setPlayers(state.players);
     setQueue(state.queue);
     setCourts(state.courts);
@@ -488,7 +514,7 @@ export default function Arena({
     if ('lastSessionResetAt' in state) {
       setLastSessionResetAt(state.lastSessionResetAt);
     }
-  }, []);
+  }, [arenaId]);
 
   // Apply a server action result to local state (state, error, notification).
   const applyResult = (result) => {

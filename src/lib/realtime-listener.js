@@ -29,33 +29,56 @@ const globalForRealtime = globalThis;
 function createHub() {
   /** @type {Map<string, Set<(state: unknown) => void>>} arenaId → subscriber callbacks */
   const subscribers = new Map();
-  /** @type {import('pg').Client | null} */
+  /** @type {import('pg').Client | null} the live LISTEN client */
   let client = null;
   /** @type {Promise<void> | null} in-flight connect, so concurrent subscribers share one attempt */
   let connecting = null;
   let reconnectTimer = null;
 
-  async function handleNotification(msg) {
+  // Per-arena read coalescing. Notifications for the same arena can arrive
+  // faster than getState resolves; running them concurrently risks pushing an
+  // older snapshot after a newer one. So while a read loop is active for an
+  // arena, further notifications only mark it `dirty` and the active loop
+  // re-reads once when it finishes — serial per arena, and bursts collapse to
+  // a single trailing read.
+  const reading = new Set(); // arenaIds with an active pump loop
+  const dirty = new Set(); // arenaIds needing a (re)read
+
+  async function pumpArena(arenaId) {
+    if (reading.has(arenaId)) return; // an active loop will pick up `dirty`
+    reading.add(arenaId);
+    try {
+      while (dirty.has(arenaId)) {
+        dirty.delete(arenaId);
+        const subs = subscribers.get(arenaId);
+        if (!subs || subs.size === 0) break;
+        let state;
+        try {
+          state = await getState(arenaId);
+        } catch {
+          // Arena vanished or a transient read failure — skip this tick; a
+          // later change (or the client's reconnect re-sync) recovers.
+          continue;
+        }
+        for (const cb of subs) {
+          try {
+            cb(state);
+          } catch {
+            // A broken stream must not abort delivery to the others.
+          }
+        }
+      }
+    } finally {
+      reading.delete(arenaId);
+    }
+  }
+
+  function handleNotification(msg) {
     if (msg.channel !== CHANNEL || !msg.payload) return;
     const arenaId = msg.payload;
-    const subs = subscribers.get(arenaId);
-    if (!subs || subs.size === 0) return;
-    let state;
-    try {
-      // One read per notification, shared across this arena's subscribers.
-      state = await getState(arenaId);
-    } catch {
-      // Arena vanished or a transient read failure — skip this tick; the next
-      // change (or the SSE client's reconnect re-sync) will catch things up.
-      return;
-    }
-    for (const cb of subs) {
-      try {
-        cb(state);
-      } catch {
-        // A broken stream must not abort delivery to the others.
-      }
-    }
+    if (!subscribers.has(arenaId)) return;
+    dirty.add(arenaId);
+    pumpArena(arenaId);
   }
 
   function scheduleReconnect() {
@@ -69,17 +92,19 @@ function createHub() {
     }, RECONNECT_DELAY_MS);
   }
 
-  function dropClient() {
-    if (client) {
-      try {
-        client.removeAllListeners();
-        client.end().catch(() => {});
-      } catch {
-        // already torn down
-      }
+  // Tear down the live client — but only when the failing client is still the
+  // current one, so a stale error/end event from an already-replaced client
+  // can't null out a newer connection. Never touches `connecting`, so it can't
+  // race an in-flight connect into spawning a parallel client.
+  function onClientFailure(failed) {
+    if (failed !== client) return;
+    try {
+      failed.removeAllListeners();
+      failed.end().catch(() => {});
+    } catch {
+      // already torn down
     }
     client = null;
-    connecting = null;
     scheduleReconnect();
   }
 
@@ -89,11 +114,25 @@ function createHub() {
     connecting = (async () => {
       const c = new Client({ connectionString: process.env.DATABASE_URL });
       c.on('notification', handleNotification);
-      c.on('error', dropClient);
-      c.on('end', dropClient);
-      await c.connect();
-      // CHANNEL is a fixed identifier (never user input), so this is safe.
-      await c.query(`LISTEN ${CHANNEL}`);
+      try {
+        await c.connect();
+        // CHANNEL is a fixed identifier (never user input), so this is safe.
+        await c.query(`LISTEN ${CHANNEL}`);
+      } catch (err) {
+        // connect or LISTEN failed: close this client so the socket can't leak,
+        // then surface the error to the caller (which schedules a reconnect).
+        try {
+          c.removeAllListeners();
+          await c.end();
+        } catch {
+          // nothing to close
+        }
+        throw err;
+      }
+      // Live now. Bind failure handlers to THIS client so a later replacement
+      // can recognize and ignore their stale events.
+      c.on('error', () => onClientFailure(c));
+      c.on('end', () => onClientFailure(c));
       client = c;
     })();
     try {
@@ -120,7 +159,7 @@ function createHub() {
       await ensureConnected();
     } catch {
       // Connect failed; the subscriber stays registered and scheduleReconnect()
-      // (fired by dropClient) will re-establish LISTEN and resume delivery.
+      // will re-establish LISTEN and resume delivery.
       scheduleReconnect();
     }
     return () => {

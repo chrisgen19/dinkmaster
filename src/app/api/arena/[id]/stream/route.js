@@ -50,6 +50,27 @@ export async function GET(request, { params }) {
       };
       const sendState = (state) => enqueue(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
 
+      // Register abort handling BEFORE any await, so a disconnect during setup
+      // (the getState read or the subscribe) still triggers cleanup instead of
+      // leaving a heartbeat/subscription dangling.
+      request.signal.addEventListener('abort', () => {
+        cleanup();
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
+      });
+      if (request.signal.aborted) {
+        cleanup();
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
+        return;
+      }
+
       // Tell EventSource to reconnect after 3s if the stream drops.
       enqueue('retry: 3000\n\n');
 
@@ -61,18 +82,15 @@ export async function GET(request, { params }) {
       }
 
       unsubscribe = await realtimeHub.subscribe(id, sendState);
+      // If the client disconnected while we were subscribing, `cleanup` already
+      // ran against the no-op default unsubscribe; tear down the now-registered
+      // subscription so the hub stops invoking this dead connection.
+      if (closed) {
+        unsubscribe();
+        return;
+      }
 
       heartbeat = setInterval(() => enqueue(': ping\n\n'), HEARTBEAT_MS);
-
-      // Client navigated away / closed the tab.
-      request.signal.addEventListener('abort', () => {
-        cleanup();
-        try {
-          controller.close();
-        } catch {
-          // already closed
-        }
-      });
     },
     cancel() {
       cleanup();
