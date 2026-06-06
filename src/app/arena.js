@@ -25,6 +25,7 @@ import { createStateFreshnessGuard } from '@/lib/state-freshness';
 import { computeSessionStats } from '@/lib/session-stats';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
 import { formatShortName, profileHref } from '@/lib/player-display';
+import { hasConfiguredSchedule, describeSchedule } from '@/lib/schedule-format';
 import { AuthStatus } from './auth-status';
 import { SiteHeader } from './site-header';
 import { ArenaMembers } from './arena-members';
@@ -54,41 +55,6 @@ const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.first
  * alongside their tests.
  */
 const shouldApplyServerState = createStateFreshnessGuard();
-
-/** Weekday options for the schedule editor, Monday-first; value = JS getDay(). */
-const WEEKDAYS = [
-  { value: 1, short: 'Mon' },
-  { value: 2, short: 'Tue' },
-  { value: 3, short: 'Wed' },
-  { value: 4, short: 'Thu' },
-  { value: 5, short: 'Fri' },
-  { value: 6, short: 'Sat' },
-  { value: 0, short: 'Sun' },
-];
-
-/** "18:30" → "6:30 PM"; null/empty → null. */
-const formatClock = (hhmm) => {
-  if (!hhmm) return null;
-  const [h, m] = hhmm.split(':').map(Number);
-  const period = h < 12 ? 'AM' : 'PM';
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
-};
-
-/** Whether an arena has any real play schedule set (days or times), vs. the
- *  empty default that `describeSchedule` would render as "Every day". */
-const hasConfiguredSchedule = (schedule) =>
-  Boolean(schedule?.days?.length || schedule?.start || schedule?.end);
-
-/** One-line schedule summary, e.g. "Mon, Wed, Fri · 6:00 PM–10:00 PM (Asia/Manila)". */
-const describeSchedule = ({ days = [], start, end, timezone } = {}) => {
-  const ordered = WEEKDAYS.filter((d) => days.includes(d.value)).map((d) => d.short);
-  const dayPart = ordered.length ? ordered.join(', ') : 'Every day';
-  const startC = formatClock(start);
-  const endC = formatClock(end);
-  const timePart = startC && endC ? ` · ${startC}–${endC}` : '';
-  return `${dayPart}${timePart}${timezone ? ` (${timezone})` : ''}`;
-};
 
 /** Accept only digits or an empty string into a controlled score input. */
 const onScoreChange = (setter, raw) => {
