@@ -5,39 +5,19 @@ import { getCurrentUser } from '@/lib/session';
 import { AuthStatus } from '../auth-status';
 import { SiteHeader } from '../site-header';
 import { Users, Layers, Trophy, ArrowRight, Sparkles, MapPin, Calendar } from 'lucide-react';
+import { hasConfiguredSchedule, describeSchedule } from '@/lib/schedule-format';
 
 // Always read the fresh arena list on each request.
 export const dynamic = 'force-dynamic';
 
-const WEEKDAYS = [
-  { value: 1, short: 'Mon' },
-  { value: 2, short: 'Tue' },
-  { value: 3, short: 'Wed' },
-  { value: 4, short: 'Thu' },
-  { value: 5, short: 'Fri' },
-  { value: 6, short: 'Sat' },
-  { value: 0, short: 'Sun' },
-];
-
-const formatClock = (hhmm) => {
-  if (!hhmm) return null;
-  const [h, m] = hhmm.split(':').map(Number);
-  const period = h < 12 ? 'AM' : 'PM';
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
-};
-
-const hasConfiguredSchedule = (arena) =>
-  Boolean(arena?.scheduleDays?.length || arena?.scheduleStart || arena?.scheduleEnd);
-
-const describeSchedule = ({ scheduleDays = [], scheduleStart, scheduleEnd, timezone } = {}) => {
-  const ordered = WEEKDAYS.filter((d) => scheduleDays.includes(d.value)).map((d) => d.short);
-  const dayPart = ordered.length ? ordered.join(', ') : 'Every day';
-  const startC = formatClock(scheduleStart);
-  const endC = formatClock(scheduleEnd);
-  const timePart = startC && endC ? ` · ${startC}–${endC}` : '';
-  return `${dayPart}${timePart}${timezone ? ` (${timezone})` : ''}`;
-};
+/** Adapt a directory row's flat `schedule*` columns to the canonical
+ *  `{days, start, end, timezone}` shape the shared schedule helpers take. */
+const toSchedule = (a) => ({
+  days: a.scheduleDays ?? [],
+  start: a.scheduleStart,
+  end: a.scheduleEnd,
+  timezone: a.timezone,
+});
 
 const ROLE_BADGE = {
   OWNER: 'bg-emerald-500/10 text-emerald-700 ring-emerald-600/20 border border-emerald-500/20 shadow-sm shadow-emerald-500/5',
@@ -106,9 +86,9 @@ function ArenaCard({ arena, role, isPending }) {
         {/* Play Schedule Property */}
         <div className="flex items-center gap-2 min-w-0">
           <Calendar className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 transition shrink-0" />
-          {hasConfiguredSchedule(arena) ? (
-            <span className="font-medium text-slate-700 truncate" title={describeSchedule(arena)}>
-              {describeSchedule(arena)}
+          {hasConfiguredSchedule(toSchedule(arena)) ? (
+            <span className="font-medium text-slate-700 truncate" title={describeSchedule(toSchedule(arena))}>
+              {describeSchedule(toSchedule(arena))}
             </span>
           ) : (
             <span className="text-slate-400 italic">Flexible play schedule</span>

@@ -1,15 +1,10 @@
 'use client';
 
-/** Weekday options, Monday-first; `value` matches JS `Date.getDay()`. */
-export const WEEKDAYS = [
-  { value: 1, short: 'Mon' },
-  { value: 2, short: 'Tue' },
-  { value: 3, short: 'Wed' },
-  { value: 4, short: 'Thu' },
-  { value: 5, short: 'Fri' },
-  { value: 6, short: 'Sat' },
-  { value: 0, short: 'Sun' },
-];
+import { WEEKDAYS } from '@/lib/schedule-format';
+
+// Re-exported so the editor's weekday options share the directory/hero's
+// single source of truth in @/lib/schedule-format.
+export { WEEKDAYS };
 
 /** Friendly zone shortlist for the picker; any IANA zone is still accepted. */
 export const TIMEZONES = [
