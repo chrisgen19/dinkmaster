@@ -148,7 +148,7 @@ export function ProfileView({ name, email = null, stats, backHref = '/arenas', b
         <section className="animate-fade-in [animation-delay:300ms]">
           <SectionHeader title={isSelf ? 'My arenas' : 'Arenas'} count={arenas.length} />
           {arenas.length === 0 ? (
-            <EmptyArenas />
+            <EmptyArenas isSelf={isSelf} />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 mt-4">
               {arenas.map((a) => (
@@ -371,9 +371,18 @@ function ArenaCard({ arena }) {
   );
 }
 
-// Only rendered when arenas.length === 0, reachable only on the viewer's own
-// profile (others are gated on a shared arena), so the copy stays first-person.
-function EmptyArenas() {
+// Empty arenas state. Normally only the viewer's own profile reaches this (a
+// shared-arena viewer's target has play records), but access is gated on
+// membership rather than Player rows, so don't assume self — branch the copy so
+// another member with no records never reads the first-person line.
+function EmptyArenas({ isSelf = false }) {
+  if (!isSelf) {
+    return (
+      <div className="mt-4 py-12 text-center text-sm text-slate-500 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/40">
+        <p className="font-semibold text-slate-600">No arena records yet.</p>
+      </div>
+    );
+  }
   return (
     <div className="mt-4 py-12 text-center text-sm text-slate-500 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/40">
       <p className="font-semibold text-slate-600">You haven&apos;t joined an arena yet.</p>
