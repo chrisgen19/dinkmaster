@@ -531,7 +531,13 @@ export async function getViewablePlayerProfile(playerId, viewerUserId) {
   if (!player) return null;
 
   // Linked players have a richer cross-arena profile keyed by their account.
-  if (player.userId) return { redirectUserId: player.userId };
+  // Gate the redirect on the same shared-arena rule `/u/[userId]` enforces, so
+  // a viewer who couldn't see that profile can't learn the account id from the
+  // redirect (the destination would 404 anyway).
+  if (player.userId) {
+    if (!(await usersShareArena(viewerUserId, player.userId))) return null;
+    return { redirectUserId: player.userId };
+  }
 
   // Walk-in: gate on the viewer belonging to the walk-in's arena (the only one
   // it lives in), mirroring the shared-arena rule for accounts.

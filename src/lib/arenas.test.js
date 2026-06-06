@@ -92,11 +92,17 @@ describe('getViewablePlayerProfile', () => {
     expect(prisma.arenaMembership.findUnique).not.toHaveBeenCalled();
   });
 
-  it('redirects a linked player to its account profile (no membership check)', async () => {
+  it('redirects a linked player to its account profile when an arena is shared', async () => {
     prisma.player.findUnique.mockResolvedValue({ id: 'p1', userId: 'acct-9', arenaId: ARENA });
+    prisma.arenaMembership.findFirst.mockResolvedValue({ id: 'm1' }); // shares an arena
     const result = await getViewablePlayerProfile('p1', VIEWER);
     expect(result).toEqual({ redirectUserId: 'acct-9' });
-    expect(prisma.arenaMembership.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('returns null for a linked player with no shared arena (no account-id leak)', async () => {
+    prisma.player.findUnique.mockResolvedValue({ id: 'p1', userId: 'acct-9', arenaId: ARENA });
+    prisma.arenaMembership.findFirst.mockResolvedValue(null); // no shared arena
+    await expect(getViewablePlayerProfile('p1', VIEWER)).resolves.toBeNull();
   });
 
   it('returns null for a walk-in when the viewer is not in its arena', async () => {

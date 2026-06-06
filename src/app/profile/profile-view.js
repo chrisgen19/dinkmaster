@@ -91,7 +91,7 @@ export function ProfileView({ name, email = null, stats, backHref = '/arenas', b
 
         {/* INSIGHTS ── three cards: best partner / favorite court / streak. */}
         <section className="animate-fade-in [animation-delay:240ms]">
-          <SectionHeader title="Insights" hint={hasGames ? null : 'Play a few matches and we’ll start showing patterns.'} />
+          <SectionHeader title="Insights" hint={hasGames ? null : 'A few matches in, patterns start to show.'} />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 mt-4">
             <InsightCard
               eyebrow="Best partner"
@@ -124,7 +124,7 @@ export function ProfileView({ name, email = null, stats, backHref = '/arenas', b
                   ? insights.streak.count === 1
                     ? 'Just the latest match'
                     : `${insights.streak.count} in a row`
-                  : 'Waiting on your first match'
+                  : 'No matches played yet'
               }
               accent={insights.streak?.kind === 'W' ? 'emerald' : insights.streak?.kind === 'L' ? 'slate-dim' : 'slate'}
               monospace
