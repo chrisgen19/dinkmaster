@@ -43,6 +43,7 @@ function createHub() {
   // a single trailing read.
   const reading = new Set(); // arenaIds with an active pump loop
   const dirty = new Set(); // arenaIds needing a (re)read
+  const retryScheduled = new Set(); // arenaIds with a pending failed-read retry
 
   async function pumpArena(arenaId) {
     if (reading.has(arenaId)) return; // an active loop will pick up `dirty`
@@ -56,9 +57,21 @@ function createHub() {
         try {
           state = await getState(arenaId);
         } catch {
-          // Arena vanished or a transient read failure — skip this tick; a
-          // later change (or the client's reconnect re-sync) recovers.
-          continue;
+          // Transient read failure (a deleted arena doesn't throw — getState
+          // returns empty state — so this is a real DB hiccup). Don't consume
+          // the notification: schedule ONE delayed retry so the update still
+          // reaches subscribers once the DB recovers, without hot-looping
+          // through an outage. The pump for this arena stops until then.
+          if (!retryScheduled.has(arenaId)) {
+            retryScheduled.add(arenaId);
+            setTimeout(() => {
+              retryScheduled.delete(arenaId);
+              if (!subscribers.has(arenaId)) return; // everyone left meanwhile
+              dirty.add(arenaId);
+              pumpArena(arenaId);
+            }, RECONNECT_DELAY_MS);
+          }
+          break;
         }
         for (const cb of subs) {
           try {

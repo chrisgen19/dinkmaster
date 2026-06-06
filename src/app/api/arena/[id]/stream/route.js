@@ -74,13 +74,12 @@ export async function GET(request, { params }) {
       // Tell EventSource to reconnect after 3s if the stream drops.
       enqueue('retry: 3000\n\n');
 
-      // Initial sync so a (re)connecting client is immediately consistent.
-      try {
-        sendState(await getState(id));
-      } catch {
-        // Transient read failure — the first live change will resync.
-      }
-
+      // Subscribe BEFORE taking the initial snapshot: a change committing
+      // between the snapshot read and the subscribe would NOTIFY while nobody
+      // is listening, leaving this client on a stale frame with no push
+      // coming. Subscribing first closes that blind window — at worst the
+      // client gets a pushed frame and the snapshot out of order, which the
+      // client's monotonic `fetchedAt` guard resolves.
       unsubscribe = await realtimeHub.subscribe(id, sendState);
       // If the client disconnected while we were subscribing, `cleanup` already
       // ran against the no-op default unsubscribe; tear down the now-registered
@@ -89,6 +88,18 @@ export async function GET(request, { params }) {
         unsubscribe();
         return;
       }
+
+      // Initial sync so a (re)connecting client is immediately consistent.
+      try {
+        sendState(await getState(id));
+      } catch {
+        // Transient read failure — the first live change will resync.
+      }
+
+      // The client may have disconnected during the snapshot read; `cleanup`
+      // (with the real unsubscribe now assigned) already ran, so just don't
+      // schedule a heartbeat for a dead stream.
+      if (closed) return;
 
       heartbeat = setInterval(() => enqueue(': ping\n\n'), HEARTBEAT_MS);
     },

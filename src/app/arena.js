@@ -210,21 +210,25 @@ export default function Arena({
   const [lastSyncedState, setLastSyncedState] = useState(initialState);
   if (initialState !== lastSyncedState) {
     setLastSyncedState(initialState);
-    // Prop resyncs apply unconditionally (deliberate full reset from the
-    // server), but still advance the monotonic stamp so an older queued SSE
-    // frame can't immediately overwrite this fresher payload.
-    shouldApplyServerState(arenaId, initialState);
-    setPlayers(initialState.players);
-    setQueue(initialState.queue);
-    setCourts(initialState.courts);
-    setMatchHistory(initialState.matchHistory);
-    setHistory(initialState.history);
-    // `lastSessionResetAt` is now the server-authoritative cutoff for the
-    // session-scoped overlay. Resync it alongside the other fields so a
-    // `router.refresh()` that doesn't flow through `applyResult` (e.g. a
-    // child component refreshing after a link approval) still surfaces a
-    // concurrent reset that happened on the server.
-    setLastSessionResetAt(initialState.lastSessionResetAt);
+    // Prop resyncs go through the same monotonic guard as SSE pushes and
+    // action results: a `router.refresh()` response rendered from an OLDER
+    // snapshot than an SSE frame that already applied must not roll the
+    // board backward. When the payload is fresh (the common case) it applies
+    // and advances the stamp, which also stops an older queued SSE frame
+    // from overwriting it afterwards.
+    if (shouldApplyServerState(arenaId, initialState)) {
+      setPlayers(initialState.players);
+      setQueue(initialState.queue);
+      setCourts(initialState.courts);
+      setMatchHistory(initialState.matchHistory);
+      setHistory(initialState.history);
+      // `lastSessionResetAt` is now the server-authoritative cutoff for the
+      // session-scoped overlay. Resync it alongside the other fields so a
+      // `router.refresh()` that doesn't flow through `applyResult` (e.g. a
+      // child component refreshing after a link approval) still surfaces a
+      // concurrent reset that happened on the server.
+      setLastSessionResetAt(initialState.lastSessionResetAt);
+    }
   }
 
   const [isPending, startTransition] = useTransition();
