@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useTransition } from 'react';
+import { createPortal } from 'react-dom';
 import QRCode from 'react-qr-code';
 import { createArenaInvite, revokeArenaInvite } from './actions';
 import { INVITE_MODES, inviteModeLabel } from '@/lib/invites';
@@ -96,7 +97,7 @@ export function ArenaInviteShare({ arenaId, arenaName, initialInvites = [] }) {
         Share / Invite
       </button>
 
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
           <div
             role="dialog"
@@ -143,7 +144,8 @@ export function ArenaInviteShare({ arenaId, arenaName, initialInvites = [] }) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
