@@ -26,6 +26,10 @@ const ROLE_BADGE = {
 };
 
 function ArenaCard({ arena, role, isPending }) {
+  // Resolve the schedule label once per card: null = nothing configured
+  // (renders the "Flexible play schedule" fallback).
+  const schedule = toSchedule(arena);
+  const scheduleLabel = hasConfiguredSchedule(schedule) ? describeSchedule(schedule) : null;
   return (
     <Link
       href={`/arena/${arena.id}`}
@@ -86,9 +90,9 @@ function ArenaCard({ arena, role, isPending }) {
         {/* Play Schedule Property */}
         <div className="flex items-center gap-2 min-w-0">
           <Calendar className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 transition shrink-0" />
-          {hasConfiguredSchedule(toSchedule(arena)) ? (
-            <span className="font-medium text-slate-700 truncate" title={describeSchedule(toSchedule(arena))}>
-              {describeSchedule(toSchedule(arena))}
+          {scheduleLabel ? (
+            <span className="font-medium text-slate-700 truncate" title={scheduleLabel}>
+              {scheduleLabel}
             </span>
           ) : (
             <span className="text-slate-400 italic">Flexible play schedule</span>
