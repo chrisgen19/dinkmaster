@@ -147,6 +147,18 @@ function createHub() {
       c.on('error', () => onClientFailure(c));
       c.on('end', () => onClientFailure(c));
       client = c;
+      // Resync every subscribed arena now that LISTEN is (re)established:
+      // NOTIFYs are fire-and-forget, so anything that committed while the
+      // connection was down was never delivered and won't be replayed. One
+      // getState per subscribed arena pushes fresh state through the normal
+      // pump, and still-current frames are no-ops on the client. Also runs on
+      // the first connect, where the lone just-subscribed arena gets a frame
+      // the route's own initial snapshot would send anyway (the monotonic
+      // guard dedupes) — not worth a reconnect-vs-first-connect distinction.
+      for (const arenaId of subscribers.keys()) {
+        dirty.add(arenaId);
+        pumpArena(arenaId);
+      }
     })();
     try {
       await connecting;
