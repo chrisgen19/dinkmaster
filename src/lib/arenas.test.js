@@ -6,18 +6,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // stats bundle without reaching the leaderboard reads.
 vi.mock('@/lib/prisma', () => ({
   prisma: {
-    arenaMembership: { findFirst: vi.fn() },
+    arenaMembership: { findFirst: vi.fn(), findUnique: vi.fn() },
     user: { findUnique: vi.fn() },
-    player: { findMany: vi.fn() },
+    player: { findMany: vi.fn(), findUnique: vi.fn() },
     matchPlayer: { findMany: vi.fn() },
   },
 }));
+// Walk-in stats touch the weekly leaderboard for an active player; stub it so the
+// aggregation resolves without the real leaderboard reads.
+vi.mock('@/lib/leaderboard-server', () => ({
+  getWeeklyLeaderboard: vi.fn(async () => ({ leaders: [] })),
+}));
 
 import { prisma } from '@/lib/prisma';
-import { usersShareArena, getViewableUserProfile } from './arenas';
+import { usersShareArena, getViewableUserProfile, getViewablePlayerProfile } from './arenas';
 
 const VIEWER = 'viewer-1';
 const TARGET = 'target-1';
+const ARENA = 'arena-1';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -76,5 +82,43 @@ describe('getViewableUserProfile', () => {
       where: { id: TARGET },
       select: { name: true },
     });
+  });
+});
+
+describe('getViewablePlayerProfile', () => {
+  it('returns null when the player does not exist', async () => {
+    prisma.player.findUnique.mockResolvedValue(null);
+    await expect(getViewablePlayerProfile('p1', VIEWER)).resolves.toBeNull();
+    expect(prisma.arenaMembership.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('redirects a linked player to its account profile (no membership check)', async () => {
+    prisma.player.findUnique.mockResolvedValue({ id: 'p1', userId: 'acct-9', arenaId: ARENA });
+    const result = await getViewablePlayerProfile('p1', VIEWER);
+    expect(result).toEqual({ redirectUserId: 'acct-9' });
+    expect(prisma.arenaMembership.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('returns null for a walk-in when the viewer is not in its arena', async () => {
+    prisma.player.findUnique.mockResolvedValue({ id: 'p1', userId: null, arenaId: ARENA, firstName: 'Sam' });
+    prisma.arenaMembership.findUnique.mockResolvedValue(null);
+    await expect(getViewablePlayerProfile('p1', VIEWER)).resolves.toBeNull();
+    expect(prisma.matchPlayer.findMany).not.toHaveBeenCalled();
+  });
+
+  it('returns name + stats for a walk-in the viewer shares an arena with', async () => {
+    prisma.player.findUnique.mockResolvedValue({
+      id: 'p1', userId: null, arenaId: ARENA, firstName: 'Sam', lastName: 'Lee',
+      gamesPlayed: 4, wins: 3, losses: 1, rating: 1080, queueOrder: 2, leftAt: null,
+      arena: { name: 'Mirea Dinkers Club' },
+    });
+    prisma.arenaMembership.findUnique.mockResolvedValue({ id: 'm1' });
+    prisma.matchPlayer.findMany.mockResolvedValue([]);
+
+    const result = await getViewablePlayerProfile('p1', VIEWER);
+    expect(result.name).toBe('Sam Lee');
+    expect(result.stats.totals).toMatchObject({ arenas: 1, gamesPlayed: 4, wins: 3, losses: 1 });
+    expect(result.stats.arenas).toHaveLength(1);
+    expect(result.stats.arenas[0]).toMatchObject({ arenaId: ARENA, arenaName: 'Mirea Dinkers Club' });
   });
 });

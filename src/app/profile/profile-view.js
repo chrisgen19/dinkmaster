@@ -23,8 +23,9 @@ import { MatchHistory } from '../match-history';
  *   insights: { bestPartner: object|null, favoriteCourt: object|null, streak: object|null },
  * }} props.stats
  * @param {string} [props.backHref]
+ * @param {string} [props.badge] - small chip by the name (e.g. "Walk-in")
  */
-export function ProfileView({ name, email = null, stats, backHref = '/arenas' }) {
+export function ProfileView({ name, email = null, stats, backHref = '/arenas', badge = null }) {
   const { totals, arenas, recentMatches, insights } = stats;
   const hasGames = totals.gamesPlayed > 0;
   const decided = totals.wins + totals.losses;
@@ -69,6 +70,11 @@ export function ProfileView({ name, email = null, stats, backHref = '/arenas' })
               <h1 className="font-display font-extrabold tracking-tight text-slate-900 leading-[1.05] text-3xl md:text-4xl lg:text-[44px] truncate">
                 {name}
               </h1>
+              {badge && (
+                <span className="mt-1.5 inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                  {badge}
+                </span>
+              )}
               {email && <p className="text-sm text-slate-500 mt-1 truncate">{email}</p>}
             </div>
           </div>

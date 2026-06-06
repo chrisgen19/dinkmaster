@@ -199,16 +199,19 @@ export function PaddleRackStack({
             const isExpanded = expandedPlayerId === player.id;
             const panelId = `${idPrefix}-row-panel-${player.id}`;
             // Link the name to a profile only when it resolves: your own row →
-            // /profile; another registered player → /u/[userId] but only for a
-            // fellow member (a non-member shares no arena, so it would 404).
-            // Walk-ins (no userId) stay plain text.
+            // /profile; another registered player → /u/[userId]; a walk-in (no
+            // account) → /p/[playerId] (their single-arena record). The two
+            // other-player links require the viewer to be a fellow member (a
+            // non-member shares no arena, so the profile would 404).
             const profileHref = player.userId
               ? player.userId === viewerUserId
                 ? '/profile'
                 : viewerIsMember
                   ? `/u/${player.userId}`
                   : null
-              : null;
+              : viewerIsMember
+                ? `/p/${player.id}`
+                : null;
 
             return (
               <Fragment key={playerId}>
