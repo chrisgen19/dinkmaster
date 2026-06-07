@@ -27,7 +27,17 @@ export default function HeadlineCycle() {
     // word would slide every 2.8s for motion-sensitive users. With it, the
     // y-transform is skipped and the swap degrades to an opacity fade.
     <MotionConfig reducedMotion="user">
-    <span className="relative inline-block min-w-[240px] md:min-w-[320px] text-left align-bottom overflow-hidden h-[1.25em]">
+    <span className="relative inline-block text-left align-bottom overflow-hidden h-[1.25em]">
+      {/* Invisible in-flow spacer sized to the WIDEST phrase: the animated
+          word below is absolutely positioned (contributes no width), so
+          without this the wrapper collapses and overflow-hidden clips long
+          words — a fixed min-w can't track font size or the longest entry.
+          With the spacer, the box is exactly wide enough for every word at
+          any viewport, so clipping is impossible by construction. Keep this
+          in sync with the longest WORDS entry. */}
+      <span aria-hidden="true" className="invisible whitespace-nowrap font-extrabold pb-1">
+        open-play scheduling
+      </span>
       <AnimatePresence mode="wait">
         <motion.span
           key={WORDS[index]}
@@ -35,7 +45,7 @@ export default function HeadlineCycle() {
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: -25, opacity: 0 }}
           transition={{ type: 'spring', stiffness: 300, damping: 22 }}
-          className="absolute left-0 bottom-0 bg-gradient-to-r from-emerald-700 via-teal-700 to-indigo-700 bg-clip-text text-transparent font-extrabold pb-1"
+          className="absolute left-0 bottom-0 whitespace-nowrap bg-gradient-to-r from-emerald-700 via-teal-700 to-indigo-700 bg-clip-text text-transparent font-extrabold pb-1"
         >
           {WORDS[index]}
         </motion.span>
