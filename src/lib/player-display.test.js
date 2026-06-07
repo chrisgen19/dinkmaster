@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatShortName, profileHref, filterPlayersByName } from './player-display';
+import { formatShortName, profileHref, filterPlayersByName, matchesNameQuery } from './player-display';
 
 describe('formatShortName', () => {
   it('returns Unknown for null / undefined', () => {
@@ -115,5 +115,30 @@ describe('filterPlayersByName', () => {
   it('handles null lastName and missing fields without throwing', () => {
     expect(ids(filterPlayersByName(players, 'tina'))).toEqual(['p3']);
     expect(filterPlayersByName([{ id: 'x' }], 'anything')).toEqual([]);
+  });
+});
+
+describe('matchesNameQuery', () => {
+  it('matches everything on a blank query', () => {
+    expect(matchesNameQuery('Leah RC', '')).toBe(true);
+    expect(matchesNameQuery('Leah RC', '   ')).toBe(true);
+    expect(matchesNameQuery('Leah RC', undefined)).toBe(true);
+  });
+
+  it('is case-insensitive and substring-based', () => {
+    expect(matchesNameQuery('Leah RC', 'leah')).toBe(true);
+    expect(matchesNameQuery('Leah RC', 'rc')).toBe(true);
+    expect(matchesNameQuery('Leah RC', 'zzz')).toBe(false);
+  });
+
+  it('requires every token to appear ("le r" → "Leah RC")', () => {
+    expect(matchesNameQuery('Leah RC', 'le r')).toBe(true);
+    expect(matchesNameQuery('Leah RC', 'leah zzz')).toBe(false);
+  });
+
+  it('handles null/empty names without throwing', () => {
+    expect(matchesNameQuery(null, 'a')).toBe(false);
+    expect(matchesNameQuery('', 'a')).toBe(false);
+    expect(matchesNameQuery(null, '')).toBe(true);
   });
 });

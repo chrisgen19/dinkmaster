@@ -1,5 +1,13 @@
 'use client';
 
+import { useState } from 'react';
+import { matchesNameQuery } from '@/lib/player-display';
+import { PlayerSearchField } from './player-search-field';
+
+// Mirror of MEMBERS_SEARCH_MIN (arena-members.js): hide the search until the
+// combined request count exceeds this — a short list is trivial to scan.
+const REQUESTS_SEARCH_MIN = 5;
+
 /**
  * Pending requests panel — shared by the Members tab's Requests pill and
  * the Prep Roster modal so the two surfaces can never drift. Renders a
@@ -28,18 +36,45 @@ export function ArenaRequestsList({
   onApproveJoin,
   onRejectJoin,
 }) {
+  const [query, setQuery] = useState('');
+
   if (pendingLinkRequests.length === 0 && pendingRequests.length === 0) {
     return <p className="text-xs text-slate-500 py-2">No pending requests.</p>;
   }
+
+  // Search appears once the combined list is long; gate on the RAW totals so
+  // the field doesn't vanish mid-filter as results narrow. Link requests
+  // match on either side of "<member> claims <walk-in>".
+  const showSearch = pendingLinkRequests.length + pendingRequests.length > REQUESTS_SEARCH_MIN;
+  const links = showSearch
+    ? pendingLinkRequests.filter((r) => matchesNameQuery(`${r.memberName} ${r.playerName}`, query))
+    : pendingLinkRequests;
+  const joins = showSearch
+    ? pendingRequests.filter((r) => matchesNameQuery(r.name, query))
+    : pendingRequests;
+
   return (
     <div className="space-y-4">
-      {pendingLinkRequests.length > 0 && (
+      {showSearch && (
+        <PlayerSearchField
+          value={query}
+          onChange={setQuery}
+          disabled={isPending}
+          placeholder="Search requests…"
+        />
+      )}
+      {showSearch && links.length === 0 && joins.length === 0 && (
+        <p className="px-1 py-2 text-center text-xs text-slate-500">
+          No requests match &ldquo;{query}&rdquo;.
+        </p>
+      )}
+      {links.length > 0 && (
         <div className="rounded-xl border border-sky-200 bg-sky-50/50 p-4">
           <h4 className="text-xs font-extrabold uppercase tracking-widest text-sky-700 mb-3">
-            Link requests ({pendingLinkRequests.length})
+            Link requests ({links.length})
           </h4>
           <ul className="space-y-2">
-            {pendingLinkRequests.map((r) => (
+            {links.map((r) => (
               <li key={r.requestId} className="flex items-center justify-between gap-3">
                 <span className="text-sm text-slate-800 truncate">
                   <span className="font-semibold">{r.memberName}</span>
@@ -68,13 +103,13 @@ export function ArenaRequestsList({
         </div>
       )}
 
-      {pendingRequests.length > 0 && (
+      {joins.length > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
           <h4 className="text-xs font-extrabold uppercase tracking-widest text-amber-700 mb-3">
-            Join requests ({pendingRequests.length})
+            Join requests ({joins.length})
           </h4>
           <ul className="space-y-2">
-            {pendingRequests.map((r) => (
+            {joins.map((r) => (
               <li key={r.requestId} className="flex items-center justify-between gap-3">
                 <span className="text-sm font-semibold text-slate-800 truncate">{r.name}</span>
                 <div className="flex items-center gap-2 shrink-0">

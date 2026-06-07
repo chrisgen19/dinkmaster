@@ -48,21 +48,35 @@ export function formatShortName(player) {
 }
 
 /**
+ * Does a name match a search query? Every whitespace-separated query token
+ * must appear somewhere in the name — so "le r" matches "Leah RC" and "ali d"
+ * matches "Aljomar D." — case-insensitively. A blank/empty query matches
+ * everything. The shared primitive behind every name search (the player
+ * pickers via `filterPlayersByName`, and the Members-tab lists, which carry a
+ * single display-name string rather than first/last fields).
+ *
+ * @param {string} name - the full name to test
+ * @param {string} query
+ * @returns {boolean}
+ */
+export function matchesNameQuery(name, query) {
+  const tokens = (query ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+  const haystack = (name ?? '').toLowerCase();
+  return tokens.every((t) => haystack.includes(t));
+}
+
+/**
  * Case-insensitive name filter for the player pick lists (the skip-pick
- * replacement modal and the court-edit substitute picker) so the rule lives
- * in one place. Every whitespace-separated query token must appear somewhere
- * in the player's full name — so "le r" matches "Leah RC" and "ali d"
- * matches "Aljomar D." — and an empty/blank query passes everyone through.
+ * replacement modal and the court-edit substitute picker), keyed off the
+ * `firstName`/`lastName` shape those lists use. Returns the SAME array when
+ * the query is blank (cheap identity for the common case).
  *
  * @param {Array<{firstName?: string, lastName?: string|null}>} players
  * @param {string} query
  * @returns {Array} the matching subset (same array when the query is blank)
  */
 export function filterPlayersByName(players, query) {
-  const tokens = (query ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return players;
-  return players.filter((p) => {
-    const name = `${p?.firstName ?? ''} ${p?.lastName ?? ''}`.toLowerCase();
-    return tokens.every((t) => name.includes(t));
-  });
+  if (!(query ?? '').trim()) return players;
+  return players.filter((p) => matchesNameQuery(`${p?.firstName ?? ''} ${p?.lastName ?? ''}`, query));
 }
