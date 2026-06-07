@@ -6,9 +6,7 @@ import { Reorder, useDragControls } from 'motion/react';
 import { GripVertical, Repeat2 } from 'lucide-react';
 import { filterPlayersByName, formatShortName } from '@/lib/player-display';
 import { PlayerSearchField } from './player-search-field';
-
-/** Full display name; mirrors the helper used by the rack/skip-pick UI. */
-const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
+import { fullName } from './paddle-rack-stack-state';
 
 /**
  * Manual team editor for a live court. The four on-court paddles are shown as a

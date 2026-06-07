@@ -96,7 +96,9 @@ export function SkipPickerModal({ skippedId, players, queue, isPending, error, o
   // Waiting pool excludes the skipped paddle itself (it could in principle
   // be in waiting if a manager's UI race opens the modal for a row that
   // just shifted off-deck, though deriveRackRow's canSkip blocks that case
-  // today). The parent's open-condition guarantees this list is non-empty.
+  // today). The parent's open-condition guarantees a non-empty list only AT
+  // OPEN TIME — realtime pushes and the race-refresh update this list live,
+  // so it can drain to zero while open (handled by the empty state below).
   const waitingPlayers = queue
     .slice(ON_DECK_SIZE)
     .filter((id) => id !== skippedId)

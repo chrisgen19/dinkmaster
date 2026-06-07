@@ -106,6 +106,37 @@ test.describe('skip-with-replacement picker', () => {
     await expect(page.getByText(/Marked Next in Line/)).toBeHidden();
   });
 
+  test('search filters the list, and Escape clears the query before closing', async ({ page }) => {
+    await registerAndCreateArena(page, `Picker Search ${Date.now()}`);
+    // 7 in rack (owner + 6 walk-ins); on-deck is the first 4, so Zane/Quinn/
+    // Rosa wait. Skipping an on-deck paddle (Xavier) opens a picker listing
+    // those three — enough rows for the filter to actually narrow.
+    await buildRack(page, ['Wanda', 'Xavier', 'Yolanda', 'Zane', 'Quinn', 'Rosa']);
+
+    await openPickerFor(page, 'Xavier');
+    const dialog = page.getByRole('dialog', { name: /Skip Xavier/ });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /Quinn/ })).toBeVisible();
+
+    // Typing narrows the waiting list to matching names only.
+    const search = dialog.getByLabel('Search players by name');
+    await search.fill('zan');
+    await expect(dialog.getByRole('button', { name: /Zane/ })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /Quinn/ })).toBeHidden();
+
+    // Esc with text present clears the query WITHOUT dismissing the modal —
+    // the field stops propagation so the window-level close listener never
+    // fires (native type=search semantics).
+    await search.press('Escape');
+    await expect(dialog).toBeVisible();
+    await expect(search).toHaveValue('');
+    await expect(dialog.getByRole('button', { name: /Quinn/ })).toBeVisible();
+
+    // Esc again (field now empty) propagates and closes the modal.
+    await search.press('Escape');
+    await expect(dialog).toBeHidden();
+  });
+
   test('keeps the picker open with an alert when the picked replacement is taken', async ({ page, browser }) => {
     const email = uniqueEmail();
     await registerAndCreateArena(page, `Picker Race ${Date.now()}`, email);
