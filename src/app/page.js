@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { getCurrentUser } from '@/lib/session';
 import { BrandMark, Wordmark } from './site-header';
 import { AuthStatus } from './auth-status';
@@ -122,9 +123,22 @@ export default async function LandingPage() {
             </div>
           </div>
 
-          {/* Hero Right Content: Live queue simulator */}
-          <div className="lg:col-span-7 w-full shadow-lg rounded-3xl">
-            <PaddleStackSimulator />
+          {/* Hero Right Content: app screenshot in a phone bezel. Rendered
+              bare — the mockup's own bezel is the frame, so no card/border/
+              shadow wrapper. `priority` because this is the hero LCP image
+              (previously a client-JS simulator; a static image paints
+              immediately). The live simulator moved to its own documented
+              section before the FAQ. */}
+          <div className="lg:col-span-7 w-full flex justify-center lg:justify-end">
+            <Image
+              src="/images/demo-app.png"
+              alt="Dinkmaster on a phone: Active Courts view with two live courts, team lineups, and Finish Game & Record Score buttons"
+              width={1122}
+              height={1402}
+              priority
+              sizes="(max-width: 1024px) 90vw, 50vw"
+              className="w-full max-w-md lg:max-w-lg h-auto"
+            />
           </div>
         </div>
       </section>
@@ -316,6 +330,82 @@ export default async function LandingPage() {
               title="Play & Log Scores"
               description="Mix partnerships automatically. Enter final scores to instantly update local leaderboard standings and player skill ratings."
             />
+          </div>
+        </div>
+      </section>
+
+      {/* Live Demo Section — the interactive PaddleStackSimulator.
+          Placed after the Setup Guide (so visitors have just read HOW it
+          works) and before the FAQ (so they can try it before objections).
+          The simulator is a self-contained client island running entirely
+          on local state — fictional players, no backend — and demonstrates
+          the core loop: stack paddles → mix → play → score. The "what to
+          try" rail maps each control to the real product behavior it
+          simulates, so the demo explains itself instead of sitting
+          unexplained next to the headline (where it previously lived). */}
+      <section className="bg-slate-50 py-20 border-b border-slate-200/50 grid-bg-pattern-light">
+        <div className="max-w-6xl mx-auto px-4 md:px-8">
+          <div className="text-center max-w-2xl mx-auto mb-14">
+            <h2 className="text-xs font-extrabold uppercase tracking-widest text-emerald-700">Live Demo</h2>
+            <p className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900 mt-2">
+              Try the paddle stack right here
+            </p>
+            <p className="text-slate-600 text-base mt-4 leading-relaxed">
+              This is the same queue engine your club would use — running right in your
+              browser with a fictional roster. No sign-up, nothing saved.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
+            {/* What-to-try rail: one entry per simulator control, each tied to
+                the product behavior it demonstrates. */}
+            <div className="lg:col-span-4 space-y-5">
+              {/* slate-500, not 400: this sits on the slate-50 band and 400
+                  fails AA at 12px (2.5:1) — caught by the contrast guardrail. */}
+              <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-500">
+                What to try
+              </h3>
+              <ol className="space-y-4">
+                <li className="flex items-start gap-3">
+                  <span className="inline-flex items-center justify-center h-7 w-7 shrink-0 rounded-lg bg-emerald-700 text-white text-[11px] font-extrabold font-mono shadow-sm">1</span>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    <strong className="text-slate-900">Add Paddle</strong> — check a new player
+                    into the stack, exactly like an organizer checking in a walk-in at the gate.
+                  </p>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="inline-flex items-center justify-center h-7 w-7 shrink-0 rounded-lg bg-emerald-700 text-white text-[11px] font-extrabold font-mono shadow-sm">2</span>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    <strong className="text-slate-900">Shuffle</strong> — mix the waiting queue
+                    the way the fair-partnership mixer rotates matchups between games.
+                  </p>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="inline-flex items-center justify-center h-7 w-7 shrink-0 rounded-lg bg-emerald-700 text-white text-[11px] font-extrabold font-mono shadow-sm">3</span>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    <strong className="text-slate-900">Start Match</strong> — stack the next four
+                    paddles onto the court; the rest of the queue moves up automatically.
+                  </p>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="inline-flex items-center justify-center h-7 w-7 shrink-0 rounded-lg bg-emerald-700 text-white text-[11px] font-extrabold font-mono shadow-sm">4</span>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    <strong className="text-slate-900">Finish Match</strong> — record the score:
+                    wins and losses update instantly, and the four players recycle to the back
+                    of the stack.
+                  </p>
+                </li>
+              </ol>
+              <p className="text-xs text-slate-500 leading-relaxed border-t border-slate-200 pt-4">
+                In the real app this queue is live for every member&apos;s phone — scores,
+                courts, and the rack update for the whole club in about a second.
+              </p>
+            </div>
+
+            {/* The simulator itself */}
+            <div className="lg:col-span-8 w-full shadow-lg rounded-3xl">
+              <PaddleStackSimulator />
+            </div>
           </div>
         </div>
       </section>
