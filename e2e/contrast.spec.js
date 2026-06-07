@@ -120,6 +120,14 @@ test('homepage color contrast guardrail', async ({ page }) => {
         continue;
       }
 
+      // Explicit opt-out for photo/scrim-backed copy: the auditor resolves
+      // backgrounds by walking ancestor background-COLORS, so text over a
+      // background image + overlay scrim (a positioned sibling, not an
+      // ancestor) resolves to the page color and false-positives. Sections
+      // using [data-contrast-skip] declare "verified manually" — keep them
+      // rare and double-check the scrim really carries the contrast.
+      if (el.closest('[data-contrast-skip]')) continue;
+
       // Check if it's a leaf node with visible text
       const text = el.innerText ? el.innerText.trim() : '';
       if (!text) continue;

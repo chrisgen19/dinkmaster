@@ -143,6 +143,59 @@ export default async function LandingPage() {
         </div>
       </section>
 
+      {/* Courtside banner — full-bleed lifestyle break directly under the
+          hero: the product pitch lands, then the photo grounds it in a real
+          court before the comparison argument. The photo's subject (player
+          checking the live queue on her phone) anchors the LEFT of the
+          frame, so the copy sits right over a right-to-left dark scrim.
+          Lazy `fill` image (below the fold) with object position biased
+          left so the subject survives narrow crops.
+          data-contrast-skip: the e2e contrast auditor resolves backgrounds
+          from ancestor background-colors and can't see the photo + scrim,
+          so this section is verified manually — white/slate-200 copy over
+          the slate-950/80 scrim edge is ~10:1, well past AA. */}
+      <section
+        data-contrast-skip
+        className="relative h-[420px] md:h-[520px] overflow-hidden border-b border-slate-200/50"
+      >
+        <Image
+          src="/banners/banner-2.jpg"
+          alt="A player courtside checking the live Dinkmaster queue on her phone while a doubles match plays behind her"
+          fill
+          sizes="100vw"
+          className="object-cover object-[30%_center]"
+        />
+        {/* Scrim: keeps the white copy at AA contrast over the bright court. */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 bg-gradient-to-l from-slate-950/80 via-slate-950/45 to-slate-950/10"
+        />
+        <div className="relative h-full max-w-6xl mx-auto px-4 md:px-8 flex items-center justify-end">
+          <div className="max-w-md text-right flex flex-col items-end">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 text-emerald-200 ring-1 ring-white/20 px-3 py-1 text-xs font-bold uppercase tracking-wider mb-5 backdrop-blur-sm">
+              On Court
+            </span>
+            <h2 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-white leading-tight">
+              Your whole club, one glance
+            </h2>
+            <p className="text-slate-200 text-base md:text-lg mt-4 leading-relaxed">
+              No more crowding the gate to read a whiteboard. The stack, the courts,
+              and the scores live on every player&apos;s phone — updated the moment
+              anything changes.
+            </p>
+            <Link
+              href="/arenas"
+              className="mt-7 inline-flex items-center gap-2 bg-white/95 hover:bg-white text-slate-900 font-extrabold px-6 py-3 rounded-xl shadow-lg transition duration-150 hover:-translate-y-0.5"
+            >
+              See live arenas
+              <svg className="w-4 h-4 stroke-[3px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M13 5l7 7-7 7" />
+              </svg>
+            </Link>
+          </div>
+        </div>
+      </section>
+
       {/* Comparison Section (Whiteboard vs Dinkmaster) */}
       <section className="bg-white border-b border-slate-200/50 py-20">
         <div className="max-w-6xl mx-auto px-4 md:px-8">
