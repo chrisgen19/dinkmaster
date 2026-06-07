@@ -436,7 +436,7 @@ export default async function LandingPage() {
                 <li className="flex items-start gap-3">
                   <span className="inline-flex items-center justify-center h-7 w-7 shrink-0 rounded-lg bg-emerald-700 text-white text-[11px] font-extrabold font-mono shadow-sm">3</span>
                   <p className="text-sm text-slate-600 leading-relaxed">
-                    <strong className="text-slate-900">Start Match</strong> — stack the next four
+                    <strong className="text-slate-900">Simulate Match</strong> — stack the next four
                     paddles onto the court; the rest of the queue moves up automatically.
                   </p>
                 </li>
