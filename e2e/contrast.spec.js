@@ -150,7 +150,11 @@ test('homepage color contrast guardrail', async ({ page }) => {
       if (ratio < minRatio) {
         let path = el.tagName.toLowerCase();
         if (el.id) path += '#' + el.id;
-        if (el.className) path += '.' + el.className.split(' ').filter(Boolean).slice(0, 2).join('.');
+        // getAttribute('class') (not el.className.split): on SVG nodes
+        // className is an SVGAnimatedString without .split, which would
+        // crash the audit exactly when it has a violation to report.
+        const cls = el.getAttribute('class') || '';
+        if (cls) path += '.' + cls.split(' ').filter(Boolean).slice(0, 2).join('.');
         
         results.push({
           path,
