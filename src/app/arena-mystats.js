@@ -304,7 +304,7 @@ function SectionHeader({ title, count, hint }) {
 const INSIGHT_ACCENT = {
   slate: 'text-slate-900',
   'slate-dim': 'text-slate-500',
-  emerald: 'text-emerald-600',
+  emerald: 'text-emerald-700',
 };
 
 function InsightCard({ eyebrow, primary, secondary, accent = 'slate', monospace = false }) {

@@ -156,7 +156,7 @@ export function PwaInstallPrompt() {
         <button
           type="button"
           onClick={handleInstall}
-          className="mt-3 w-full rounded-xl bg-emerald-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
+          className="mt-3 w-full rounded-xl bg-emerald-700 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-800"
         >
           Install app
         </button>

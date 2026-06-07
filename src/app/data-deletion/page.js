@@ -18,7 +18,7 @@ export default function DataDeletionPage() {
       <LegalSection heading="Request account deletion">
         <p>
           Email{' '}
-          <a href={`mailto:${CONTACT_EMAIL}`} className="font-semibold text-emerald-600 hover:text-emerald-700">
+          <a href={`mailto:${CONTACT_EMAIL}`} className="font-semibold text-emerald-700 hover:text-emerald-800">
             {CONTACT_EMAIL}
           </a>{' '}
           from the email address on your account with the subject{' '}

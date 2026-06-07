@@ -39,7 +39,7 @@ export function Wordmark({ className = 'text-xl' }) {
   return (
     <span className={`font-display font-extrabold tracking-tight leading-none ${className}`}>
       <span className="text-slate-900">Dink</span>
-      <span className="text-emerald-600">master</span>
+      <span className="text-emerald-700">master</span>
     </span>
   );
 }

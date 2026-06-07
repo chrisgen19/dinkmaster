@@ -68,3 +68,6 @@ ScreenRecording*
 # Windows alternate-data-stream provenance sidecars (leak download URLs,
 # colon paths break checkouts on Windows)
 *:Zone.Identifier
+
+# e2e/screenshot.spec.js output artifact
+homepage_screenshot.png

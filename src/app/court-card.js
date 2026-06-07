@@ -127,7 +127,7 @@ export function CourtCard({
         {isPlaying ? (
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
             <div className="min-w-0">
-              <div className="text-[9px] font-extrabold uppercase tracking-[0.18em] text-emerald-600 mb-1.5">
+              <div className="text-[9px] font-extrabold uppercase tracking-[0.18em] text-emerald-700 mb-1.5">
                 Team A
               </div>
               {renderNames(court.team1, 'left')}
@@ -193,7 +193,7 @@ export function CourtCard({
             disabled={queueLength < 4 || isPending || !canManage}
             className={`w-full py-2.5 rounded-xl font-extrabold text-[11px] uppercase tracking-[0.14em] transition ${
               queueLength >= 4 && canManage
-                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm shadow-emerald-600/20'
+                ? 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm shadow-emerald-700/20'
                 : 'bg-slate-100 text-slate-400 cursor-not-allowed'
             }`}
           >

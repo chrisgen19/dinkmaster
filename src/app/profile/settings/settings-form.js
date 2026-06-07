@@ -69,9 +69,9 @@ function SectionSubmit({ loading, label, loadingLabel }) {
     <button
       type="submit"
       disabled={loading}
-      className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-display font-extrabold
-        text-white shadow-lg shadow-emerald-500/25 transition duration-150
-        hover:bg-emerald-700 hover:shadow-emerald-500/40
+      className="rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-display font-extrabold
+        text-white shadow-lg shadow-emerald-700/20 transition duration-150
+        hover:bg-emerald-800 hover:shadow-emerald-700/30
         disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
     >
       {loading ? loadingLabel : label}
@@ -434,7 +434,7 @@ function GoogleSection() {
           <button
             type="button"
             onClick={refreshAccounts}
-            className="text-xs font-semibold text-emerald-600 hover:text-emerald-700"
+            className="text-xs font-semibold text-emerald-700 hover:text-emerald-800"
           >
             Try again
           </button>
@@ -471,8 +471,8 @@ function GoogleSection() {
                 type="button"
                 onClick={handleConnect}
                 disabled={busy}
-                className="shrink-0 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white
-                  shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="shrink-0 rounded-xl bg-emerald-700 px-3.5 py-2 text-xs font-semibold text-white
+                  shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy ? 'Redirecting…' : 'Connect Google'}
               </button>

@@ -119,7 +119,7 @@ export function CreateArenaForm() {
         <button
           type="submit"
           disabled={isPending}
-          className="inline-flex justify-center items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold px-6 py-2.5 rounded-xl shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/35 transition"
+          className="inline-flex justify-center items-center gap-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold px-6 py-2.5 rounded-xl shadow-lg shadow-emerald-700/20 hover:shadow-emerald-700/35 transition"
         >
           {isPending ? 'Creating…' : 'Create arena'}
         </button>

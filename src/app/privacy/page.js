@@ -71,7 +71,7 @@ export default function PrivacyPage() {
         <p>
           We keep your data while your account is active. You can request deletion of your
           account and associated personal data at any time — see our{' '}
-          <Link href="/data-deletion" className="font-semibold text-emerald-600 hover:text-emerald-700">
+          <Link href="/data-deletion" className="font-semibold text-emerald-700 hover:text-emerald-800">
             Data Deletion instructions
           </Link>
           . Some match history may be retained in anonymized form so other players&apos;
@@ -82,7 +82,7 @@ export default function PrivacyPage() {
       <LegalSection heading="Contact">
         <p>
           For any privacy question or request, email us at{' '}
-          <a href={`mailto:${CONTACT_EMAIL}`} className="font-semibold text-emerald-600 hover:text-emerald-700">
+          <a href={`mailto:${CONTACT_EMAIL}`} className="font-semibold text-emerald-700 hover:text-emerald-800">
             {CONTACT_EMAIL}
           </a>
           .

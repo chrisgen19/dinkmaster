@@ -189,7 +189,7 @@ function SummaryRow({ stats }) {
 const STAT_TONE = {
   slate: 'text-slate-900',
   'slate-dim': 'text-slate-500',
-  emerald: 'text-emerald-600',
+  emerald: 'text-emerald-700',
 };
 
 const CHIP_TONE = {
@@ -420,7 +420,7 @@ function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie, pro
       {/* 2. Team Category Label (Below win/lose) */}
       <span className={[
         'text-[9px] font-extrabold uppercase tracking-[0.16em] px-0.5',
-        isYou && perspective === 'player' ? 'text-emerald-600 font-black' : 'text-slate-400'
+        isYou && perspective === 'player' ? 'text-emerald-700 font-black' : 'text-slate-400'
       ].join(' ')}>
         {label}
       </span>

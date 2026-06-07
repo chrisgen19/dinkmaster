@@ -233,7 +233,7 @@ function RatingDisplay({ rating, isSelf = false }) {
 function WeeklyStrip({ wins, arenasLed }) {
   return (
     <div className="inline-flex flex-wrap items-center gap-x-3 gap-y-2 rounded-full border border-emerald-200/70 bg-emerald-50/60 pl-2 pr-4 py-1.5 ring-1 ring-emerald-100/60">
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest px-2.5 py-1">
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-700 text-white text-[10px] font-black uppercase tracking-widest px-2.5 py-1">
         <Spark /> This week
       </span>
       {wins > 0 && (
@@ -281,7 +281,7 @@ function SectionHeader({ title, count, hint }) {
 const INSIGHT_ACCENT = {
   slate: 'text-slate-900',
   'slate-dim': 'text-slate-500',
-  emerald: 'text-emerald-600',
+  emerald: 'text-emerald-700',
 };
 
 function InsightCard({ eyebrow, primary, secondary, accent = 'slate', monospace = false }) {
@@ -342,7 +342,7 @@ function ArenaCard({ arena }) {
         <div>
           <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">Record</p>
           <p className="font-display font-extrabold tracking-tight tabular-nums leading-none mt-1 text-xl md:text-2xl">
-            <span className="text-emerald-600">{arena.wins}</span>
+            <span className="text-emerald-700 font-bold">{arena.wins}</span>
             <span className="text-slate-300 font-normal mx-1">–</span>
             <span className="text-slate-500">{arena.losses}</span>
           </p>
@@ -354,7 +354,7 @@ function ArenaCard({ arena }) {
           <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-widest text-emerald-700 bg-emerald-50 ring-1 ring-emerald-100 rounded-full px-2 py-0.5 tabular-nums">
             {arena.weeklyWins}W this wk
             {arena.weeklyRank === 1 && <span aria-hidden="true">🏆</span>}
-            {arena.weeklyRank && arena.weeklyRank > 1 && <span className="text-emerald-600">#{arena.weeklyRank}</span>}
+            {arena.weeklyRank && arena.weeklyRank > 1 && <span className="text-emerald-700 font-bold">#{arena.weeklyRank}</span>}
           </span>
         )}
         {arena.inQueue && (
@@ -364,7 +364,7 @@ function ArenaCard({ arena }) {
         )}
         <span
           aria-hidden="true"
-          className="ml-auto text-[10px] font-bold uppercase tracking-widest text-slate-300 group-hover:text-emerald-600 transition-colors"
+          className="ml-auto text-[10px] font-bold uppercase tracking-widest text-slate-300 group-hover:text-emerald-700 transition-colors"
         >
           Open →
         </span>
@@ -389,7 +389,7 @@ function EmptyArenas({ isSelf = false }) {
     <div className="mt-4 py-12 text-center text-sm text-slate-500 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/40">
       <p className="font-semibold text-slate-600">You haven&apos;t joined an arena yet.</p>
       <p className="text-xs mt-1">
-        <Link href="/arenas" className="text-emerald-600 font-semibold hover:text-emerald-700">
+        <Link href="/arenas" className="text-emerald-700 font-semibold hover:text-emerald-800">
           Browse arenas
         </Link>{' '}
         to start playing.
