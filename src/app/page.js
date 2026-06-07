@@ -131,7 +131,7 @@ export default async function LandingPage() {
               section before the FAQ. */}
           <div className="lg:col-span-7 w-full flex justify-center lg:justify-end">
             <Image
-              src="/images/demo-app-white-bg.png"
+              src="/images/demo-app-transparent.png"
               alt="Dinkmaster on a phone: Active Courts view with two live courts, team lineups, and Finish Game & Record Score buttons"
               width={1122}
               height={1402}
