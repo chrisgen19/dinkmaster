@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import { ChevronDown } from 'lucide-react';
 
 const FAQ_ITEMS = [
@@ -35,6 +35,9 @@ export default function FAQAccordion() {
   };
 
   return (
+    // reducedMotion="user": motion/react defaults to "never", so the expand
+    // height animation would run for motion-sensitive users without this.
+    <MotionConfig reducedMotion="user">
     <div className="w-full max-w-3xl mx-auto space-y-3">
       {FAQ_ITEMS.map((item, idx) => {
         const isExpanded = expandedIndex === idx;
@@ -74,5 +77,6 @@ export default function FAQAccordion() {
         );
       })}
     </div>
+    </MotionConfig>
   );
 }

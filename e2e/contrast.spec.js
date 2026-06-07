@@ -161,7 +161,10 @@ test('audit homepage color contrast', async ({ page }) => {
   console.log(JSON.stringify(violations, null, 2));
   console.log('------------------------------');
 
-  expect(violations.length).toBeLessThan(100);
+  // Hard gate: the homepage currently audits clean (verified 0 violations),
+  // so any regression fails immediately. The JSON log above identifies the
+  // offending elements when it does.
+  expect(violations.length).toBe(0);
 });
 
 

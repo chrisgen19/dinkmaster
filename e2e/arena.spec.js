@@ -97,6 +97,11 @@ test.describe('arenas', () => {
     await page.getByRole('tab', { name: 'Members' }).click();
     await page.getByRole('tab', { name: /Requests/ }).click();
     await page.getByRole('button', { name: 'Accept' }).click();
+    // Wait for the approval to round-trip before signing out: the request
+    // row disappears (list re-renders from the server) only after the
+    // membership is persisted, so this removes the race where User B logs
+    // in before approveJoinRequest commits.
+    await expect(page.getByText('No pending requests.')).toBeVisible();
 
     // User A signs out
     await page.getByRole('button', { name: 'Sign out' }).click();

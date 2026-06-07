@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import { 
   Plus, 
   Shuffle, 
@@ -29,7 +29,7 @@ const NEW_PLAYER_POOL = [
   { name: 'Poach Prince', initials: 'PP' },
   { name: 'Kitchen King', initials: 'KK' },
   { name: 'Base Line Brawler', initials: 'BB' },
-  { name: 'Paddle Puncher', initials: 'PP' },
+  { name: 'Paddle Puncher', initials: 'PU' },
   { name: 'Nasty Nelson', initials: 'NN' },
   { name: 'Side Spin Sam', initials: 'SS' }
 ];
@@ -40,13 +40,24 @@ export default function PaddleStackSimulator() {
   const [lastMatchResult, setLastMatchResult] = useState(null);
   const [simulatedCount, setSimulatedCount] = useState(0);
 
-  // Add random player
+  // Pool names not yet in the queue or on court. Derived (not state) so the
+  // Add Paddle button's disabled state can't drift from reality. Picking from
+  // the REMAINING names — instead of a blind random pick that silently no-ops
+  // on a duplicate — keeps every click doing something until the pool is
+  // genuinely exhausted, at which point the button disables instead of
+  // appearing broken.
+  const availablePool = NEW_PLAYER_POOL.filter(
+    (c) =>
+      !queue.some((p) => p.name === c.name) &&
+      !(court ?? []).some((p) => p.name === c.name),
+  );
+
+  // Add random player from the remaining pool
   const handleAddPlayer = () => {
-    const poolIndex = Math.floor(Math.random() * NEW_PLAYER_POOL.length);
-    const chosen = NEW_PLAYER_POOL[poolIndex];
-    const newId = `p_new_${Date.now()}`;
+    if (availablePool.length === 0) return;
+    const chosen = availablePool[Math.floor(Math.random() * availablePool.length)];
     const newPlayer = {
-      id: newId,
+      id: `p_new_${Date.now()}`,
       name: chosen.name,
       initials: chosen.initials,
       gamesPlayed: 0,
@@ -54,11 +65,6 @@ export default function PaddleStackSimulator() {
       losses: 0,
       waitRounds: 0
     };
-    
-    // Prevent duplicates currently in queue or court
-    const nameExists = queue.some(p => p.name === chosen.name) || (court && court.some(p => p.name === chosen.name));
-    if (nameExists) return;
-
     setQueue(prev => [...prev, newPlayer]);
   };
 
@@ -98,10 +104,14 @@ export default function PaddleStackSimulator() {
   const handleFinishMatch = () => {
     if (!court) return;
 
-    // Simulate score
-    const scoreA = Math.floor(Math.random() * 6) + 6; // 6 to 11
-    const scoreB = scoreA === 11 ? Math.floor(Math.random() * 10) : 11;
-    const teamAWins = scoreA > scoreB;
+    // Simulate score: roll the winner first (fair 50/50 — the old shape
+    // hardcoded the loser's opponent to 11, which let Team A win only when
+    // its own roll landed exactly on 11, i.e. ~1 in 6 matches), then give
+    // the loser a plausible 4–9 points.
+    const teamAWins = Math.random() < 0.5;
+    const losingScore = Math.floor(Math.random() * 6) + 4; // 4 to 9
+    const scoreA = teamAWins ? 11 : losingScore;
+    const scoreB = teamAWins ? losingScore : 11;
 
     // Update player stats
     const updatedCourtPlayers = court.map((player, index) => {
@@ -129,6 +139,9 @@ export default function PaddleStackSimulator() {
   };
 
   return (
+    // reducedMotion="user": motion/react defaults to "never", so the queue
+    // card slides/scales would run for motion-sensitive users without this.
+    <MotionConfig reducedMotion="user">
     <div className="w-full bg-white border border-slate-200/90 rounded-3xl p-6 shadow-xl shadow-slate-100 relative overflow-hidden">
       {/* Decorative light color washes */}
       <div className="absolute -top-20 -right-20 w-40 h-40 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
@@ -148,8 +161,9 @@ export default function PaddleStackSimulator() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={handleAddPlayer}
-            className="flex items-center gap-1 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold px-3 py-2 rounded-xl border border-slate-200 transition"
-            title="Add random player to queue"
+            disabled={availablePool.length === 0}
+            className="flex items-center gap-1 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold px-3 py-2 rounded-xl border border-slate-200 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            title={availablePool.length === 0 ? 'Every demo player is already in the stack' : 'Add random player to queue'}
           >
             <Plus className="h-3.5 w-3.5 text-slate-500" />
             Add Paddle
@@ -388,5 +402,6 @@ export default function PaddleStackSimulator() {
         </div>
       </div>
     </div>
+    </MotionConfig>
   );
 }

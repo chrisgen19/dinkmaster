@@ -57,12 +57,17 @@
   }
 }
 
-/* Respect users who prefer reduced motion: skip entrance and pulsing animations. */
+/* Respect users who prefer reduced motion: skip entrance, pulsing, and
+   spinning animations. NOTE: this only covers CSS keyframe classes —
+   motion/react (Framer Motion) animations are JS-driven inline styles and
+   must opt in separately via <MotionConfig reducedMotion="user"> (see the
+   landing client components). */
 @media (prefers-reduced-motion: reduce) {
   .animate-header-rise,
   .animate-fade-in,
   .animate-scale-up,
-  .animate-pulse {
+  .animate-pulse,
+  .animate-spin {
     animation: none !important;
   }
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 
 const WORDS = [
   'partnership mixing',
@@ -22,6 +22,11 @@ export default function HeadlineCycle() {
   }, []);
 
   return (
+    // reducedMotion="user": motion/react defaults to "never" (it does NOT
+    // honor prefers-reduced-motion on its own), so without this wrapper the
+    // word would slide every 2.8s for motion-sensitive users. With it, the
+    // y-transform is skipped and the swap degrades to an opacity fade.
+    <MotionConfig reducedMotion="user">
     <span className="relative inline-block min-w-[240px] md:min-w-[320px] text-left align-bottom overflow-hidden h-[1.25em]">
       <AnimatePresence mode="wait">
         <motion.span
@@ -36,5 +41,6 @@ export default function HeadlineCycle() {
         </motion.span>
       </AnimatePresence>
     </span>
+    </MotionConfig>
   );
 }
