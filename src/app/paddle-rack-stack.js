@@ -20,7 +20,7 @@ import { deriveRackRow, ON_DECK_SIZE } from './paddle-rack-stack-state';
 function GroupLabel({ children, accent = false, className = '' }) {
   return (
     <div className={`flex items-center gap-2 px-1 ${className}`}>
-      <span className={`text-[10px] font-bold uppercase tracking-wider ${accent ? 'text-emerald-600' : 'text-slate-400'}`}>
+      <span className={`text-[10px] font-bold uppercase tracking-wider ${accent ? 'text-emerald-700' : 'text-slate-400'}`}>
         {children}
       </span>
       <span className={`h-px flex-1 ${accent ? 'bg-emerald-200/70' : 'bg-slate-200'}`} />

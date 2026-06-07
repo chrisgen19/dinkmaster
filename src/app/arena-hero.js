@@ -108,7 +108,7 @@ export function ArenaHero({
 const TONE_CLASSES = {
   slate: 'text-slate-900',
   emerald: 'text-emerald-700',
-  sky: 'text-sky-600',
+  sky: 'text-sky-700',
 };
 
 function StatTile({ label, value, tone = 'slate' }) {

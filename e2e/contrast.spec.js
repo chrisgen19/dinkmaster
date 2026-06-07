@@ -1,8 +1,17 @@
 import { test, expect } from '@playwright/test';
 
-test('audit homepage color contrast', async ({ page }) => {
+// HOMEPAGE guardrail, not proof of app-wide compliance: this audits `/` only.
+// The emerald 600→700 sweep also touched signed-in surfaces (arena, profile,
+// settings), which this spec cannot reach without auth flows — auditing those
+// is a follow-up. Known heuristic blind spots of the in-browser auditor:
+//  - only `bg-gradient-to-br` gradients are approximated (others are skipped)
+//  - `bg-clip-text` gradient text computes as transparent and isn't evaluated
+//  - alpha blending walks ancestors but ignores background images
+test('homepage color contrast guardrail', async ({ page }) => {
   await page.goto('/');
-  await page.waitForTimeout(3000); // Allow Next dev compilation and styles to load
+  // Wait on a stable signal instead of a fixed sleep: too short on a cold
+  // dev-server compile, wasteful on warm runs.
+  await expect(page.getByRole('heading', { name: /Ditch the Whiteboard/i })).toBeVisible();
 
   const violations = await page.evaluate(() => {
     // Canvas trick to normalize any CSS color string to rgba
@@ -65,7 +74,9 @@ test('audit homepage color contrast', async ({ page }) => {
         const bgImg = style.backgroundImage;
         if (bgImg && bgImg.includes('gradient')) {
           // If we hit a gradient background, let's treat it as its base color or fallback
-          if (current.className.includes('bg-gradient-to-br')) {
+          // classList (not className.includes): on SVG elements className is
+          // an SVGAnimatedString without .includes, which would throw here.
+          if (current.classList.contains('bg-gradient-to-br')) {
             stack.push({ r: 15, g: 118, b: 110, a: 1 }); // Approximation of emerald-700 / teal-700
             break;
           }

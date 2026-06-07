@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import { ChevronDown } from 'lucide-react';
 
@@ -29,6 +29,8 @@ const FAQ_ITEMS = [
 
 export default function FAQAccordion() {
   const [expandedIndex, setExpandedIndex] = useState(null);
+  // Stable per-instance prefix for the button↔panel aria-controls/id pairing.
+  const baseId = useId();
 
   const handleToggle = (index) => {
     setExpandedIndex(prevIndex => (prevIndex === index ? null : index));
@@ -50,18 +52,23 @@ export default function FAQAccordion() {
               onClick={() => handleToggle(idx)}
               className="w-full flex items-center justify-between p-5 text-left font-sans font-bold text-slate-800 hover:text-emerald-700 transition"
               aria-expanded={isExpanded}
+              aria-controls={`${baseId}-panel-${idx}`}
             >
               <span className="text-base md:text-lg tracking-tight">{item.question}</span>
-              <span className={`p-1.5 rounded-full bg-slate-50 text-slate-500 border border-slate-100 transition-transform duration-300 ${
-                isExpanded ? 'rotate-180 bg-emerald-50 text-emerald-700 border-emerald-100' : ''
-              }`}>
+              <span
+                aria-hidden="true"
+                className={`p-1.5 rounded-full bg-slate-50 text-slate-500 border border-slate-100 transition-transform duration-300 ${
+                  isExpanded ? 'rotate-180 bg-emerald-50 text-emerald-700 border-emerald-100' : ''
+                }`}
+              >
                 <ChevronDown className="h-4 w-4" />
               </span>
             </button>
-            
+
             <AnimatePresence initial={false}>
               {isExpanded && (
                 <motion.div
+                  id={`${baseId}-panel-${idx}`}
                   initial={{ height: 0, opacity: 0 }}
                   animate={{ height: 'auto', opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}

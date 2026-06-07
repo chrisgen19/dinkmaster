@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { motion, AnimatePresence, MotionConfig } from 'motion/react';
+import { motion, AnimatePresence, MotionConfig, useReducedMotion } from 'motion/react';
 
 const WORDS = [
   'partnership mixing',
@@ -11,21 +11,32 @@ const WORDS = [
   'dupr ratings',
 ];
 
+// Spacer phrase derived from the data so adding a longer entry can't silently
+// reintroduce clipping. Character count is a proxy for rendered width — exact
+// for the current set; if a future phrase is shorter-but-wider, the measured
+// clip check in the PR #135 thread is the way to re-verify.
+const LONGEST_WORD = WORDS.reduce((a, b) => (a.length >= b.length ? a : b));
+
 export default function HeadlineCycle() {
   const [index, setIndex] = useState(0);
+  // MotionConfig below only softens the slide — it can't stop the interval
+  // from swapping words. For reduced-motion users the rotation itself is the
+  // motion, so pause it entirely and show a single static phrase.
+  const prefersReducedMotion = useReducedMotion();
 
   useEffect(() => {
+    if (prefersReducedMotion) return undefined;
     const interval = setInterval(() => {
       setIndex((prevIndex) => (prevIndex + 1) % WORDS.length);
     }, 2800);
     return () => clearInterval(interval);
-  }, []);
+  }, [prefersReducedMotion]);
 
   return (
     // reducedMotion="user": motion/react defaults to "never" (it does NOT
-    // honor prefers-reduced-motion on its own), so without this wrapper the
-    // word would slide every 2.8s for motion-sensitive users. With it, the
-    // y-transform is skipped and the swap degrades to an opacity fade.
+    // honor prefers-reduced-motion on its own). Belt-and-braces with the
+    // interval pause above: even a one-off entrance animation degrades to a
+    // fade for motion-sensitive users.
     <MotionConfig reducedMotion="user">
     <span className="relative inline-block text-left align-bottom overflow-hidden h-[1.25em]">
       {/* Invisible in-flow spacer sized to the WIDEST phrase: the animated
@@ -33,10 +44,9 @@ export default function HeadlineCycle() {
           without this the wrapper collapses and overflow-hidden clips long
           words — a fixed min-w can't track font size or the longest entry.
           With the spacer, the box is exactly wide enough for every word at
-          any viewport, so clipping is impossible by construction. Keep this
-          in sync with the longest WORDS entry. */}
+          any viewport, so clipping is impossible by construction. */}
       <span aria-hidden="true" className="invisible whitespace-nowrap font-extrabold pb-1">
-        open-play scheduling
+        {LONGEST_WORD}
       </span>
       <AnimatePresence mode="wait">
         <motion.span
