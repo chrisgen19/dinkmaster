@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { getCurrentUser } from '@/lib/session';
 import { BrandMark, Wordmark } from './site-header';
 import { AuthStatus } from './auth-status';
@@ -122,9 +123,83 @@ export default async function LandingPage() {
             </div>
           </div>
 
-          {/* Hero Right Content: Live queue simulator */}
-          <div className="lg:col-span-7 w-full shadow-lg rounded-3xl">
-            <PaddleStackSimulator />
+          {/* Hero Right Content: app screenshot in a phone bezel. Rendered
+              bare — the mockup's own bezel is the frame, so no card/border/
+              shadow wrapper. `priority` because this is the hero LCP image
+              (previously a client-JS simulator; a static image paints
+              immediately). The live simulator moved to its own documented
+              section before the FAQ. */}
+          <div className="lg:col-span-7 w-full flex justify-center lg:justify-end">
+            <Image
+              src="/images/demo-app.png"
+              alt="Dinkmaster on a phone: Active Courts view with two live courts, team lineups, and Finish Game & Record Score buttons"
+              width={1122}
+              height={1402}
+              priority
+              sizes="(max-width: 1024px) 90vw, 50vw"
+              className="w-full max-w-md lg:max-w-lg h-auto"
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* Courtside banner — full-bleed lifestyle break directly under the
+          hero: the product pitch lands, then the photo grounds it in a real
+          court before the comparison argument. The photo's subject (player
+          checking the live queue on her phone) anchors the LEFT of the
+          frame, so the copy sits right over a right-to-left dark scrim.
+          Lazy `fill` image (below the fold) with object position biased
+          left so the subject survives narrow crops.
+          data-contrast-skip: the e2e contrast auditor resolves backgrounds
+          from ancestor background-colors and can't see the photo + scrim,
+          so this section is verified manually — white/slate-200 copy over
+          the slate-950/80 scrim edge is ~10:1, well past AA. */}
+      <section
+        data-contrast-skip
+        className="relative h-[420px] md:h-[520px] overflow-hidden border-b border-slate-200/50"
+      >
+        <Image
+          src="/banners/banner-2.jpg"
+          alt="A player courtside checking the live Dinkmaster queue on her phone while a doubles match plays behind her"
+          fill
+          sizes="100vw"
+          className="object-cover object-[30%_center]"
+        />
+        {/* Scrim: keeps the white copy at AA contrast over the bright court.
+            Below md the copy column spans the FULL banner width (max-w-md vs
+            ~358px of content), so wrapped lines reach the bright left side of
+            the photo — the mobile scrim is therefore stronger and flatter
+            (≥55% floor: worst-case white-on-bright-photo ≈ 4.6:1+, AA with margin). The
+            airy right-weighted gradient applies from md up, where the copy
+            genuinely stays in the dark right third. Verified by viewport
+            screenshots — this section is data-contrast-skip'd, so the e2e
+            guardrail can NOT catch regressions here. */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 bg-gradient-to-l from-slate-950/85 via-slate-950/70 to-slate-950/55 md:from-slate-950/80 md:via-slate-950/45 md:to-slate-950/10"
+        />
+        <div className="relative h-full max-w-6xl mx-auto px-4 md:px-8 flex items-center justify-end">
+          <div className="max-w-md text-right flex flex-col items-end">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 text-emerald-200 ring-1 ring-white/20 px-3 py-1 text-xs font-bold uppercase tracking-wider mb-5 backdrop-blur-sm">
+              On Court
+            </span>
+            <h2 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-white leading-tight">
+              Your whole club, one glance
+            </h2>
+            <p className="text-slate-200 text-base md:text-lg mt-4 leading-relaxed">
+              No more crowding the gate to read a whiteboard. The stack, the courts,
+              and the scores live on every player&apos;s phone — updated the moment
+              anything changes.
+            </p>
+            <Link
+              href="/arenas"
+              className="mt-7 inline-flex items-center gap-2 bg-white/95 hover:bg-white text-slate-900 font-extrabold px-6 py-3 rounded-xl shadow-lg transition duration-150 hover:-translate-y-0.5"
+            >
+              See live arenas
+              <svg className="w-4 h-4 stroke-[3px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M13 5l7 7-7 7" />
+              </svg>
+            </Link>
           </div>
         </div>
       </section>
@@ -316,6 +391,82 @@ export default async function LandingPage() {
               title="Play & Log Scores"
               description="Mix partnerships automatically. Enter final scores to instantly update local leaderboard standings and player skill ratings."
             />
+          </div>
+        </div>
+      </section>
+
+      {/* Live Demo Section — the interactive PaddleStackSimulator.
+          Placed after the Setup Guide (so visitors have just read HOW it
+          works) and before the FAQ (so they can try it before objections).
+          The simulator is a self-contained client island running entirely
+          on local state — fictional players, no backend — and demonstrates
+          the core loop: stack paddles → mix → play → score. The "what to
+          try" rail maps each control to the real product behavior it
+          simulates, so the demo explains itself instead of sitting
+          unexplained next to the headline (where it previously lived). */}
+      <section className="bg-slate-50 py-20 border-b border-slate-200/50 grid-bg-pattern-light">
+        <div className="max-w-6xl mx-auto px-4 md:px-8">
+          <div className="text-center max-w-2xl mx-auto mb-14">
+            <h2 className="text-xs font-extrabold uppercase tracking-widest text-emerald-700">Live Demo</h2>
+            <p className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900 mt-2">
+              Try the paddle stack right here
+            </p>
+            <p className="text-slate-600 text-base mt-4 leading-relaxed">
+              This is the same queue engine your club would use — running right in your
+              browser with a fictional roster. No sign-up, nothing saved.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
+            {/* What-to-try rail: one entry per simulator control, each tied to
+                the product behavior it demonstrates. */}
+            <div className="lg:col-span-4 space-y-5">
+              {/* slate-500, not 400: this sits on the slate-50 band and 400
+                  fails AA at 12px (2.5:1) — caught by the contrast guardrail. */}
+              <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-500">
+                What to try
+              </h3>
+              <ol className="space-y-4">
+                <li className="flex items-start gap-3">
+                  <span className="inline-flex items-center justify-center h-7 w-7 shrink-0 rounded-lg bg-emerald-700 text-white text-[11px] font-extrabold font-mono shadow-sm">1</span>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    <strong className="text-slate-900">Add Paddle</strong> — check a new player
+                    into the stack, exactly like an organizer checking in a walk-in at the gate.
+                  </p>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="inline-flex items-center justify-center h-7 w-7 shrink-0 rounded-lg bg-emerald-700 text-white text-[11px] font-extrabold font-mono shadow-sm">2</span>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    <strong className="text-slate-900">Shuffle</strong> — mix the waiting queue
+                    the way the fair-partnership mixer rotates matchups between games.
+                  </p>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="inline-flex items-center justify-center h-7 w-7 shrink-0 rounded-lg bg-emerald-700 text-white text-[11px] font-extrabold font-mono shadow-sm">3</span>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    <strong className="text-slate-900">Simulate Match</strong> — stack the next four
+                    paddles onto the court; the rest of the queue moves up automatically.
+                  </p>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="inline-flex items-center justify-center h-7 w-7 shrink-0 rounded-lg bg-emerald-700 text-white text-[11px] font-extrabold font-mono shadow-sm">4</span>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    <strong className="text-slate-900">Finish Match</strong> — record the score:
+                    wins and losses update instantly, and the four players recycle to the back
+                    of the stack.
+                  </p>
+                </li>
+              </ol>
+              <p className="text-xs text-slate-500 leading-relaxed border-t border-slate-200 pt-4">
+                In the real app this queue is live for every member&apos;s phone — scores,
+                courts, and the rack update for the whole club in about a second.
+              </p>
+            </div>
+
+            {/* The simulator itself */}
+            <div className="lg:col-span-8 w-full shadow-lg rounded-3xl">
+              <PaddleStackSimulator />
+            </div>
           </div>
         </div>
       </section>
