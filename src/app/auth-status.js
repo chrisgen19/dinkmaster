@@ -25,7 +25,7 @@ export function AuthStatus() {
     return (
       <Link
         href="/login"
-        className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2.5 rounded-xl transition-all font-semibold shadow-sm"
+        className="text-xs bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-2.5 rounded-xl transition-all font-semibold shadow-sm"
       >
         Sign in
       </Link>

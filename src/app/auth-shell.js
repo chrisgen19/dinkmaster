@@ -80,9 +80,9 @@ export function AuthSubmit({ loading, label, loadingLabel }) {
     <button
       type="submit"
       disabled={loading}
-      className="w-full rounded-xl bg-emerald-600 px-5 py-2.5 font-display font-extrabold
-        text-white shadow-lg shadow-emerald-500/25 transition duration-150
-        hover:bg-emerald-700 hover:shadow-emerald-500/40
+      className="w-full rounded-xl bg-emerald-700 px-5 py-2.5 font-display font-extrabold
+        text-white shadow-lg shadow-emerald-700/25 transition duration-150
+        hover:bg-emerald-800 hover:shadow-emerald-700/40
         disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
     >
       {loading ? loadingLabel : label}
@@ -108,7 +108,7 @@ export function AuthCrossLink({ prompt, href, action }) {
   return (
     <p className="text-sm text-slate-500">
       {prompt}{' '}
-      <Link href={href} className="font-semibold text-emerald-600 hover:text-emerald-700">
+      <Link href={href} className="font-semibold text-emerald-700 hover:text-emerald-800">
         {action}
       </Link>
     </p>

@@ -984,13 +984,13 @@ export default function Arena({
               <button
                 onClick={handleRequestJoin}
                 disabled={isPending}
-                className="text-sm bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg transition"
+                className="text-sm bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg transition"
               >
                 Request to join
               </button>
             )}
             {!isAuthenticated && (
-              <Link href="/login" className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg transition">
+              <Link href="/login" className="text-sm bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-lg transition">
                 Sign in to join
               </Link>
             )}
@@ -1482,7 +1482,7 @@ export default function Arena({
                         <span
                           className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 transition ${
                             selected
-                              ? 'border-emerald-600 bg-emerald-600 text-white'
+                              ? 'border-emerald-700 bg-emerald-700 text-white'
                               : 'border-slate-300'
                           }`}
                           aria-hidden="true"
@@ -1532,7 +1532,7 @@ export default function Arena({
                   type="button"
                   onClick={handleConfirmSkipWithReplacement}
                   disabled={isPending || !selectedReplacementId}
-                  className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-wide transition shadow-sm shadow-emerald-600/20"
+                  className="px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-wide transition shadow-sm shadow-emerald-700/20"
                 >
                   Skip + Pick
                 </button>
@@ -1776,7 +1776,7 @@ export default function Arena({
                   disabled={!canSubmit}
                   className={`flex-1 py-2.5 text-[11px] font-extrabold uppercase tracking-[0.14em] rounded-xl transition ${
                     canSubmit
-                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm shadow-emerald-600/20'
+                      ? 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm shadow-emerald-700/20'
                       : 'bg-slate-100 text-slate-400 cursor-not-allowed'
                   }`}
                 >

@@ -108,7 +108,7 @@ export function PaddleRackStack({
             </span>
             <div className="min-w-0">
               <h3 className="text-sm font-bold text-slate-800">Paddle Rack Stack</h3>
-              <p className="truncate text-xs text-slate-500">Top 4 stack onto the next open court</p>
+              <p className="truncate text-xs text-slate-600">Top 4 stack onto the next open court</p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -119,7 +119,7 @@ export function PaddleRackStack({
               <button
                 type="button"
                 onClick={onAddPlayers}
-                className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 active:scale-[0.98]"
+                className="inline-flex items-center gap-1.5 rounded-full bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-800 active:scale-[0.98]"
                 title="Open the Prep Roster modal to check in members and add walk-ins"
               >
                 <UserPlus className="h-3.5 w-3.5" />
@@ -228,7 +228,7 @@ export function PaddleRackStack({
                     {/* Rank */}
                     <span
                       className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-xs font-bold tabular-nums ${
-                        isOnDeck ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500'
+                        isOnDeck ? 'bg-emerald-700 text-white shadow-sm' : 'bg-slate-100 text-slate-600'
                       }`}
                     >
                       {rank}
@@ -237,7 +237,7 @@ export function PaddleRackStack({
                     {/* Avatar */}
                     <span
                       className={`hidden sm:grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-bold ${
-                        isOnDeck ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                        isOnDeck ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
                       } ${isYou ? 'ring-2 ring-emerald-400' : isOnDeck ? 'ring-1 ring-emerald-200' : 'ring-1 ring-slate-200'}`}
                       aria-hidden="true"
                     >
@@ -265,7 +265,7 @@ export function PaddleRackStack({
                         )}
                         {isWalkIn && (
                           <span
-                            className="shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500"
+                            className="shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600"
                             title="Walk-in player — no linked account. Link them from the Members tab."
                           >
                             Walk-in
@@ -292,7 +292,7 @@ export function PaddleRackStack({
                           </span>
                         )}
                       </p>
-                      <p className="mt-0.5 text-[11px] font-medium tabular-nums text-slate-400">
+                      <p className="mt-0.5 text-[11px] font-medium tabular-nums text-slate-500">
                         {player.gamesPlayed} games · {player.wins || 0}W · {player.losses || 0}L
                       </p>
                     </div>

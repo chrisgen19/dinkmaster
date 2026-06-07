@@ -42,8 +42,8 @@ export function InviteView({ code, invite, isAuthenticated }) {
       >
         <Link
           href="/arenas"
-          className="block w-full rounded-xl bg-emerald-600 px-5 py-2.5 text-center font-display
-            font-extrabold text-white shadow-lg shadow-emerald-500/25 transition hover:bg-emerald-700"
+          className="block w-full rounded-xl bg-emerald-700 px-5 py-2.5 text-center font-display
+            font-extrabold text-white shadow-lg shadow-emerald-700/25 transition hover:bg-emerald-800"
         >
           Browse arenas
         </Link>
@@ -70,8 +70,8 @@ export function InviteView({ code, invite, isAuthenticated }) {
       >
         <Link
           href={`/arena/${pendingArenaId}`}
-          className="block w-full rounded-xl bg-emerald-600 px-5 py-2.5 text-center font-display
-            font-extrabold text-white shadow-lg shadow-emerald-500/25 transition hover:bg-emerald-700"
+          className="block w-full rounded-xl bg-emerald-700 px-5 py-2.5 text-center font-display
+            font-extrabold text-white shadow-lg shadow-emerald-700/25 transition hover:bg-emerald-800"
         >
           View {arenaName}
         </Link>
@@ -98,8 +98,8 @@ export function InviteView({ code, invite, isAuthenticated }) {
         <div className="space-y-3">
           <Link
             href={`/register?next=${encodedNext}`}
-            className="block w-full rounded-xl bg-emerald-600 px-5 py-2.5 text-center font-display
-              font-extrabold text-white shadow-lg shadow-emerald-500/25 transition hover:bg-emerald-700"
+            className="block w-full rounded-xl bg-emerald-700 px-5 py-2.5 text-center font-display
+              font-extrabold text-white shadow-lg shadow-emerald-700/25 transition hover:bg-emerald-800"
           >
             Create account to join
           </Link>
@@ -159,9 +159,9 @@ export function InviteView({ code, invite, isAuthenticated }) {
           type="button"
           onClick={handleRedeem}
           disabled={isPending}
-          className="w-full rounded-xl bg-emerald-600 px-5 py-2.5 font-display font-extrabold
-            text-white shadow-lg shadow-emerald-500/25 transition duration-150
-            hover:bg-emerald-700 hover:shadow-emerald-500/40
+          className="w-full rounded-xl bg-emerald-700 px-5 py-2.5 font-display font-extrabold
+            text-white shadow-lg shadow-emerald-700/25 transition duration-150
+            hover:bg-emerald-800 hover:shadow-emerald-700/40
             disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
         >
           {isPending

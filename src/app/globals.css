@@ -66,3 +66,40 @@
     animation: none !important;
   }
 }
+
+/* Premium Scrollbars for queues and modals */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-slate-700) transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--color-slate-800);
+  border-radius: 9999px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--color-slate-700);
+}
+
+/* Grid overlay background patterns */
+.grid-bg-pattern {
+  background-image: 
+    radial-gradient(circle at 1px 1px, rgba(255,255,255,0.05) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+.grid-bg-pattern-light {
+  background-image: 
+    radial-gradient(circle at 1px 1px, rgba(15,23,42,0.04) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+

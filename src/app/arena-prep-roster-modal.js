@@ -276,7 +276,7 @@ export function ArenaPrepRosterModal({
                       disabled={isPending}
                       className={`shrink-0 text-xs font-extrabold uppercase tracking-wider px-3 py-1.5 rounded-lg transition disabled:opacity-50 ${
                         row.checkedIn
-                          ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                          ? 'bg-emerald-700 text-white hover:bg-emerald-800'
                           : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
                       }`}
                     >
@@ -315,7 +315,7 @@ export function ArenaPrepRosterModal({
               <button
                 type="submit"
                 disabled={isPending || !newFirst.trim()}
-                className="shrink-0 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold px-4 py-2 rounded-lg text-sm transition"
+                className="shrink-0 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-extrabold px-4 py-2 rounded-lg text-sm transition"
               >
                 Add
               </button>
@@ -348,7 +348,7 @@ export function ArenaPrepRosterModal({
                       disabled={isPending}
                       className={`shrink-0 text-xs font-extrabold uppercase tracking-wider px-3 py-1.5 rounded-lg transition disabled:opacity-50 ${
                         row.checkedIn
-                          ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                          ? 'bg-emerald-700 text-white hover:bg-emerald-800'
                           : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
                       }`}
                     >

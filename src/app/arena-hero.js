@@ -107,7 +107,7 @@ export function ArenaHero({
 
 const TONE_CLASSES = {
   slate: 'text-slate-900',
-  emerald: 'text-emerald-600',
+  emerald: 'text-emerald-700',
   sky: 'text-sky-600',
 };
 

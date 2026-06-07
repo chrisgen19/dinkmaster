@@ -132,7 +132,7 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
               </h3>
               <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
                 Drag to swap partners — top two are{' '}
-                <span className="font-bold text-emerald-600">Team A</span>, bottom two are{' '}
+                <span className="font-bold text-emerald-700">Team A</span>, bottom two are{' '}
                 <span className="font-bold text-sky-600">Team B</span>. Tap{' '}
                 <span className="inline-flex align-middle"><Repeat2 className="h-3.5 w-3.5" aria-hidden="true" /></span>{' '}
                 to substitute a paddle.
@@ -182,7 +182,7 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
                 type="button"
                 onClick={handleSave}
                 disabled={isPending || !changed}
-                className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-wide transition shadow-sm shadow-emerald-600/20"
+                className="px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-wide transition shadow-sm shadow-emerald-700/20"
               >
                 Save Lineup
               </button>
@@ -310,7 +310,7 @@ function LineupRow({ player, id, team, disabled, onReplace }) {
         disabled={disabled}
         aria-label={`Replace ${short.full}`}
         title="Substitute this paddle"
-        className="shrink-0 w-8 h-8 grid place-items-center rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+        className="shrink-0 w-8 h-8 grid place-items-center rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
       >
         <Repeat2 className="h-4 w-4" aria-hidden="true" />
       </button>

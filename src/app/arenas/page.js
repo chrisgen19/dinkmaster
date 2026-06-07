@@ -149,7 +149,7 @@ function SectionHeading({ eyebrow, title, count }) {
   return (
     <div className="flex items-center gap-3 mb-5">
       <div className="flex items-center gap-2">
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" aria-hidden="true" />
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-700 animate-pulse" aria-hidden="true" />
         <span className="font-display text-xs font-bold uppercase tracking-wider text-slate-950">
           {eyebrow}
         </span>
@@ -165,7 +165,7 @@ function SectionHeading({ eyebrow, title, count }) {
 function EmptyState({ children, icon: Icon = Sparkles }) {
   return (
     <div className="bg-white border border-dashed border-slate-300/80 rounded-2xl p-10 flex flex-col items-center justify-center text-center shadow-[0_1px_2px_rgba(15,23,42,0.02)] max-w-md mx-auto my-4">
-      <div className="w-11 h-11 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mb-3.5 ring-6 ring-emerald-500/5">
+      <div className="w-11 h-11 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center mb-3.5 ring-6 ring-emerald-500/5">
         <Icon className="w-5.5 h-5.5" />
       </div>
       <div className="text-sm text-slate-500 leading-relaxed max-w-xs">
@@ -211,8 +211,8 @@ export default async function Page() {
             <Link
               href="/arenas/new"
               className="inline-flex items-center justify-center gap-2 self-start sm:self-auto
-                bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm
-                px-5 py-2.5 rounded-xl shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/35
+                bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-sm
+                px-5 py-2.5 rounded-xl shadow-lg shadow-emerald-700/20 hover:shadow-emerald-700/35
                 transition"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -222,7 +222,7 @@ export default async function Page() {
             </Link>
           ) : (
             <Link
-              href="/login?next=/arenas/new"
+              href="/login?next=%2Farenas%2Fnew"
               className="inline-flex items-center justify-center gap-2 self-start sm:self-auto
                 bg-white text-slate-700 hover:text-emerald-700 ring-1 ring-slate-200 hover:ring-emerald-300
                 font-extrabold text-sm px-5 py-2.5 rounded-xl transition"

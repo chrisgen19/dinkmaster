@@ -46,7 +46,7 @@ async function buildRack(page, walkInNames) {
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   for (const name of walkInNames) await addWalkIn(page, name);
   await page.getByRole('button', { name: 'Close roster' }).click();
-  await expect(page.getByText(`${walkInNames.length + 1} in rack`)).toBeVisible();
+  await expect(page.getByText(`${walkInNames.length + 1} in rack`).first()).toBeVisible();
 }
 
 /** Expand an on-deck row's action panel and click its Skip button. */
@@ -102,7 +102,7 @@ test.describe('skip-with-replacement picker', () => {
 
     // No skip happened — the rack still holds all five paddles and no success
     // toast was shown.
-    await expect(page.getByText('5 in rack')).toBeVisible();
+    await expect(page.getByText('5 in rack').first()).toBeVisible();
     await expect(page.getByText(/Marked Next in Line/)).toBeHidden();
   });
 
@@ -132,7 +132,7 @@ test.describe('skip-with-replacement picker', () => {
     await page2.goto(page.url());
     await page2.getByRole('button', { name: 'Show actions for Zane' }).click();
     await page2.getByRole('button', { name: 'Take Zane off the rack' }).click();
-    await expect(page2.getByText('5 in rack')).toBeVisible(); // 6 → 5
+    await expect(page2.getByText('5 in rack').first()).toBeVisible(); // 6 → 5
     await ctx2.close();
 
     // Confirm the now-stale pick. The server no-ops (Zane no longer waiting) and

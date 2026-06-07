@@ -30,7 +30,7 @@ export function LegalShell({ title, subtitle, updated, children }) {
       </header>
 
       <main className="flex-1 w-full max-w-3xl mx-auto px-4 md:px-6 py-10 md:py-14">
-        <Link href="/" className="text-sm font-semibold text-emerald-600 hover:text-emerald-700">
+        <Link href="/" className="text-sm font-semibold text-emerald-700 hover:text-emerald-800">
           ← Back home
         </Link>
         <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900 mt-4">

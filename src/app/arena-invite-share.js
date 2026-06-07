@@ -73,7 +73,7 @@ export function ArenaInviteShare({ arenaId, arenaName, initialInvites = [] }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700
+        className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800
           text-white text-xs md:text-sm font-extrabold px-3 py-2 md:px-3.5 md:py-2 shadow-sm transition"
       >
         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -277,7 +277,7 @@ function InviteCard({ mode, invite, url, arenaName, canNativeShare, isPending, o
               type="button"
               onClick={handleCopy}
               disabled={!url}
-              className="flex-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-2 transition disabled:opacity-50"
+              className="flex-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold px-3 py-2 transition disabled:opacity-50"
             >
               {copied ? 'Copied!' : 'Copy link'}
             </button>

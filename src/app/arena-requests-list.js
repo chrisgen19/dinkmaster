@@ -50,7 +50,7 @@ export function ArenaRequestsList({
                   <button
                     onClick={() => onApproveLink(r)}
                     disabled={isPending}
-                    className="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
+                    className="text-[11px] bg-emerald-700 hover:bg-emerald-800 text-white px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
                   >
                     Accept
                   </button>
@@ -81,7 +81,7 @@ export function ArenaRequestsList({
                   <button
                     onClick={() => onApproveJoin(r)}
                     disabled={isPending}
-                    className="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
+                    className="text-[11px] bg-emerald-700 hover:bg-emerald-800 text-white px-2.5 py-1 rounded-lg font-bold transition disabled:opacity-50"
                   >
                     Accept
                   </button>

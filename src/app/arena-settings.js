@@ -207,7 +207,7 @@ export function ArenaSettings({ section = null, arenaId, arenaName, description,
 
       {/* Desktop-only heading — icon chip + back link + h1. */}
       <div className="hidden md:flex items-center gap-3 mb-6">
-        <span aria-hidden="true" className="grid place-items-center w-10 h-10 rounded-xl bg-emerald-600 shadow-sm shadow-emerald-600/30 shrink-0">
+        <span aria-hidden="true" className="grid place-items-center w-10 h-10 rounded-xl bg-emerald-700 shadow-sm shadow-emerald-700/30 shrink-0">
           <IconSettings className="w-5 h-5 text-white" />
         </span>
         <div className="min-w-0">
@@ -372,7 +372,7 @@ function GeneralSection({ arenaId, initialName, initialDescription }) {
         <button
           onClick={save}
           disabled={isPending}
-          className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition disabled:opacity-50"
+          className="px-4 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl shadow-sm transition disabled:opacity-50"
         >
           {isPending ? 'Saving…' : 'Save changes'}
         </button>
@@ -428,7 +428,7 @@ function ScheduleSection({ arenaId, schedule }) {
         <button
           onClick={save}
           disabled={isPending}
-          className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition disabled:opacity-50"
+          className="px-4 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl shadow-sm transition disabled:opacity-50"
         >
           {isPending ? 'Saving…' : 'Save schedule'}
         </button>
@@ -666,7 +666,7 @@ function MatchmakingSection({ arenaId, matchmaking }) {
         <button
           onClick={save}
           disabled={isPending}
-          className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition disabled:opacity-50"
+          className="px-4 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl shadow-sm transition disabled:opacity-50"
         >
           {isPending ? 'Saving…' : 'Save matchmaking'}
         </button>
@@ -805,7 +805,7 @@ function MatchDefaultsSection({ arenaId, defaults }) {
         <button
           onClick={save}
           disabled={isPending}
-          className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition disabled:opacity-50"
+          className="px-4 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl shadow-sm transition disabled:opacity-50"
         >
           {isPending ? 'Saving…' : 'Save match defaults'}
         </button>

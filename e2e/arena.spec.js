@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { uniqueEmail, PASSWORD, fillRegisterForm } from './helpers';
 
-async function registerFreshUser(page) {
+async function registerFreshUser(page, email = uniqueEmail()) {
   await page.goto('/register');
-  await fillRegisterForm(page, { firstName: 'Arena', lastName: 'Maker' });
+  await fillRegisterForm(page, { firstName: 'Arena', lastName: 'Maker', email });
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page).toHaveURL('/arenas');
+  return email;
 }
 
 async function createArenaFromDirectory(page, arenaName) {
@@ -25,7 +26,9 @@ test.describe('arenas', () => {
     // Lands on the new arena, which the creator owns and can manage.
     await expect(page).toHaveURL(/\/arena\/.+/);
     await expect(page.getByRole('heading', { name: arenaName })).toBeVisible();
-    await expect(page.getByPlaceholder('e.g. Bradley, Jane, Chloe')).toBeEnabled();
+    
+    // In Phase 5, the input is hidden inside the Add modal. We assert that the Add button is visible instead.
+    await expect(page.getByRole('button', { name: 'Add', exact: true }).first()).toBeEnabled();
   });
 
   test('a guest sees arenas read-only', async ({ page, request }) => {
@@ -51,12 +54,14 @@ test.describe('arenas', () => {
     await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
     await page.goto(arenaUrl);
     await expect(page.getByRole('heading', { name: arenaName })).toBeVisible();
-    await expect(page.getByPlaceholder('Sign in as the owner to add players')).toBeDisabled();
+    
+    // In Phase 5, the prep input placeholder doesn't exist for guests. Instead, they see the read-only notice banner.
+    await expect(page.getByText("You're viewing this arena. Only its owner and organizers can manage it.")).toBeVisible();
   });
 
   test('a second user can join an arena', async ({ page }) => {
     // User A creates an arena.
-    await registerFreshUser(page);
+    const emailA = await registerFreshUser(page);
     const arenaName = `Joinable Arena ${Date.now()}`;
     await createArenaFromDirectory(page, arenaName);
     await expect(page).toHaveURL(/\/arena\/.+/);
@@ -65,15 +70,46 @@ test.describe('arenas', () => {
     // User A signs out; user B registers and opens the arena.
     await page.getByRole('button', { name: 'Sign out' }).click();
     await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
-    await registerFreshUser(page);
+    const emailB = await registerFreshUser(page);
     await page.goto(arenaUrl);
 
-    // User B is not a member yet — join, then the member banner replaces the CTA.
-    const joinButton = page.getByRole('button', { name: 'Join this arena' });
+    // User B is not a member yet — clicks "Request to join"
+    const joinButton = page.getByRole('button', { name: 'Request to join' });
     await expect(joinButton).toBeVisible();
     await joinButton.click();
 
-    await expect(page.getByText(/You're a member of this arena/)).toBeVisible();
+    // Shows pending state for User B
+    await expect(page.getByText('Request pending approval')).toBeVisible();
     await expect(joinButton).toBeHidden();
+
+    // User B signs out
+    await page.getByRole('button', { name: 'Sign out' }).click();
+
+    // Log back in as User A (owner) to approve User B
+    await page.goto('/login');
+    await page.getByPlaceholder('Email').fill(emailA);
+    await page.getByPlaceholder('Password').fill(PASSWORD);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(page).toHaveURL('/arenas');
+    await page.goto(arenaUrl);
+
+    // Open members tab, navigate to Requests pill, and approve
+    await page.getByRole('tab', { name: 'Members' }).click();
+    await page.getByRole('tab', { name: /Requests/ }).click();
+    await page.getByRole('button', { name: 'Accept' }).click();
+
+    // User A signs out
+    await page.getByRole('button', { name: 'Sign out' }).click();
+
+    // Log back in as User B
+    await page.goto('/login');
+    await page.getByPlaceholder('Email').fill(emailB);
+    await page.getByPlaceholder('Password').fill(PASSWORD);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(page).toHaveURL('/arenas');
+    await page.goto(arenaUrl);
+
+    // User B is now a member
+    await expect(page.getByText(/You're a member of this arena/)).toBeVisible();
   });
 });

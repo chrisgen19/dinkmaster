@@ -21,7 +21,7 @@ export default function TermsPage() {
           DinkMaster (&ldquo;the Service&rdquo;) helps pickleball communities run open play —
           managing queues, mixing partnerships, and tracking matches. By accessing or using the
           Service you agree to these Terms of Service and to our{' '}
-          <Link href="/privacy" className="font-semibold text-emerald-600 hover:text-emerald-700">
+          <Link href="/privacy" className="font-semibold text-emerald-700 hover:text-emerald-800">
             Privacy Policy
           </Link>
           . If you do not agree, please do not use the Service.
@@ -82,7 +82,7 @@ export default function TermsPage() {
       <LegalSection heading="7. Termination">
         <p>
           You may stop using the Service and delete your account at any time — see our{' '}
-          <Link href="/data-deletion" className="font-semibold text-emerald-600 hover:text-emerald-700">
+          <Link href="/data-deletion" className="font-semibold text-emerald-700 hover:text-emerald-800">
             Data Deletion instructions
           </Link>
           . We may suspend or terminate access if these terms are violated or to protect the
@@ -101,7 +101,7 @@ export default function TermsPage() {
       <LegalSection heading="9. Contact">
         <p>
           Questions about these terms? Email us at{' '}
-          <a href={`mailto:${CONTACT_EMAIL}`} className="font-semibold text-emerald-600 hover:text-emerald-700">
+          <a href={`mailto:${CONTACT_EMAIL}`} className="font-semibold text-emerald-700 hover:text-emerald-800">
             {CONTACT_EMAIL}
           </a>
           .
