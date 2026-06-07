@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatShortName, profileHref } from './player-display';
+import { formatShortName, profileHref, filterPlayersByName } from './player-display';
 
 describe('formatShortName', () => {
   it('returns Unknown for null / undefined', () => {
@@ -82,5 +82,38 @@ describe('profileHref', () => {
 
   it('returns null for a signed-out viewer', () => {
     expect(profileHref({ userId: 'u-other' }, { viewerUserId: null, viewerIsMember: false })).toBeNull();
+  });
+});
+
+describe('filterPlayersByName', () => {
+  const players = [
+    { id: 'p1', firstName: 'Leah', lastName: 'RC' },
+    { id: 'p2', firstName: 'Aljomar', lastName: 'D.' },
+    { id: 'p3', firstName: 'Tina', lastName: null },
+    { id: 'p4', firstName: 'Christian Genesis', lastName: 'Diomampo' },
+  ];
+  const ids = (result) => result.map((p) => p.id);
+
+  it('passes everyone through on an empty or blank query', () => {
+    expect(filterPlayersByName(players, '')).toBe(players);
+    expect(filterPlayersByName(players, '   ')).toBe(players);
+    expect(filterPlayersByName(players, undefined)).toBe(players);
+  });
+
+  it('matches case-insensitively on any part of the name', () => {
+    expect(ids(filterPlayersByName(players, 'leah'))).toEqual(['p1']);
+    expect(ids(filterPlayersByName(players, 'RC'))).toEqual(['p1']);
+    expect(ids(filterPlayersByName(players, 'tin'))).toEqual(['p3']);
+  });
+
+  it('requires every token to match ("le r" → Leah RC)', () => {
+    expect(ids(filterPlayersByName(players, 'le r'))).toEqual(['p1']);
+    expect(ids(filterPlayersByName(players, 'genesis dio'))).toEqual(['p4']);
+    expect(ids(filterPlayersByName(players, 'leah zzz'))).toEqual([]);
+  });
+
+  it('handles null lastName and missing fields without throwing', () => {
+    expect(ids(filterPlayersByName(players, 'tina'))).toEqual(['p3']);
+    expect(filterPlayersByName([{ id: 'x' }], 'anything')).toEqual([]);
   });
 });

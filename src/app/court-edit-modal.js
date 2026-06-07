@@ -4,10 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Reorder, useDragControls } from 'motion/react';
 import { GripVertical, Repeat2 } from 'lucide-react';
-import { formatShortName } from '@/lib/player-display';
-
-/** Full display name; mirrors the helper used by the rack/skip-pick UI. */
-const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.firstName ?? 'Unknown');
+import { filterPlayersByName, formatShortName } from '@/lib/player-display';
+import { PlayerSearchField } from './player-search-field';
+import { fullName } from './paddle-rack-stack-state';
 
 /**
  * Manual team editor for a live court. The four on-court paddles are shown as a
@@ -34,6 +33,10 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
   const [order, setOrder] = useState(() => [...court.team1, ...court.team2]);
   // Index currently being substituted (null = lineup view, not picker view).
   const [replacingPos, setReplacingPos] = useState(null);
+  // Name filter for the substitute picker. Reset whenever the picker view is
+  // entered or left (open/Back/pick/Esc) so a stale query never hides
+  // candidates the next time it opens.
+  const [pickQuery, setPickQuery] = useState('');
 
   const playerById = useMemo(() => new Map(players.map((p) => [p.id, p])), [players]);
   const original = useMemo(() => [...court.team1, ...court.team2], [court.team1, court.team2]);
@@ -65,7 +68,7 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape' || isPending) return;
-      if (replacingPos !== null) setReplacingPos(null);
+      if (replacingPos !== null) { setReplacingPos(null); setPickQuery(''); }
       else onClose();
     };
     window.addEventListener('keydown', onKey);
@@ -106,9 +109,14 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
   const handlePick = (id) => {
     setOrder((prev) => prev.map((cur, i) => (i === replacingPos ? id : cur)));
     setReplacingPos(null);
+    setPickQuery('');
   };
 
   const replacingPlayer = replacingPos !== null ? playerById.get(order[replacingPos]) : null;
+  // Name-filtered view of the candidates (visual only; full list returns
+  // when the query clears). Distinct empty states: no candidates at ALL vs
+  // none MATCHING the query.
+  const visibleCandidates = filterPlayersByName(candidates, pickQuery);
 
   return createPortal(
     <div
@@ -154,7 +162,7 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
                   id={id}
                   team={index < 2 ? 'A' : 'B'}
                   disabled={isPending}
-                  onReplace={() => setReplacingPos(index)}
+                  onReplace={() => { setReplacingPos(index); setPickQuery(''); }}
                 />
               ))}
             </Reorder.Group>
@@ -198,6 +206,7 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
               <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
                 Tap a paddle to take this spot on {court.name}.
               </p>
+              <PlayerSearchField value={pickQuery} onChange={setPickQuery} disabled={isPending} />
             </div>
             {candidates.length === 0 ? (
               <div className="flex-1 px-5 py-10 text-center">
@@ -206,9 +215,14 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
                   Everyone is on a court. Add or check in a paddle first.
                 </p>
               </div>
+            ) : visibleCandidates.length === 0 ? (
+              <div className="flex-1 px-5 py-10 text-center">
+                <p className="text-sm font-bold text-slate-700">No paddles match &ldquo;{pickQuery}&rdquo;</p>
+                <p className="text-[11px] text-slate-500 mt-1">Try a shorter name, or clear the search.</p>
+              </div>
             ) : (
               <ul className="flex-1 overflow-y-auto divide-y divide-slate-100">
-                {candidates.map((p) => (
+                {visibleCandidates.map((p) => (
                   <li key={p.id}>
                     <button
                       type="button"
@@ -244,7 +258,7 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
             <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/60 flex items-center justify-end gap-2.5">
               <button
                 type="button"
-                onClick={() => setReplacingPos(null)}
+                onClick={() => { setReplacingPos(null); setPickQuery(''); }}
                 disabled={isPending}
                 className="px-4 py-2.5 rounded-xl text-slate-600 hover:bg-slate-200/60 disabled:opacity-50 font-bold text-xs uppercase tracking-wide transition"
               >
