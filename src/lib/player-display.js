@@ -46,3 +46,23 @@ export function formatShortName(player) {
     full: lastName ? `${firstName} ${lastName}` : firstName,
   };
 }
+
+/**
+ * Case-insensitive name filter for the player pick lists (the skip-pick
+ * replacement modal and the court-edit substitute picker) so the rule lives
+ * in one place. Every whitespace-separated query token must appear somewhere
+ * in the player's full name — so "le r" matches "Leah RC" and "ali d"
+ * matches "Aljomar D." — and an empty/blank query passes everyone through.
+ *
+ * @param {Array<{firstName?: string, lastName?: string|null}>} players
+ * @param {string} query
+ * @returns {Array} the matching subset (same array when the query is blank)
+ */
+export function filterPlayersByName(players, query) {
+  const tokens = (query ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return players;
+  return players.filter((p) => {
+    const name = `${p?.firstName ?? ''} ${p?.lastName ?? ''}`.toLowerCase();
+    return tokens.every((t) => name.includes(t));
+  });
+}

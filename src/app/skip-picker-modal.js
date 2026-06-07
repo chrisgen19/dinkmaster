@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { fullName, ON_DECK_SIZE } from './paddle-rack-stack-state';
+import { filterPlayersByName } from '@/lib/player-display';
+import { PlayerSearchField } from './player-search-field';
 
 /**
  * Skip + Pick Replacement modal — when a manager skips an on-deck paddle
@@ -32,6 +34,9 @@ import { fullName, ON_DECK_SIZE } from './paddle-rack-stack-state';
 export function SkipPickerModal({ skippedId, players, queue, isPending, error, onConfirm, onClose }) {
   // Local selection: null until the manager taps a row.
   const [selectedId, setSelectedId] = useState(null);
+  // Name filter for the waiting list — purely visual: a selection made
+  // before narrowing stays valid even while its row is filtered out.
+  const [query, setQuery] = useState('');
   // Prop-driven reset (render-time sentinel, the codebase's standard
   // pattern), keyed on the CONFIRM COMPLETING rather than the error string
   // changing: a confirm that lands (isPending true→false) with a non-empty
@@ -93,6 +98,7 @@ export function SkipPickerModal({ skippedId, players, queue, isPending, error, o
     .filter((id) => id !== skippedId)
     .map((id) => players.find((p) => p.id === id))
     .filter(Boolean);
+  const visiblePlayers = filterPlayersByName(waitingPlayers, query);
 
   return createPortal(
     <div
@@ -114,9 +120,16 @@ export function SkipPickerModal({ skippedId, players, queue, isPending, error, o
           <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
             Tap a waiting paddle to fill the freed on-deck slot.
           </p>
+          <PlayerSearchField value={query} onChange={setQuery} disabled={isPending} />
         </div>
+        {visiblePlayers.length === 0 ? (
+          <div className="flex-1 px-5 py-10 text-center">
+            <p className="text-sm font-bold text-slate-700">No paddles match &ldquo;{query}&rdquo;</p>
+            <p className="text-[11px] text-slate-500 mt-1">Try a shorter name, or clear the search.</p>
+          </div>
+        ) : (
         <ul className="flex-1 overflow-y-auto divide-y divide-slate-100">
-          {waitingPlayers.map((p) => {
+          {visiblePlayers.map((p) => {
             const selected = selectedId === p.id;
             return (
               <li key={p.id}>
@@ -163,6 +176,7 @@ export function SkipPickerModal({ skippedId, players, queue, isPending, error, o
             );
           })}
         </ul>
+        )}
         {shownError && (
           <p
             role="alert"
