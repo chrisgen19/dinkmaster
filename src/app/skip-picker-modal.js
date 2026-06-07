@@ -51,6 +51,10 @@ export function SkipPickerModal({ skippedId, players, queue, isPending, error, o
     if (!isPending && error) {
       setErrorDismissed(false);
       setSelectedId(null);
+      // Also clear the search: if the query matched only the now-taken
+      // replacement, the refreshed list would render as an empty no-match
+      // state — hiding the very paddles the pick-again race flow needs.
+      setQuery('');
     }
   }
   const shownError = errorDismissed ? '' : error;

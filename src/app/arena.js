@@ -1386,7 +1386,7 @@ export default function Arena({
       {mounted && skipPickerSkippedId && (
         <SkipPickerModal
           skippedId={skipPickerSkippedId}
-          players={players}
+          players={displayPlayers}
           queue={queue}
           isPending={isPending}
           error={skipPickerError}
