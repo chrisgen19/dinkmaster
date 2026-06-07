@@ -126,7 +126,18 @@ export function SkipPickerModal({ skippedId, players, queue, isPending, error, o
           </p>
           <PlayerSearchField value={query} onChange={setQuery} disabled={isPending} />
         </div>
-        {visiblePlayers.length === 0 ? (
+        {/* Two distinct empty states (mirrors the court-edit picker): the
+            waiting pool can drain to zero WHILE the modal is open — realtime
+            pushes and the race-refresh update this list live — which is not
+            the same situation as a search with no hits. */}
+        {waitingPlayers.length === 0 ? (
+          <div className="flex-1 px-5 py-10 text-center">
+            <p className="text-sm font-bold text-slate-700">No paddles waiting</p>
+            <p className="text-[11px] text-slate-500 mt-1">
+              The waiting list emptied while this was open. Cancel to go back to the rack.
+            </p>
+          </div>
+        ) : visiblePlayers.length === 0 ? (
           <div className="flex-1 px-5 py-10 text-center">
             <p className="text-sm font-bold text-slate-700">No paddles match &ldquo;{query}&rdquo;</p>
             <p className="text-[11px] text-slate-500 mt-1">Try a shorter name, or clear the search.</p>

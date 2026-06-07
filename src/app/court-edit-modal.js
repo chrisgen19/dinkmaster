@@ -260,7 +260,7 @@ export function CourtEditModal({ court, players, queue, isPending, error, onSave
             <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/60 flex items-center justify-end gap-2.5">
               <button
                 type="button"
-                onClick={() => setReplacingPos(null)}
+                onClick={() => { setReplacingPos(null); setPickQuery(''); }}
                 disabled={isPending}
                 className="px-4 py-2.5 rounded-xl text-slate-600 hover:bg-slate-200/60 disabled:opacity-50 font-bold text-xs uppercase tracking-wide transition"
               >
