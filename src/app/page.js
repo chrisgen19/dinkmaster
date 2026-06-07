@@ -165,10 +165,18 @@ export default async function LandingPage() {
           sizes="100vw"
           className="object-cover object-[30%_center]"
         />
-        {/* Scrim: keeps the white copy at AA contrast over the bright court. */}
+        {/* Scrim: keeps the white copy at AA contrast over the bright court.
+            Below md the copy column spans the FULL banner width (max-w-md vs
+            ~358px of content), so wrapped lines reach the bright left side of
+            the photo — the mobile scrim is therefore stronger and flatter
+            (≥55% floor: worst-case white-on-bright-photo ≈ 4.6:1+, AA with margin). The
+            airy right-weighted gradient applies from md up, where the copy
+            genuinely stays in the dark right third. Verified by viewport
+            screenshots — this section is data-contrast-skip'd, so the e2e
+            guardrail can NOT catch regressions here. */}
         <div
           aria-hidden="true"
-          className="absolute inset-0 bg-gradient-to-l from-slate-950/80 via-slate-950/45 to-slate-950/10"
+          className="absolute inset-0 bg-gradient-to-l from-slate-950/85 via-slate-950/70 to-slate-950/55 md:from-slate-950/80 md:via-slate-950/45 md:to-slate-950/10"
         />
         <div className="relative h-full max-w-6xl mx-auto px-4 md:px-8 flex items-center justify-end">
           <div className="max-w-md text-right flex flex-col items-end">
