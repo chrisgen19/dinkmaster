@@ -167,6 +167,9 @@ export function ProfileView({ name, email = null, stats, backHref = '/arenas', b
             <MatchHistory
               matches={matches}
               perspective="player"
+              // On another player's profile the subject's side reads as their
+              // first name instead of "You"; own profile keeps "You".
+              subjectName={isSelf ? null : name.split(' ')[0]}
               maxHeight="640px"
               // SummaryRow is the page's primary stats display now that the
               // hero ramp is gone. Pass lifetime totals so the strip isn't
