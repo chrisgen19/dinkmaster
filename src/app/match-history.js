@@ -47,6 +47,11 @@ export function MatchHistory({
   // snapshot) to a profile link; null/omitted renders names as plain badges.
   // Supplied by the arena History tab; /profile and My Stats omit it.
   profileHrefFor = null,
+  // Player-perspective only: when set, the subject's side reads as this name
+  // instead of "You". Used when viewing ANOTHER player's profile (`/p`, `/u`)
+  // so their matches don't read as the viewer's. Null (default) keeps "You"
+  // for the viewer's own profile and My Stats.
+  subjectName = null,
 }) {
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'wins' | 'losses'
 
@@ -87,7 +92,10 @@ export function MatchHistory({
   );
 
   const empty = emptyState ?? DEFAULT_EMPTY[perspective];
-  const formatTime = formatTimestamp ?? defaultTimeFormatter;
+  // Localize once mounted (browser timezone — e.g. PH for local users); fall
+  // back to the deterministic ISO slice on first paint so SSR and hydration
+  // agree. Callers can still inject their own `formatTimestamp` (arena.js does).
+  const formatTime = formatTimestamp ?? (mounted ? localizedTimeFormatter : defaultTimeFormatter);
 
   return (
     <div
@@ -141,6 +149,7 @@ export function MatchHistory({
                         perspective={perspective}
                         formatTime={formatTime}
                         profileHrefFor={profileHrefFor}
+                        subjectName={subjectName}
                       />
                     </li>
                   ))}
@@ -291,7 +300,7 @@ function GroupHeader({ label, count }) {
   );
 }
 
-function MatchRow({ match, perspective, formatTime, profileHrefFor = null }) {
+function MatchRow({ match, perspective, formatTime, profileHrefFor = null, subjectName = null }) {
   const winner = winnerSide(match);
   const youOn = match.youOn;
   const youWon = perspective === 'player' ? viewerWon(match) : null;
@@ -361,10 +370,11 @@ function MatchRow({ match, perspective, formatTime, profileHrefFor = null }) {
               isYou={youOn === leftSide}
               isWinner={winner === leftSide}
               align="left"
-              label={labelFor(leftSide, perspective, youOn)}
+              label={labelFor(leftSide, perspective, youOn, subjectName)}
               perspective={perspective}
               isTie={winner === 'tie'}
               profileHrefFor={profileHrefFor}
+              subjectName={subjectName}
             />
 
             <ScoreBlock
@@ -382,10 +392,11 @@ function MatchRow({ match, perspective, formatTime, profileHrefFor = null }) {
               isYou={youOn === rightSide}
               isWinner={winner === rightSide}
               align="right"
-              label={labelFor(rightSide, perspective, youOn)}
+              label={labelFor(rightSide, perspective, youOn, subjectName)}
               perspective={perspective}
               isTie={winner === 'tie'}
               profileHrefFor={profileHrefFor}
+              subjectName={subjectName}
             />
           </div>
         );
@@ -394,7 +405,7 @@ function MatchRow({ match, perspective, formatTime, profileHrefFor = null }) {
   );
 }
 
-function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie, profileHrefFor = null }) {
+function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie, profileHrefFor = null, subjectName = null }) {
   const justify = align === 'right' ? 'text-right items-end' : 'text-left items-start';
   const players = team.players ?? [];
   return (
@@ -427,16 +438,17 @@ function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie, pro
       
       {/* 3. Roster of Player Badges (with explicit gap below the team label) */}
       <div className={`flex flex-wrap gap-2 ${align === 'right' ? 'justify-end' : 'justify-start'} max-w-full mt-2.5`}>
-        {/* Render "You" pill if isYou is true and we are in player perspective */}
+        {/* Subject pill in player perspective: "You" on the viewer's own
+            profile, or the subject's name when viewing someone else's. */}
         {isYou && perspective === 'player' && (
-          <span 
-            className="inline-flex items-center gap-1.5 text-xs md:text-[13px] font-black bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-2.5 py-1 rounded-xl shadow-xs shadow-emerald-500/10 transition-all duration-300 hover:scale-102"
+          <span
+            className="inline-flex items-center gap-1.5 text-xs md:text-[13px] font-black bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-2.5 py-1 rounded-xl shadow-xs shadow-emerald-500/10 transition-all duration-300 hover:scale-102 truncate max-w-full"
           >
             <svg className="w-3.5 h-3.5 text-emerald-100 shrink-0 hidden sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
               <circle cx="12" cy="7" r="4" />
             </svg>
-            <span>You</span>
+            <span className="truncate">{subjectName ?? 'You'}</span>
           </span>
         )}
 
@@ -497,12 +509,13 @@ function TeamCell({ team, isYou, isWinner, align, label, perspective, isTie, pro
   );
 }
 
-/** Label for a side in the current perspective. In player mode the viewer's
- *  side reads "You" and the other reads "Opponents"; in neutral mode it's
- *  always "Team A"/"Team B". */
-function labelFor(side, perspective, youOn) {
+/** Label for a side in the current perspective. In player mode the subject's
+ *  side reads "You" (own profile) or `subjectName` (another player's), and the
+ *  other reads "Opponents"; in neutral mode it's always "Team A"/"Team B". */
+function labelFor(side, perspective, youOn, subjectName = null) {
   if (perspective === 'player') {
-    return youOn === side ? 'You' : 'Opponents';
+    if (youOn === side) return subjectName ?? 'You';
+    return 'Opponents';
   }
   return side === 'a' ? 'Team A' : 'Team B';
 }
@@ -601,4 +614,12 @@ function defaultTimeFormatter(iso) {
   if (!iso || typeof iso !== 'string') return '';
   // "2026-05-25T19:42:00.000Z" → "2026-05-25 19:42"
   return iso.slice(0, 16).replace('T', ' ');
+}
+
+/** Localized fallback used after mount — renders in the browser's timezone so
+ *  profile pages show local (e.g. PH) time instead of the raw UTC ISO slice.
+ *  Only called client-side post-hydration, so `toLocaleString` is safe here. */
+function localizedTimeFormatter(iso) {
+  if (!iso || typeof iso !== 'string') return '';
+  return new Date(iso).toLocaleString();
 }
