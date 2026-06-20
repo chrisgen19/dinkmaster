@@ -20,8 +20,16 @@ import {
 import Link from 'next/link';
 import { ROLES } from '@/lib/roles';
 import { monogram } from '@/lib/user-insights';
-import { profileHref } from '@/lib/player-display';
+import { profileHref, matchesNameQuery } from '@/lib/player-display';
+import { PlayerSearchField } from './player-search-field';
 import { ArenaRequestsList } from './arena-requests-list';
+
+/**
+ * A people list shorter than this is trivial to scan, so the search field is
+ * hidden until a list grows past it. Shared by every Members-tab list (and
+ * mirrored in arena-requests-list.js for the requests groups).
+ */
+export const MEMBERS_SEARCH_MIN = 5;
 
 /** Locale-aware case-insensitive name compare for sorting people lists. */
 const byDisplayName = (a, b) =>
@@ -404,6 +412,10 @@ function SelfLinkPanel({ pendingRequest, onOpenModal, onCancel, disabled }) {
 }
 
 function MembersList({ members, viewerUserId, viewerIsMember = false, isOwner, isPending, onCourtUserIds, onPromoteToggle, onTransfer, onRemove }) {
+  const [query, setQuery] = useState('');
+  const showSearch = members.length > MEMBERS_SEARCH_MIN;
+  const visible = showSearch ? members.filter((m) => matchesNameQuery(m.name, query)) : members;
+
   if (members.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center">
@@ -412,8 +424,22 @@ function MembersList({ members, viewerUserId, viewerIsMember = false, isOwner, i
     );
   }
   return (
-    <ul className="divide-y divide-slate-100">
-      {members.map((m) => {
+    <div>
+      {showSearch && (
+        <PlayerSearchField
+          value={query}
+          onChange={setQuery}
+          disabled={isPending}
+          placeholder="Search members…"
+        />
+      )}
+      {visible.length === 0 ? (
+        <p className="px-1 py-6 text-center text-xs text-slate-500">
+          No members match &ldquo;{query}&rdquo;.
+        </p>
+      ) : (
+        <ul className={`divide-y divide-slate-100${showSearch ? ' mt-1' : ''}`}>
+          {visible.map((m) => {
         const isViewer = m.userId === viewerUserId;
         const onCourt = onCourtUserIds?.has(m.userId) ?? false;
         // Same link rules as the rack (shared profileHref): self → /profile,
@@ -469,11 +495,17 @@ function MembersList({ members, viewerUserId, viewerIsMember = false, isOwner, i
           </li>
         );
       })}
-    </ul>
+        </ul>
+      )}
+    </div>
   );
 }
 
 function WalkInsList({ orphans, viewerIsMember = false, canManage, isPending, onCourtPlayerIds, onLink, onRemove }) {
+  const [query, setQuery] = useState('');
+  const showSearch = orphans.length > MEMBERS_SEARCH_MIN;
+  const visible = showSearch ? orphans.filter((p) => matchesNameQuery(p.displayName, query)) : orphans;
+
   if (orphans.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center">
@@ -487,8 +519,22 @@ function WalkInsList({ orphans, viewerIsMember = false, canManage, isPending, on
     );
   }
   return (
-    <ul className="divide-y divide-slate-100">
-      {orphans.map((p) => {
+    <div>
+      {showSearch && (
+        <PlayerSearchField
+          value={query}
+          onChange={setQuery}
+          disabled={isPending}
+          placeholder="Search walk-ins…"
+        />
+      )}
+      {visible.length === 0 ? (
+        <p className="px-1 py-6 text-center text-xs text-slate-500">
+          No walk-ins match &ldquo;{query}&rdquo;.
+        </p>
+      ) : (
+        <ul className={`divide-y divide-slate-100${showSearch ? ' mt-1' : ''}`}>
+          {visible.map((p) => {
         const onCourt = onCourtPlayerIds?.has(p.id) ?? false;
         // Walk-ins have no account: /p/<playerId> for member viewers (same
         // rule as the rack via shared profileHref), plain text otherwise.
@@ -543,7 +589,9 @@ function WalkInsList({ orphans, viewerIsMember = false, canManage, isPending, on
         </li>
         );
       })}
-    </ul>
+        </ul>
+      )}
+    </div>
   );
 }
 
