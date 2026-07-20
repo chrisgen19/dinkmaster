@@ -1,5 +1,8 @@
 'use client';
 
+import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
+
 /**
  * Banners for the arena's offline session mode. Presentational only: all
  * state and handlers live in the `useArenaOffline` hook (arena-offline.js).
@@ -101,7 +104,31 @@ export function OfflineActiveBanner({ pendingCount, syncing, syncError, onSync, 
 
 /** Shared modal chrome for the two sync-outcome dialogs below. */
 function SyncDialogShell({ title, children }) {
-  return (
+  // iOS-safe scroll lock + portal to <body>, matching the app's other modals
+  // (skip-picker-modal.js, court-edit-modal.js). A plain `overflow: hidden`
+  // doesn't stop rubber-band scrolling in standalone PWA mode, and rendering
+  // inline lets an ancestor's overflow/transform/filter clip the overlay: pin
+  // <body> with `position: fixed` offset by the current scrollY, restore on
+  // unmount, and portal out of the arena tree.
+  useEffect(() => {
+    const { style } = document.body;
+    const y = window.scrollY;
+    style.position = 'fixed';
+    style.top = `-${y}px`;
+    style.left = '0';
+    style.right = '0';
+    style.width = '100%';
+    return () => {
+      style.position = '';
+      style.top = '';
+      style.left = '';
+      style.right = '';
+      style.width = '';
+      window.scrollTo(0, y);
+    };
+  }, []);
+
+  return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
       <div
         role="dialog"
@@ -111,7 +138,8 @@ function SyncDialogShell({ title, children }) {
         <h3 className="font-display text-base font-extrabold text-slate-900">{title}</h3>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

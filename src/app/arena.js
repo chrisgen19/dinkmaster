@@ -721,6 +721,11 @@ export default function Arena({
   // state would double-apply events on resume/sync.
   useEffect(() => {
     if (offline.offlineActive) return;
+    // Also hold while a reload is still resuming: `offlineActive` is false on
+    // first paint until the async resume effect activates, and an idle write of
+    // the live server props here would clobber the base snapshot the pending
+    // log replays over.
+    if (offline.resuming) return;
     // requestIdleCallback keeps the write off the interaction path; the
     // timeout fallback covers Safari (no rIC) with a small fixed delay.
     let idleId = null;
@@ -734,7 +739,17 @@ export default function Arena({
       if (idleId !== null) window.cancelIdleCallback(idleId);
       if (timerId !== null) clearTimeout(timerId);
     };
-  }, [persistSnapshot, offline.offlineActive, players, queue, courts, matchHistory, history, lastSessionResetAt]);
+  }, [
+    persistSnapshot,
+    offline.offlineActive,
+    offline.resuming,
+    players,
+    queue,
+    courts,
+    matchHistory,
+    history,
+    lastSessionResetAt,
+  ]);
 
   // Run a server action inside a transition and reconcile the returned state.
   // `refresh` additionally re-fetches the server-rendered props (used when an

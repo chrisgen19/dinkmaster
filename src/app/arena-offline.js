@@ -59,6 +59,10 @@ export function useArenaOffline({
   persistSnapshot,
 }) {
   const [offlineActive, setOfflineActive] = useState(false);
+  // True from mount until the resume effect has decided whether to re-enter an
+  // unfinished session. arena.js pauses base-snapshot writes while this is set
+  // so an idle persist can't overwrite the replay base before resume reads it.
+  const [resuming, setResuming] = useState(canManage);
   const [pendingCount, setPendingCount] = useState(0);
   const [promptVisible, setPromptVisible] = useState(false);
   const [otherTabActive, setOtherTabActive] = useState(false);
@@ -117,19 +121,27 @@ export function useArenaOffline({
   // replayed over the saved base snapshot (NOT the fresh server props: the
   // local session stays internally consistent until Phase 3 syncs it).
   useEffect(() => {
-    if (!canManage) return;
     let cancelled = false;
     (async () => {
-      const log = await loadPendingLog(arenaId);
-      if (!log || log.events.length === 0 || cancelled) return;
-      const snapshot = await loadArenaSnapshot(arenaId);
-      if (!snapshot || cancelled) return; // no base to replay over; log kept for the offline shell
-      const { state } = replayEvents(snapshot.state, log.settings, log.events);
-      applyLocalState(state);
-      activate(log);
-      // Reloaded after the connection came back (the page itself loaded from
-      // the server): push the finished session up right away.
-      if (navigator.onLine) queueMicrotask(() => syncNowRef.current?.('strict'));
+      if (!canManage) {
+        setResuming(false);
+        return;
+      }
+      try {
+        const log = await loadPendingLog(arenaId);
+        if (!log || log.events.length === 0 || cancelled) return;
+        const snapshot = await loadArenaSnapshot(arenaId);
+        if (!snapshot || cancelled) return; // no base to replay over; log kept for the offline shell
+        const { state } = replayEvents(snapshot.state, log.settings, log.events);
+        applyLocalState(state);
+        activate(log);
+        // Reloaded after the connection came back (the page itself loaded from
+        // the server): push the finished session up right away.
+        if (navigator.onLine) queueMicrotask(() => syncNowRef.current?.('strict'));
+      } finally {
+        // Snapshot writes can resume once we've decided (activated or not).
+        if (!cancelled) setResuming(false);
+      }
     })();
     return () => {
       cancelled = true;
@@ -165,6 +177,21 @@ export function useArenaOffline({
   /** Start an offline session. Resolves false when entry isn't possible. */
   const enterOffline = useCallback(async () => {
     if (!canManage || offlineActiveRef.current || otherTabActive) return false;
+
+    // Never silently discard unsynced events. A non-empty log can still be
+    // parked in IndexedDB when the resume effect didn't activate (missing
+    // snapshot, empty-tab race, or the connection returned before sync).
+    // Adopt that log instead of overwriting it with a fresh empty one.
+    const existing = await loadPendingLog(arenaId);
+    if (existing && existing.events.length > 0) {
+      const snapshot = await loadArenaSnapshot(arenaId);
+      if (!snapshot) return false; // no base to replay over; keep the log intact
+      const { state } = replayEvents(snapshot.state, existing.settings, existing.events);
+      applyLocalState(state);
+      activate(existing);
+      return true;
+    }
+
     // The base snapshot must be durable BEFORE the first event: resume and
     // sync both replay the log over exactly this state.
     const snapshotSaved = await persistSnapshot();
@@ -183,7 +210,17 @@ export function useArenaOffline({
     if (!(await savePendingLog(log))) return false;
     activate(log);
     return true;
-  }, [arenaId, canManage, otherTabActive, persistSnapshot, settingsProps, lastServerFetchedAt, getBoardState, activate]);
+  }, [
+    arenaId,
+    canManage,
+    otherTabActive,
+    persistSnapshot,
+    settingsProps,
+    lastServerFetchedAt,
+    getBoardState,
+    activate,
+    applyLocalState,
+  ]);
 
   /**
    * Run one board command locally: resolve -> persist the event -> apply.
@@ -316,6 +353,7 @@ export function useArenaOffline({
   return {
     offlineActive,
     offlineActiveRef,
+    resuming,
     pendingCount,
     promptVisible,
     otherTabActive,

@@ -24,8 +24,11 @@ function arenaIdFromLocation() {
 function buildLocalBoard(snapshot, pending) {
   const settings =
     pending?.settings ?? { targetScore: snapshot.matchDefaults?.targetScore, ...snapshot.matchmaking };
-  const { state, appliedCount } = replayEvents(snapshot.state, settings, pending?.events);
-  return { state, pendingCount: appliedCount };
+  const { state } = replayEvents(snapshot.state, settings, pending?.events);
+  // Report every recorded event as unsynced, not just the ones that replayed
+  // for display: if replay stopped early on a mismatch, the un-replayed events
+  // are still waiting to sync and the banner must not undercount them.
+  return { state, pendingCount: pending?.events?.length ?? 0 };
 }
 
 function OfflineCourtCard({ court, playersById }) {

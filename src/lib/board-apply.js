@@ -771,9 +771,20 @@ export async function applyEventTx(tx, arenaId, settings, event, { occurredAt })
       return;
     }
     case 'checkIn':
+      // A missing/blank playerId would let Prisma's dropped `id` filter match
+      // an arbitrary queued player, so reject the event rather than guess.
+      if (typeof payload.playerId !== 'string' || payload.playerId.length === 0) {
+        throw new Error('BAD_EVENT');
+      }
       await applyCheckInTx(tx, arenaId, { playerId: payload.playerId });
       return;
     case 'checkOut':
+      // Guard before applyCheckOutTx: its `updateMany` would otherwise clear
+      // every queued player in the arena when `playerId` is undefined (Prisma
+      // drops undefined `where` filters).
+      if (typeof payload.playerId !== 'string' || payload.playerId.length === 0) {
+        throw new Error('BAD_EVENT');
+      }
       await applyCheckOutTx(tx, arenaId, { playerId: payload.playerId });
       return;
     case 'shuffleQueue':

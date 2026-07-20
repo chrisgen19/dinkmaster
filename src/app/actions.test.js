@@ -581,6 +581,55 @@ describe('arena server actions — authorization', () => {
         });
       });
 
+      it('rejects a checkOut event with no playerId instead of clearing the whole rack', async () => {
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({
+            mode: 'best-effort',
+            // A corrupted/crafted event with an empty payload: Prisma would
+            // drop the undefined `id` filter and updateMany would clear every
+            // queued player. It must be skipped as BAD_EVENT, never applied.
+            events: [
+              { id: 'e1', type: 'checkOut', payload: {} },
+              { id: 'e2', type: 'checkOut', payload: { playerId: 'e' } },
+            ],
+          }),
+        );
+        expect(result.skipped).toEqual([{ id: 'e1', type: 'checkOut', reason: 'BAD_EVENT' }]);
+        expect(result.appliedIds).toEqual(['e2']);
+        // Only the valid, id-scoped checkOut reached the database.
+        expect(tx.player.updateMany).toHaveBeenCalledTimes(1);
+        expect(tx.player.updateMany).toHaveBeenCalledWith({
+          where: { id: 'e', arenaId: ARENA, leftAt: null, queueOrder: { not: null } },
+          data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
+        });
+      });
+
+      it('best-effort mode: a structurally malformed event is skipped, later valid events still apply', async () => {
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({
+            mode: 'best-effort',
+            events: [
+              { id: 'e1' }, // missing type: structural BAD_EVENT
+              { id: 'e2', type: 'checkOut', payload: { playerId: 'e' } },
+            ],
+          }),
+        );
+        expect(result.divergence).toBeUndefined();
+        expect(result.skipped).toEqual([{ id: 'e1', type: undefined, reason: 'BAD_EVENT' }]);
+        expect(result.appliedIds).toEqual(['e2']);
+        expect(tx.offlineSyncBatch.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ appliedEventIds: ['e2'], skippedCount: 1 }),
+        });
+      });
+
       it('clamps a future endMatch occurredAt to sync time for Match.createdAt', async () => {
         const slots = [
           { playerId: 'a', team: 1, player: { firstName: 'A', lastName: null, rating: 1000 } },

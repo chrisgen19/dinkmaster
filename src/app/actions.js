@@ -1458,12 +1458,16 @@ export async function syncOfflineEvents(arenaId, input) {
       const appliedIds = [];
       const skipped = [];
       for (const event of events) {
-        if (typeof event?.id !== 'string' || event.id.length > 80 || typeof event?.type !== 'string') {
-          throw new Error('BAD_EVENT');
-        }
-        const atMs = Date.parse(event.occurredAt ?? '');
-        prevMs = Math.max(prevMs, Math.min(Number.isFinite(atMs) ? atMs : prevMs, now));
         try {
+          // Structural validation lives inside the try so a malformed item is
+          // treated like any other BAD_EVENT: skipped in best-effort mode,
+          // rolled back in strict mode. A garbage event never advances the
+          // monotonic clock.
+          if (typeof event?.id !== 'string' || event.id.length > 80 || typeof event?.type !== 'string') {
+            throw new Error('BAD_EVENT');
+          }
+          const atMs = Date.parse(event.occurredAt ?? '');
+          prevMs = Math.max(prevMs, Math.min(Number.isFinite(atMs) ? atMs : prevMs, now));
           await applyEventTx(tx, arenaId, settings, event, { occurredAt: new Date(prevMs) });
           appliedIds.push(event.id);
         } catch (err) {
