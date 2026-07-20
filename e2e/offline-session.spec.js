@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
-import { uniqueEmail, PASSWORD, fillRegisterForm } from './helpers';
+import { openSignedInContext } from './helpers';
+
+const BASE_URL = 'http://localhost:3021';
 
 /**
  * Offline session mode e2e, against a PRODUCTION build (see
@@ -20,16 +22,8 @@ import { uniqueEmail, PASSWORD, fillRegisterForm } from './helpers';
  *    the sync endpoint stay live.
  */
 
-async function registerFreshManager(page) {
-  const email = uniqueEmail();
-  await page.goto('/register');
-  await fillRegisterForm(page, { firstName: 'Offline', lastName: 'Manager', email });
-  await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page).toHaveURL('/arenas');
-  return email;
-}
-
 async function createArena(page, arenaName) {
+  await page.goto('/arenas');
   await page.getByRole('link', { name: /New arena/ }).click();
   await page.getByPlaceholder(/Saturday Open Play/).fill(arenaName);
   await page.getByRole('button', { name: 'Create arena' }).click();
@@ -70,8 +64,25 @@ async function enterOfflineMode(page) {
 }
 
 test.describe('offline session mode (production build)', () => {
-  test('full round trip: run offline, reload into the SW shell, reconnect and sync', async ({ page, context }) => {
-    await registerFreshManager(page);
+  // ONE signed-in context for the whole file, as manager "Offline Manager"
+  // (whose hold banner reads "Offline M."). Registering per test would trip
+  // Better Auth's rate limiter, which is enabled only in production -
+  // exactly what this project runs against. Sharing the context also keeps
+  // the service worker registered between tests; isolation comes from each
+  // test creating its own arena.
+  let context;
+  let page;
+  test.beforeAll(async ({ browser }) => {
+    ({ context, page } = await openSignedInContext(browser, {
+      baseURL: BASE_URL,
+      form: { firstName: 'Offline', lastName: 'Manager' },
+    }));
+  });
+  test.afterAll(async () => {
+    await context?.close();
+  });
+
+  test('full round trip: run offline, reload into the SW shell, reconnect and sync', async () => {
     const arenaUrl = await createArena(page, `Offline E2E ${Date.now()}`);
     await addWalkIns(page, ['Ana', 'Ben', 'Cai', 'Dee', 'Eli', 'Fay']);
     await waitForServiceWorker(page);
@@ -112,19 +123,14 @@ test.describe('offline session mode (production build)', () => {
     await expect(page.getByText('7', { exact: true }).first()).toBeVisible();
   });
 
-  test('flaky network: other viewers see the hold, divergence resolves best-effort', async ({ page, browser }) => {
-    const email = await registerFreshManager(page);
+  test('flaky network: other viewers see the hold, divergence resolves best-effort', async ({ browser }) => {
     const arenaUrl = await createArena(page, `Hold E2E ${Date.now()}`);
     await addWalkIns(page, ['Ana', 'Ben', 'Cai', 'Dee', 'Eli', 'Fay']);
 
-    // Second browser, same manager account, watching the live board.
-    const contextB = await browser.newContext({ baseURL: 'http://localhost:3021' });
+    // Second browser, same manager account (shared storage state, so no
+    // extra sign-in round trip), watching the live board.
+    const contextB = await browser.newContext({ baseURL: BASE_URL, storageState: await context.storageState() });
     const pageB = await contextB.newPage();
-    await pageB.goto('/login');
-    await pageB.getByPlaceholder('Email').fill(email);
-    await pageB.getByPlaceholder('Password').fill(PASSWORD);
-    await pageB.getByRole('button', { name: 'Sign in' }).click();
-    await expect(pageB).toHaveURL('/arenas');
     await pageB.goto(arenaUrl);
     await expect(pageB.getByText(/running this board offline/)).toHaveCount(0);
 
@@ -172,8 +178,30 @@ test.describe('offline session mode (production build)', () => {
     await contextB.close();
   });
 
-  test('mid-session reload with connectivity resumes the log and auto-syncs', async ({ page }) => {
-    await registerFreshManager(page);
+  test('a session that recorded nothing still releases the hold on exit', async ({ browser }) => {
+    const arenaUrl = await createArena(page, `Empty Hold E2E ${Date.now()}`);
+    await addWalkIns(page, ['Ana', 'Ben']);
+
+    const contextB = await browser.newContext({ baseURL: BASE_URL, storageState: await context.storageState() });
+    const pageB = await contextB.newPage();
+    await pageB.goto(arenaUrl);
+
+    // Enter offline mode and record NOTHING, then sync. The zero-event path
+    // skips the sync endpoint (which is what normally clears the hold), so
+    // it has to release the hold itself or B keeps the banner for the whole
+    // client-side TTL.
+    await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+    await enterOfflineMode(page);
+    await expect(pageB.getByText(/is running this board offline/)).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole('button', { name: 'Sync now' }).click();
+    await expect(page.getByText(/Running the board locally/)).toHaveCount(0);
+    await expect(pageB.getByText(/is running this board offline/)).toHaveCount(0, { timeout: 10_000 });
+
+    await contextB.close();
+  });
+
+  test('mid-session reload with connectivity resumes the log and auto-syncs', async () => {
     await createArena(page, `Resume E2E ${Date.now()}`);
     await addWalkIns(page, ['Ana', 'Ben', 'Cai']);
 

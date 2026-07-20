@@ -172,6 +172,30 @@ export function useArenaOffline({
     if (canManage && !offlineActiveRef.current) setPromptVisible(true);
   }, [canManage]);
 
+  /**
+   * Advisory hold, fire-and-forget: reaches the server only when it is still
+   * reachable (flaky connection / preemptive entry). Other viewers then see
+   * "X is running the board offline" via the SSE push. A truly offline device
+   * simply can't declare, which is fine: the hold is a courtesy banner, and
+   * the sync fingerprint is what protects correctness.
+   */
+  const declareHold = useCallback(() => {
+    declareOfflineHold(arenaId).catch(() => {});
+  }, [arenaId]);
+
+  /**
+   * Clear the advisory hold. Awaited (unlike declare) so the caller can
+   * finish tearing the session down after the banner is gone. Best effort:
+   * while unreachable the hold expires via its client-side TTL instead.
+   */
+  const releaseHold = useCallback(async () => {
+    try {
+      await releaseOfflineHold(arenaId);
+    } catch {
+      // Unreachable server: the TTL takes over.
+    }
+  }, [arenaId]);
+
   const dismissPrompt = useCallback(() => setPromptVisible(false), []);
 
   /** Start an offline session. Resolves false when entry isn't possible. */
@@ -189,6 +213,9 @@ export function useArenaOffline({
       const { state } = replayEvents(snapshot.state, existing.settings, existing.events);
       applyLocalState(state);
       activate(existing);
+      // Adopting a parked log starts a session just like a fresh entry, so
+      // it needs the same advisory hold.
+      declareHold();
       return true;
     }
 
@@ -209,12 +236,7 @@ export function useArenaOffline({
     });
     if (!(await savePendingLog(log))) return false;
     activate(log);
-    // Advisory hold, fire-and-forget: reaches the server only when it is
-    // still reachable (flaky connection / preemptive entry). Other viewers
-    // then see "X is running the board offline" via the SSE push. A truly
-    // offline device simply can't declare, which is fine: the hold is a
-    // courtesy banner, and the sync fingerprint protects correctness.
-    declareOfflineHold(arenaId).catch(() => {});
+    declareHold();
     return true;
   }, [
     arenaId,
@@ -226,6 +248,7 @@ export function useArenaOffline({
     getBoardState,
     activate,
     applyLocalState,
+    declareHold,
   ]);
 
   /**
@@ -276,10 +299,15 @@ export function useArenaOffline({
       const log = logRef.current;
       if (!offlineActiveRef.current || !log || syncingRef.current) return;
 
-      // Nothing recorded: no server call needed. Exit and let the reopened
-      // SSE stream resync (it re-sends full state on connect).
+      // Nothing recorded: no batch to replay, so skip the sync endpoint and
+      // let the reopened SSE stream resync (it re-sends full state on
+      // connect). The advisory hold still has to be released explicitly:
+      // `syncOfflineEvents` is what clears it on the normal path, and
+      // without this other viewers would keep the "running the board
+      // offline" banner until its client-side TTL expired.
       if (log.events.length === 0) {
         await clearPendingLog(arenaId);
+        await releaseHold();
         deactivate();
         setSyncState({ status: 'idle', error: '' });
         return;
@@ -325,7 +353,7 @@ export function useArenaOffline({
       setSyncState({ status: 'idle', error: '' });
       onSynced?.({ appliedCount: result.appliedIds?.length ?? 0, skipped: result.skipped ?? [] });
     },
-    [arenaId, applySyncedState, deactivate, onSynced],
+    [arenaId, applySyncedState, deactivate, onSynced, releaseHold],
   );
   // Ref assignment kept out of render for react-hooks/refs.
   useEffect(() => {
@@ -352,16 +380,10 @@ export function useArenaOffline({
    */
   const exitOfflineDiscard = useCallback(async () => {
     await clearPendingLog(arenaId);
-    // Best effort: fails fast while offline, in which case the hold expires
-    // via its client-side TTL instead (see isHoldActive).
-    try {
-      await releaseOfflineHold(arenaId);
-    } catch {
-      // Unreachable server: nothing else to do.
-    }
+    await releaseHold();
     channelRef.current?.postMessage({ kind: 'inactive' });
     window.location.reload();
-  }, [arenaId]);
+  }, [arenaId, releaseHold]);
 
   return {
     offlineActive,
