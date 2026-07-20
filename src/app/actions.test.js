@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock the auth guards, the state reader, and Prisma so the actions run with
 // no database. These tests cover authorization and pure-logic guards.
@@ -47,6 +47,7 @@ import { prisma } from '@/lib/prisma';
 import { ROLES } from '@/lib/roles';
 import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
 import { MAX_TARGET_SCORE, MAX_LEADERBOARD_SIZE } from '@/lib/match-defaults';
+import { boardFingerprint } from '@/lib/board-fingerprint';
 import * as actions from '@/app/actions';
 
 const ARENA = 'arena_test';
@@ -74,6 +75,7 @@ const PLAY = [
   ['revokeArenaInvite', () => actions.revokeArenaInvite(ARENA, 'inv1')],
   ['checkInPlayer', () => actions.checkInPlayer(ARENA, 'p1')],
   ['checkOutPlayer', () => actions.checkOutPlayer(ARENA, 'p1')],
+  ['syncOfflineEvents', () => actions.syncOfflineEvents(ARENA, { batchId: 'batch-12345', events: [], mode: 'strict', settings: { targetScore: 11 } })],
   ['approveJoinRequest', () => actions.approveJoinRequest(ARENA, 'u2')],
   ['rejectJoinRequest', () => actions.rejectJoinRequest(ARENA, 'u2')],
   ['linkPlayerToMember', () => actions.linkPlayerToMember(ARENA, 'p1', 'u2')],
@@ -375,6 +377,300 @@ describe('arena server actions — authorization', () => {
         const result = await actions.updateArenaSessions(ARENA, { autoResetOnSession: value });
         expect(result.error).toBeTruthy();
         expect(prisma.arena.updateMany).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('syncOfflineEvents()', () => {
+      // Board the mocked transaction exposes: five players, a..e queued in
+      // order, one vacant court, no partnerships. Mirrors what
+      // readBoardStateTx would assemble, so the "matching" client
+      // fingerprint is computed from the same data.
+      const PLAYER_ROWS = ['a', 'b', 'c', 'd', 'e'].map((id, i) => ({
+        id,
+        queueOrder: i + 1,
+        waitRounds: 0,
+        gamesPlayed: 0,
+        gamesOffset: 0,
+        wins: 0,
+        losses: 0,
+        rating: 1000,
+        skipBoosted: false,
+      }));
+      const ARENA_SETTINGS = {
+        targetScore: 11,
+        starveThreshold: 2,
+        emergencyWait: 4,
+        skipRestoresPriority: true,
+        skipPickReplacement: true,
+      };
+      const matchingFingerprint = () =>
+        boardFingerprint(
+          { players: PLAYER_ROWS, queue: ['a', 'b', 'c', 'd', 'e'], courts: [], history: {} },
+          ARENA_SETTINGS,
+        );
+      const batchInput = (overrides = {}) => ({
+        batchId: 'batch-0001-abcd',
+        base: { fetchedAt: 1, fingerprint: matchingFingerprint() },
+        settings: { targetScore: 11 },
+        events: [],
+        enteredAt: new Date(Date.now() - 60_000).toISOString(),
+        mode: 'strict',
+        ...overrides,
+      });
+      // This block installs $transaction implementations with a sync-specific
+      // tx shape; drop them after each test so later describes (which may
+      // rely on the default no-op $transaction) never see our tx object.
+      afterEach(() => {
+        prisma.$transaction.mockReset();
+      });
+
+      const makeTx = (overrides = {}) => ({
+        $executeRaw: vi.fn(),
+        offlineSyncBatch: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn() },
+        arena: { findUnique: vi.fn().mockResolvedValue({ ...ARENA_SETTINGS }) },
+        player: {
+          findMany: vi.fn().mockResolvedValue(PLAYER_ROWS),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          update: vi.fn(),
+          findFirst: vi.fn(),
+          aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 5 } }),
+          create: vi.fn(),
+        },
+        court: {
+          findMany: vi.fn().mockResolvedValue([]),
+          updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+          findUnique: vi.fn(),
+          update: vi.fn(),
+        },
+        courtSlot: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
+        partnership: { findMany: vi.fn().mockResolvedValue([]), upsert: vi.fn(), updateMany: vi.fn() },
+        match: { create: vi.fn() },
+        ...overrides,
+      });
+
+      it('rejects a malformed envelope without opening a transaction', async () => {
+        for (const bad of [
+          { batchId: 'x' }, // too short
+          { mode: 'yolo' },
+          { events: 'nope' },
+          { settings: { targetScore: 'eleven' } },
+        ]) {
+          const result = await actions.syncOfflineEvents(ARENA, batchInput(bad));
+          expect(result.error).toMatch(/invalid sync batch/i);
+        }
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('returns alreadySynced for a retried batch and applies nothing', async () => {
+        const tx = makeTx({
+          offlineSyncBatch: {
+            findUnique: vi.fn().mockResolvedValue({ id: 'batch-0001-abcd', appliedEventIds: ['e1'], skippedCount: 0 }),
+            create: vi.fn(),
+          },
+        });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.syncOfflineEvents(ARENA, batchInput({ events: [{ id: 'e1', type: 'checkOut', payload: { playerId: 'a' } }] }));
+        expect(result.alreadySynced).toBe(true);
+        expect(result.appliedIds).toEqual(['e1']);
+        expect(tx.offlineSyncBatch.create).not.toHaveBeenCalled();
+        expect(tx.player.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('strict mode: fingerprint mismatch returns divergence with ZERO writes', async () => {
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({
+            base: { fetchedAt: 1, fingerprint: 'deadbeef' },
+            events: [{ id: 'e1', type: 'checkOut', payload: { playerId: 'a' } }],
+          }),
+        );
+        expect(result.divergence).toBe(true);
+        expect(result.appliedIds).toBeUndefined();
+        expect(tx.player.updateMany).not.toHaveBeenCalled();
+        expect(tx.offlineSyncBatch.create).not.toHaveBeenCalled();
+      });
+
+      it('strict mode: matching fingerprint applies events in order and records the batch', async () => {
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({ events: [{ id: 'e1', type: 'checkOut', payload: { playerId: 'e' } }] }),
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.divergence).toBeUndefined();
+        expect(result.appliedIds).toEqual(['e1']);
+        expect(result.skipped).toEqual([]);
+        // The checkOut applied through the shared board-apply path.
+        expect(tx.player.updateMany).toHaveBeenCalledWith({
+          where: { id: 'e', arenaId: ARENA, leftAt: null, queueOrder: { not: null } },
+          data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
+        });
+        expect(tx.offlineSyncBatch.create).toHaveBeenCalledWith({
+          data: {
+            id: 'batch-0001-abcd',
+            arenaId: ARENA,
+            deviceLabel: null,
+            appliedEventIds: ['e1'],
+            skippedCount: 0,
+          },
+        });
+      });
+
+      it('strict mode: one failing event rolls the whole batch back as divergence', async () => {
+        // fillCourt fails its vacant->playing claim (court taken concurrently).
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({
+            events: [
+              { id: 'e1', type: 'fillCourt', payload: { courtId: 'c1' }, outcome: { players: ['a', 'b', 'c', 'd'], team1: ['a', 'b'], team2: ['c', 'd'] } },
+            ],
+          }),
+        );
+        expect(result.divergence).toBe(true);
+        expect(tx.offlineSyncBatch.create).not.toHaveBeenCalled();
+      });
+
+      it('best-effort mode: skips the failing event, applies the rest, reports both', async () => {
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({
+            mode: 'best-effort',
+            events: [
+              { id: 'e1', type: 'fillCourt', payload: { courtId: 'c1' }, outcome: { players: ['a', 'b', 'c', 'd'], team1: ['a', 'b'], team2: ['c', 'd'] } },
+              { id: 'e2', type: 'checkOut', payload: { playerId: 'e' } },
+            ],
+          }),
+        );
+        expect(result.appliedIds).toEqual(['e2']);
+        expect(result.skipped).toEqual([{ id: 'e1', type: 'fillCourt', reason: 'COURT_UNAVAILABLE' }]);
+        expect(tx.offlineSyncBatch.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ appliedEventIds: ['e2'], skippedCount: 1 }),
+        });
+      });
+
+      it('rejects an addPlayer event whose id is not a client off_ uuid', async () => {
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({
+            mode: 'best-effort',
+            events: [
+              { id: 'e1', type: 'addPlayer', payload: { playerId: 'evil-cuid-like', firstName: 'Mallory' } },
+              { id: 'e2', type: 'addPlayer', payload: { playerId: 'off_1b671a64-40d5-491e-99b0-da01ff1f3341', firstName: 'Ana' } },
+            ],
+          }),
+        );
+        expect(result.skipped).toEqual([{ id: 'e1', type: 'addPlayer', reason: 'BAD_EVENT' }]);
+        expect(result.appliedIds).toEqual(['e2']);
+        expect(tx.player.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ id: 'off_1b671a64-40d5-491e-99b0-da01ff1f3341', firstName: 'Ana' }),
+        });
+      });
+
+      it('rejects a checkOut event with no playerId instead of clearing the whole rack', async () => {
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({
+            mode: 'best-effort',
+            // A corrupted/crafted event with an empty payload: Prisma would
+            // drop the undefined `id` filter and updateMany would clear every
+            // queued player. It must be skipped as BAD_EVENT, never applied.
+            events: [
+              { id: 'e1', type: 'checkOut', payload: {} },
+              { id: 'e2', type: 'checkOut', payload: { playerId: 'e' } },
+            ],
+          }),
+        );
+        expect(result.skipped).toEqual([{ id: 'e1', type: 'checkOut', reason: 'BAD_EVENT' }]);
+        expect(result.appliedIds).toEqual(['e2']);
+        // Only the valid, id-scoped checkOut reached the database.
+        expect(tx.player.updateMany).toHaveBeenCalledTimes(1);
+        expect(tx.player.updateMany).toHaveBeenCalledWith({
+          where: { id: 'e', arenaId: ARENA, leftAt: null, queueOrder: { not: null } },
+          data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
+        });
+      });
+
+      it('best-effort mode: a structurally malformed event is skipped, later valid events still apply', async () => {
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({
+            mode: 'best-effort',
+            events: [
+              { id: 'e1' }, // missing type: structural BAD_EVENT
+              { id: 'e2', type: 'checkOut', payload: { playerId: 'e' } },
+            ],
+          }),
+        );
+        expect(result.divergence).toBeUndefined();
+        expect(result.skipped).toEqual([{ id: 'e1', type: undefined, reason: 'BAD_EVENT' }]);
+        expect(result.appliedIds).toEqual(['e2']);
+        expect(tx.offlineSyncBatch.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ appliedEventIds: ['e2'], skippedCount: 1 }),
+        });
+      });
+
+      it('clamps a future endMatch occurredAt to sync time for Match.createdAt', async () => {
+        const slots = [
+          { playerId: 'a', team: 1, player: { firstName: 'A', lastName: null, rating: 1000 } },
+          { playerId: 'b', team: 1, player: { firstName: 'B', lastName: null, rating: 1000 } },
+          { playerId: 'c', team: 2, player: { firstName: 'C', lastName: null, rating: 1000 } },
+          { playerId: 'd', team: 2, player: { firstName: 'D', lastName: null, rating: 1000 } },
+        ];
+        const tx = makeTx({
+          court: {
+            findMany: vi.fn().mockResolvedValue([]),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }), // claim succeeds
+            findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
+            update: vi.fn(),
+          },
+          courtSlot: { findMany: vi.fn().mockResolvedValue(slots), findFirst: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
+        });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const before = Date.now();
+        const result = await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({
+            mode: 'best-effort',
+            events: [
+              {
+                id: 'e1',
+                type: 'endMatch',
+                occurredAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // future clock
+                payload: { courtId: 'c1', score1: '11', score2: '7', autoMix: false },
+                outcome: { recycleOrder: ['d', 'a', 'c', 'b'], mixedOrder: null },
+              },
+            ],
+          }),
+        );
+        expect(result.appliedIds).toEqual(['e1']);
+        const created = tx.match.create.mock.calls[0][0].data;
+        expect(created.createdAt).toBeInstanceOf(Date);
+        expect(created.createdAt.getTime()).toBeGreaterThanOrEqual(before - 1000);
+        expect(created.createdAt.getTime()).toBeLessThanOrEqual(Date.now());
+        expect(created.score1).toBe(11);
+        expect(created.score2).toBe(7);
       });
     });
 

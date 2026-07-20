@@ -1,0 +1,227 @@
+'use client';
+
+import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
+
+/**
+ * Banners for the arena's offline session mode. Presentational only: all
+ * state and handlers live in the `useArenaOffline` hook (arena-offline.js).
+ */
+
+const barBase =
+  'mt-2 w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8';
+
+/**
+ * One-tap offer shown when the connection drops (or a server action fails)
+ * for a manager who is not yet running offline. Never auto-enters.
+ */
+export function OfflinePromptBanner({ onEnter, onDismiss, blocked }) {
+  return (
+    <div className={barBase}>
+      <div
+        role="alert"
+        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/95 px-4 py-3 text-amber-900 shadow-lg shadow-amber-900/10 animate-fade-in"
+      >
+        <p className="min-w-0 text-sm font-semibold leading-snug">
+          {blocked
+            ? 'Connection lost. Offline mode is already running in another tab of this arena.'
+            : 'Connection lost. Keep running the board offline? Changes save on this device until you reconnect.'}
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          {!blocked && (
+            <button
+              type="button"
+              onClick={onEnter}
+              className="rounded-lg bg-amber-600 px-3.5 py-2 text-sm font-bold text-white transition-colors hover:bg-amber-700"
+            >
+              Run offline
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="rounded-lg px-3 py-2 text-sm font-bold text-amber-800/80 transition-colors hover:bg-amber-100 hover:text-amber-900"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Persistent banner while an offline session is running: pending change
+ * count, the sync affordance, and exit (confirm + discard handled by the
+ * caller). `syncError` is the transient "couldn't reach the server" note
+ * after a failed attempt; syncing disables both buttons.
+ */
+export function OfflineActiveBanner({ pendingCount, syncing, syncError, onSync, onExit }) {
+  return (
+    <div className={barBase}>
+      <div
+        role="status"
+        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-100/95 px-4 py-3 text-amber-950 shadow-lg shadow-amber-900/10"
+      >
+        <div className="min-w-0">
+          <p className="text-sm font-semibold leading-snug">
+            <span className="mr-2 inline-flex items-center gap-1.5 rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide">
+              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-amber-600" />
+              Offline
+            </span>
+            Running the board locally
+            {' · '}
+            {pendingCount === 0
+              ? 'no changes yet'
+              : `${pendingCount} ${pendingCount === 1 ? 'change' : 'changes'} saved on this device`}
+          </p>
+          {syncError && (
+            <p className="mt-1 text-xs font-medium text-amber-800">{syncError}</p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onSync}
+            disabled={syncing}
+            className="rounded-lg bg-amber-600 px-3.5 py-2 text-sm font-bold text-white transition-colors hover:bg-amber-700 disabled:opacity-60"
+          >
+            {syncing ? 'Syncing…' : 'Sync now'}
+          </button>
+          <button
+            type="button"
+            onClick={onExit}
+            disabled={syncing}
+            className="rounded-lg border border-amber-400 px-3.5 py-2 text-sm font-bold text-amber-900 transition-colors hover:bg-amber-200 disabled:opacity-60"
+          >
+            Exit offline
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Shared modal chrome for the two sync-outcome dialogs below. */
+function SyncDialogShell({ title, children }) {
+  // iOS-safe scroll lock + portal to <body>, matching the app's other modals
+  // (skip-picker-modal.js, court-edit-modal.js). A plain `overflow: hidden`
+  // doesn't stop rubber-band scrolling in standalone PWA mode, and rendering
+  // inline lets an ancestor's overflow/transform/filter clip the overlay: pin
+  // <body> with `position: fixed` offset by the current scrollY, restore on
+  // unmount, and portal out of the arena tree.
+  useEffect(() => {
+    const { style } = document.body;
+    const y = window.scrollY;
+    style.position = 'fixed';
+    style.top = `-${y}px`;
+    style.left = '0';
+    style.right = '0';
+    style.width = '100%';
+    return () => {
+      style.position = '';
+      style.top = '';
+      style.left = '';
+      style.right = '';
+      style.width = '';
+      window.scrollTo(0, y);
+    };
+  }, []);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="bg-white rounded-2xl border border-slate-200 max-w-md w-full shadow-2xl animate-scale-up p-6 space-y-4"
+      >
+        <h3 className="font-display text-base font-extrabold text-slate-900">{title}</h3>
+        {children}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+const dialogButton =
+  'w-full rounded-xl px-4 py-2.5 text-sm font-bold transition-colors';
+
+/**
+ * Divergence decision: the board changed while this device was away (or an
+ * event no longer applied in strict mode). The pending log is untouched
+ * until the manager picks a path.
+ */
+export function OfflineDivergenceDialog({ pendingCount, syncing, onBestEffort, onDiscard, onKeepOffline }) {
+  return (
+    <SyncDialogShell title="The arena changed while you were offline">
+      <p className="text-sm text-slate-600">
+        Your {pendingCount} offline {pendingCount === 1 ? 'change' : 'changes'} no longer
+        match the live board exactly, so nothing was applied yet. Apply what still
+        fits (recorded match scores almost always survive), or discard the offline
+        session.
+      </p>
+      <div className="space-y-2">
+        <button
+          type="button"
+          onClick={onBestEffort}
+          disabled={syncing}
+          className={`${dialogButton} bg-emerald-700 text-white hover:bg-emerald-800 disabled:opacity-60`}
+        >
+          {syncing ? 'Applying…' : 'Apply what still fits'}
+        </button>
+        <button
+          type="button"
+          onClick={onDiscard}
+          disabled={syncing}
+          className={`${dialogButton} border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-60`}
+        >
+          Discard my offline changes
+        </button>
+        <button
+          type="button"
+          onClick={onKeepOffline}
+          disabled={syncing}
+          className={`${dialogButton} text-slate-600 hover:bg-slate-100 disabled:opacity-60`}
+        >
+          Decide later (stay offline)
+        </button>
+      </div>
+    </SyncDialogShell>
+  );
+}
+
+/**
+ * Sync refused outright (e.g. manager access was revoked while offline).
+ * The log is never silently dropped: the manager can copy it as JSON for
+ * hand-off before discarding.
+ */
+export function OfflineBlockedDialog({ error, copied, onCopy, onDiscard, onClose }) {
+  return (
+    <SyncDialogShell title="These changes can't sync">
+      <p className="text-sm text-slate-600">{error}</p>
+      <div className="space-y-2">
+        <button
+          type="button"
+          onClick={onCopy}
+          className={`${dialogButton} border border-slate-300 text-slate-800 hover:bg-slate-100`}
+        >
+          {copied ? 'Copied!' : 'Copy changes as JSON'}
+        </button>
+        <button
+          type="button"
+          onClick={onDiscard}
+          className={`${dialogButton} border border-red-200 text-red-700 hover:bg-red-50`}
+        >
+          Discard my offline changes
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className={`${dialogButton} text-slate-600 hover:bg-slate-100`}
+        >
+          Close
+        </button>
+      </div>
+    </SyncDialogShell>
+  );
+}

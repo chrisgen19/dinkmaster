@@ -42,3 +42,16 @@ export function isPublicNavigation({ request, url }) {
 export function isNavigation({ request }) {
   return request.mode === "navigate";
 }
+
+/**
+ * Whether a pathname is an arena BOARD page (`/arena/<id>`, optionally with a
+ * trailing slash). Deliberately excludes deeper arena routes like
+ * `/arena/<id>/settings/...`: only the board has an offline shell
+ * (/offline-board renders the IndexedDB snapshot); everything else falls back
+ * to the generic offline page. Takes a plain pathname (not the matcher param
+ * object) because the service worker's fallback matcher only receives the
+ * failed Request and must parse the URL itself.
+ */
+export function isArenaPathname(pathname) {
+  return /^\/arena\/[^/]+\/?$/.test(pathname);
+}

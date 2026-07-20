@@ -33,16 +33,20 @@ const revision =
 export const { dynamic, dynamicParams, revalidate, generateStaticParams, GET } =
   createSerwistRoute({
     swSrc: "src/app/sw.js",
-    // Precache the offline page so the fallback shows intact even on a route
-    // the user never visited online.
+    // Precache the offline pages so the fallbacks show intact even on a
+    // route the user never visited online. The offline board shell backs
+    // /arena/[id] navigations (see sw.js fallbacks).
     //
-    // ROUTES ONLY here. Static files under public/ (the logo this page
-    // renders included) are already in the injected manifest with
+    // ROUTES ONLY here. Static files under public/ (the logo these pages
+    // render included) are already in the injected manifest with
     // content-hash revisions; listing one again with a different revision
     // creates a conflicting duplicate that makes the Serwist constructor
     // THROW, so the whole service worker fails evaluation and never
     // registers. (That exact bug shipped with the /icons/icon-192.png entry
     // that used to sit in this list.)
-    additionalPrecacheEntries: [{ url: "/offline", revision }],
+    additionalPrecacheEntries: [
+      { url: "/offline", revision },
+      { url: "/offline-board", revision },
+    ],
     useNativeEsbuild: true,
   });

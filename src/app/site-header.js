@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import Image from 'next/image';
+import { OfflineIndicator } from './offline-indicator';
 
 /**
  * The DinkMaster brand tile — the pickleball logo in a rounded badge with a soft
@@ -118,6 +119,7 @@ export function SiteHeader({ variant = 'home', arenaName, arenaSubtitle, childre
           className="animate-header-rise flex items-center gap-2 md:gap-4 shrink-0"
           style={{ animationDelay: '90ms' }}
         >
+          <OfflineIndicator />
           {children}
         </div>
       </div>
