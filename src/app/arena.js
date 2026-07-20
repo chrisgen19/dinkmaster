@@ -23,6 +23,9 @@ import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE, DEF
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
 import { createStateFreshnessGuard } from '@/lib/state-freshness';
 import { saveArenaSnapshot } from '@/lib/offline-store';
+import { useArenaOffline } from './arena-offline';
+import { OfflineActiveBanner, OfflinePromptBanner } from './arena-offline-banner';
+import { OFFLINE_UNAVAILABLE_MESSAGE } from './arena-offline-state';
 import { computeSessionStats } from '@/lib/session-stats';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
 import { formatShortName, profileHref } from '@/lib/player-display';
@@ -162,6 +165,95 @@ export default function Arena({
   // because the prop-refresh resync block right after this needs to call
   // `setLastSessionResetAt` — declaring it later would TDZ-throw on render.
   const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
+
+  // Current board in the getState shape, as a ref so offline-mode callbacks
+  // (resolve command, persist snapshot) read the LIVE board without being
+  // recreated on every board change. Initialized once here (the lint-safe
+  // render pattern) and kept in sync by the effect below plus direct writes
+  // in the two apply callbacks.
+  const boardStateRef = useRef(null);
+  if (boardStateRef.current == null) {
+    boardStateRef.current = {
+      players: initialState.players,
+      queue: initialState.queue,
+      courts: initialState.courts,
+      matchHistory: initialState.matchHistory,
+      history: initialState.history,
+      lastSessionResetAt: initialState.lastSessionResetAt,
+    };
+  }
+  // Stamp of the last applied server snapshot: recorded as the offline
+  // session's base (`pending.base.fetchedAt`) so the Phase 3 sync can tell
+  // which server state the event log forked from. Plain state (not a ref) so
+  // every consumer stays clean under react-hooks/refs; it changes only when
+  // fresher server payloads apply, which re-render anyway.
+  const [lastServerFetchedAt, setLastServerFetchedAt] = useState(initialState.fetchedAt ?? null);
+  const advanceServerStamp = (fetchedAt) => {
+    if (fetchedAt) setLastServerFetchedAt((prev) => (fetchedAt > (prev ?? 0) ? fetchedAt : prev));
+  };
+
+  // Post-commit catch-all keeping the board ref current for every path that
+  // sets board state (including the render-time prop resync, which may not
+  // touch refs itself under react-hooks/refs).
+  useEffect(() => {
+    boardStateRef.current = { players, queue, courts, matchHistory, history, lastSessionResetAt };
+  }, [players, queue, courts, matchHistory, history, lastSessionResetAt]);
+
+  // Write a board produced by the LOCAL engine (offline mode) into state.
+  // Bypasses the freshness guard on purpose: local states carry no fetchedAt
+  // and must not compete with server stamps. The ref is written immediately
+  // (not just via the effect) so two quick offline commands in the same tick
+  // can't resolve against a stale board.
+  const applyLocalState = useCallback((state) => {
+    boardStateRef.current = {
+      players: state.players,
+      queue: state.queue,
+      courts: state.courts,
+      matchHistory: state.matchHistory,
+      history: state.history,
+      lastSessionResetAt: state.lastSessionResetAt ?? null,
+    };
+    setPlayers(state.players);
+    setQueue(state.queue);
+    setCourts(state.courts);
+    setMatchHistory(state.matchHistory);
+    setHistory(state.history);
+    if ('lastSessionResetAt' in state) setLastSessionResetAt(state.lastSessionResetAt);
+  }, []);
+
+  // Save the current board as this arena's IndexedDB snapshot: the offline
+  // shell renders it, and an offline session replays its event log over it.
+  const persistSnapshot = useCallback(
+    () =>
+      saveArenaSnapshot({
+        arenaId,
+        arenaName,
+        savedAt: Date.now(),
+        canManage,
+        viewerRole,
+        viewerUserId,
+        matchmaking: matchmakingProp,
+        matchDefaults,
+        state: boardStateRef.current,
+      }),
+    [arenaId, arenaName, canManage, viewerRole, viewerUserId, matchmakingProp, matchDefaults],
+  );
+
+  const getBoardState = useCallback(() => boardStateRef.current, []);
+
+  // Offline session mode (manager-only): local board mutations recorded to an
+  // IndexedDB event log while the connection is down. See arena-offline.js.
+  const offline = useArenaOffline({
+    arenaId,
+    canManage,
+    settingsProps: { matchmaking: matchmakingProp, matchDefaults },
+    getBoardState,
+    applyLocalState,
+    lastServerFetchedAt,
+    persistSnapshot,
+  });
+  const { offlineActive } = offline;
+
   // Resync local rack state when the server refetches (e.g. after a child
   // component's `router.refresh()`). Without this, actions that only refresh
   // — link approvals, member removals — leave the rack UI showing the pre-
@@ -178,7 +270,12 @@ export default function Arena({
     // board backward. When the payload is fresh (the common case) it applies
     // and advances the stamp, which also stops an older queued SSE frame
     // from overwriting it afterwards.
-    if (shouldApplyServerState(arenaId, initialState)) {
+    // While an offline session runs, server payloads must NOT touch the
+    // board (the local event log owns it). Gated on the STATE flag (render
+    // code may not read refs) and checked first so the freshness stamp
+    // doesn't advance on skipped frames.
+    if (!offline.offlineActive && shouldApplyServerState(arenaId, initialState)) {
+      advanceServerStamp(initialState.fetchedAt);
       setPlayers(initialState.players);
       setQueue(initialState.queue);
       setCourts(initialState.courts);
@@ -442,10 +539,20 @@ export default function Arena({
   // identity (setters are stable) so the SSE effect doesn't re-subscribe.
   const applyServerState = useCallback((state) => {
     if (!state) return;
+    // Offline session gate: while the local event log owns the board, no
+    // server payload (SSE frame or action result) may overwrite it. Checked
+    // before the freshness guard so skipped frames don't advance the stamp.
+    // Uses the STATE flag (this callback stays ref-free for react-hooks/refs);
+    // the identity change on offline toggle just re-subscribes the SSE
+    // stream, which is idle during an offline session anyway.
+    if (offlineActive) return;
     // Monotonic guard (see `shouldApplyServerState`): ignore a snapshot older
     // than one already applied, so a slow action response can't clobber a
     // newer SSE push that landed first (and vice-versa).
     if (!shouldApplyServerState(arenaId, state)) return;
+    setLastServerFetchedAt((prev) =>
+      state.fetchedAt && state.fetchedAt > (prev ?? 0) ? state.fetchedAt : prev,
+    );
     setPlayers(state.players);
     setQueue(state.queue);
     setCourts(state.courts);
@@ -458,7 +565,7 @@ export default function Arena({
     if ('lastSessionResetAt' in state) {
       setLastSessionResetAt(state.lastSessionResetAt);
     }
-  }, [arenaId]);
+  }, [arenaId, offlineActive]);
 
   // Apply a server action result to local state (state, error, notification).
   const applyResult = (result) => {
@@ -569,34 +676,25 @@ export default function Arena({
   // hold only board data that is already publicly readable via this page and
   // its SSE stream, plus the viewer's own role flags. Failures are swallowed
   // inside offline-store; a private-mode browser just gets no offline copy.
+  // PAUSED during an offline session: the stored snapshot is the base the
+  // pending event log replays over, so overwriting it with locally-mutated
+  // state would double-apply events on resume/sync.
   useEffect(() => {
-    const save = () => {
-      saveArenaSnapshot({
-        arenaId,
-        arenaName,
-        savedAt: Date.now(),
-        canManage,
-        viewerRole,
-        viewerUserId,
-        matchmaking: matchmakingProp,
-        matchDefaults,
-        state: { players, queue, courts, matchHistory, history, lastSessionResetAt },
-      });
-    };
+    if (offline.offlineActive) return;
     // requestIdleCallback keeps the write off the interaction path; the
     // timeout fallback covers Safari (no rIC) with a small fixed delay.
     let idleId = null;
     let timerId = null;
     if ('requestIdleCallback' in window) {
-      idleId = window.requestIdleCallback(save, { timeout: 2000 });
+      idleId = window.requestIdleCallback(persistSnapshot, { timeout: 2000 });
     } else {
-      timerId = setTimeout(save, 500);
+      timerId = setTimeout(persistSnapshot, 500);
     }
     return () => {
       if (idleId !== null) window.cancelIdleCallback(idleId);
       if (timerId !== null) clearTimeout(timerId);
     };
-  }, [arenaId, arenaName, canManage, viewerRole, viewerUserId, matchmakingProp, matchDefaults, players, queue, courts, matchHistory, history, lastSessionResetAt]);
+  }, [persistSnapshot, offline.offlineActive, players, queue, courts, matchHistory, history, lastSessionResetAt]);
 
   // Run a server action inside a transition and reconcile the returned state.
   // `refresh` additionally re-fetches the server-rendered props (used when an
@@ -604,10 +702,35 @@ export default function Arena({
   // Members tab's walk-in list sourced from `viewerLinkContext`).
   const run = (action, { sound = true, refresh = false } = {}) => {
     startTransition(async () => {
-      const result = await action();
-      applyResult(result);
+      try {
+        const result = await action();
+        applyResult(result);
+        if (sound) playPaddleSound();
+        if (refresh && !result?.error) router.refresh();
+      } catch {
+        // A server action that throws (rather than returning { error }) is a
+        // network/transport failure. Nothing was applied locally, so telling
+        // the manager to redo the action is always safe; the offline prompt
+        // offers to keep running the board locally.
+        setErrorMsg('Connection problem: that change was not saved. Please try again.');
+        offline.notifyActionFailed();
+      }
+    });
+  };
+
+  // Offline-mode counterpart of `run`: resolve the command through the local
+  // board engine, persist the event, apply the new board, and surface the
+  // same error/notification banners the server path uses.
+  const runLocalCommand = (command, { sound = true } = {}) => {
+    startTransition(async () => {
+      const result = await offline.runLocal(command);
+      setErrorMsg(result.error || '');
+      if (result.error || result.noop) return;
+      if (result.notification) {
+        setNotification(result.notification);
+        setTimeout(() => setNotification(''), 5000);
+      }
       if (sound) playPaddleSound();
-      if (refresh && !result?.error) router.refresh();
     });
   };
 
@@ -618,11 +741,13 @@ export default function Arena({
 
   const handleShuffleQueue = () => {
     if (!canManage || queue.length < 2) return;
+    if (offline.offlineActive) return runLocalCommand({ type: 'shuffleQueue' });
     run(() => shuffleQueue(arenaId));
   };
 
   const handleFillCourt = (courtId) => {
     if (!canManage) return;
+    if (offline.offlineActive) return runLocalCommand({ type: 'fillCourt', courtId });
     run(() => fillCourt(arenaId, courtId));
   };
 
@@ -634,6 +759,9 @@ export default function Arena({
   // Members → Walk-ins, which reads from `viewerLinkContext`, not local state.
   const handleUnrackPlayer = (id) => {
     if (!canManage) return;
+    // Offline: no `refresh` counterpart exists (server props can't refetch),
+    // so the Members walk-in list catches up after the session syncs.
+    if (offline.offlineActive) return runLocalCommand({ type: 'checkOut', playerId: id });
     run(() => checkOutPlayer(arenaId, id), { refresh: true });
   };
 
@@ -661,6 +789,8 @@ export default function Arena({
       setSkipPickerSkippedId(id);
       return;
     }
+    // Offline mode is manager-only, so `isManager` is always true here.
+    if (offline.offlineActive) return runLocalCommand({ type: 'skipPlayer', playerId: id, isManager: true });
     run(() => skipPlayer(arenaId, id));
   };
 
@@ -672,6 +802,31 @@ export default function Arena({
   const handleConfirmSkipWithReplacement = (replacementId) => {
     if (!skipPickerSkippedId || !replacementId) return;
     const skippedId = skipPickerSkippedId;
+    if (offline.offlineActive) {
+      // Mirror the online race handling: the engine returns the same
+      // "no longer available" copy when the picked replacement left the
+      // waiting pool, and the picker stays open for a re-pick.
+      startTransition(async () => {
+        const result = await offline.runLocal({
+          type: 'skipPlayer',
+          playerId: skippedId,
+          replacementId,
+          isManager: true,
+        });
+        if (result.error && /no longer available/i.test(result.error)) {
+          setSkipPickerError(result.error);
+          return;
+        }
+        setErrorMsg(result.error || '');
+        if (result.notification) {
+          setNotification(result.notification);
+          setTimeout(() => setNotification(''), 5000);
+        }
+        setSkipPickerError('');
+        setSkipPickerSkippedId(null);
+      });
+      return;
+    }
     startTransition(async () => {
       const result = await skipPlayer(arenaId, skippedId, replacementId);
       const raced = result?.error && /no longer available/i.test(result.error);
@@ -718,6 +873,14 @@ export default function Arena({
   const handleConfirmCancelFill = () => {
     if (!courtToCancel) return;
     const courtId = courtToCancel.id;
+    if (offline.offlineActive) {
+      startTransition(async () => {
+        const result = await offline.runLocal({ type: 'cancelFill', courtId });
+        setErrorMsg(result.error || '');
+        setCourtToCancel(null);
+      });
+      return;
+    }
     startTransition(async () => {
       const result = await cancelFill(arenaId, courtId);
       applyResult(result);
@@ -726,8 +889,14 @@ export default function Arena({
   };
 
   // Open the manual team editor for a live court (manager-only).
+  // Lineup editing is outside the offline command scope (complex diff, rare
+  // mid-session), so the editor is blocked at open while offline.
   const handleRequestEditCourt = (court) => {
     if (!canManage) return;
+    if (offline.offlineActive) {
+      setErrorMsg(OFFLINE_UNAVAILABLE_MESSAGE);
+      return;
+    }
     setEditError('');
     setCourtToEdit(court);
   };
@@ -766,21 +935,36 @@ export default function Arena({
   const handleEndMatchWithScore = (courtId, score1, score2) => {
     setScoreModalOpen(false);
     setSelectedCourtForScore(null);
+    if (offline.offlineActive) {
+      return runLocalCommand({ type: 'endMatch', courtId, score1, score2, autoMix });
+    }
     run(() => endMatch(arenaId, courtId, score1, score2, autoMix));
   };
 
   const handleAddCourt = () => {
     if (!canManage) return;
+    if (offline.offlineActive) {
+      setErrorMsg(OFFLINE_UNAVAILABLE_MESSAGE);
+      return;
+    }
     run(() => addCourt(arenaId));
   };
 
   const handleRemoveCourt = (id) => {
     if (!canManage) return;
+    if (offline.offlineActive) {
+      setErrorMsg(OFFLINE_UNAVAILABLE_MESSAGE);
+      return;
+    }
     run(() => removeCourt(arenaId, id));
   };
 
   const handlePrepareAndOpen = () => {
     if (!canManage) return;
+    if (offline.offlineActive) {
+      setErrorMsg(OFFLINE_UNAVAILABLE_MESSAGE);
+      return;
+    }
     if (!window.confirm(
       'Start a new session? This empties the rack and resets the partnership matrix so tonight\'s mix is unbiased. Lifetime stats and match history are not touched.',
     )) return;
@@ -802,6 +986,10 @@ export default function Arena({
   };
 
   const handleSaveSchedule = (next) => {
+    if (offline.offlineActive) {
+      setScheduleError(OFFLINE_UNAVAILABLE_MESSAGE);
+      return;
+    }
     startTransition(async () => {
       try {
         const result = await updateArenaSchedule(arenaId, next);
@@ -894,6 +1082,27 @@ export default function Arena({
     tabRefs.current[nextId]?.focus();
   };
 
+  // Start an offline session from the connection-lost prompt.
+  const handleEnterOffline = () => {
+    startTransition(async () => {
+      const entered = await offline.enterOffline();
+      if (!entered) {
+        setErrorMsg('Could not start offline mode on this device (storage unavailable or another tab is already running it).');
+      }
+    });
+  };
+
+  // Exit the offline session. Until sync ships (Phase 3), exiting discards
+  // the pending log, so the confirm spells that out with the exact count.
+  const handleExitOffline = () => {
+    const message =
+      offline.pendingCount > 0
+        ? `Exit offline mode and DISCARD ${offline.pendingCount} unsynced ${offline.pendingCount === 1 ? 'change' : 'changes'}? Syncing offline changes to the server is not available yet.`
+        : 'Exit offline mode and return to the live board?';
+    if (!window.confirm(message)) return;
+    offline.exitOfflineDiscard();
+  };
+
   // Request to join; an owner/organizer must approve before membership is granted.
   const handleRequestJoin = () => {
     startTransition(async () => {
@@ -924,6 +1133,17 @@ export default function Arena({
         canManage={canManage}
         invites={invites}
       />
+
+      {offline.offlineActive && (
+        <OfflineActiveBanner pendingCount={offline.pendingCount} onExit={handleExitOffline} />
+      )}
+      {!offline.offlineActive && offline.promptVisible && canManage && (
+        <OfflinePromptBanner
+          blocked={offline.otherTabActive}
+          onEnter={handleEnterOffline}
+          onDismiss={offline.dismissPrompt}
+        />
+      )}
 
       <ArenaSessionPrepBanner
         arenaId={arenaId}
@@ -1333,6 +1553,7 @@ export default function Arena({
           pendingRequests={pendingRequests}
           pendingLinkRequests={pendingLinkRequests}
           onApplyResult={applyResult}
+          offlineRunLocal={offline.offlineActive ? offline.runLocal : null}
           onClose={() => setRosterModalOpen(false)}
         />
       )}

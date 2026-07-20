@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { applyEvent } from '@/lib/board-engine';
 import { ON_DECK_SIZE } from '@/lib/matchmaking';
 import { listArenaSnapshots, loadArenaSnapshot, loadPendingLog } from '@/lib/offline-store';
+import { replayEvents } from '../arena-offline-state';
 import { RetryButton } from '../offline/retry-button';
 
 /** Display name: "First Last", or just "First" when no last name is set. */
@@ -17,21 +17,15 @@ function arenaIdFromLocation() {
 
 /**
  * Rebuild the freshest local board: the saved snapshot plus any pending
- * offline events replayed through the pure engine (none exist until Phase 2
- * ships writes; the hook keeps this shell forward-compatible). Stops at the
- * first event that no longer applies rather than guessing.
+ * offline events replayed through the pure engine. The pending log stores the
+ * settings snapshot the events were resolved under; fall back to the arena
+ * snapshot's props for a log written before entry (defensive only).
  */
 function buildLocalBoard(snapshot, pending) {
-  let state = snapshot.state;
-  let pendingCount = 0;
-  const settings = { targetScore: snapshot.matchDefaults?.targetScore, ...snapshot.matchmaking };
-  for (const event of pending?.events ?? []) {
-    const result = applyEvent(state, settings, event);
-    if (result.error || !result.changed) break;
-    state = result.state;
-    pendingCount++;
-  }
-  return { state, pendingCount };
+  const settings =
+    pending?.settings ?? { targetScore: snapshot.matchDefaults?.targetScore, ...snapshot.matchmaking };
+  const { state, appliedCount } = replayEvents(snapshot.state, settings, pending?.events);
+  return { state, pendingCount: appliedCount };
 }
 
 function OfflineCourtCard({ court, playersById }) {

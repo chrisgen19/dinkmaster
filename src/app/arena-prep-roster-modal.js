@@ -44,6 +44,10 @@ function byPlayerName(a, b) {
  * @param {Array<{requestId:string,userId:string,name:string}>} props.pendingRequests
  * @param {Array<{requestId:string,memberName:string,playerName:string}>} props.pendingLinkRequests
  * @param {(state: object) => void} props.onApplyResult - parent's state-reconcile callback (same shape as run())
+ * @param {(command: object) => Promise<{error?: string, noop?: boolean}>} [props.offlineRunLocal] -
+ *   when set, the arena is in offline session mode: check-in/out and walk-in
+ *   adds route through the local board engine instead of server actions, and
+ *   request approvals (membership rows, server-only) are unavailable.
  * @param {() => void} props.onClose
  */
 export function ArenaPrepRosterModal({
@@ -54,6 +58,7 @@ export function ArenaPrepRosterModal({
   pendingRequests = [],
   pendingLinkRequests = [],
   onApplyResult,
+  offlineRunLocal = null,
   onClose,
 }) {
   const router = useRouter();
@@ -125,11 +130,24 @@ export function ArenaPrepRosterModal({
     });
   };
 
+  // Offline path: the parent's runLocal applies board state itself, so this
+  // only needs to surface errors inside the modal.
+  const runOffline = (command) => {
+    startTransition(async () => {
+      const result = await offlineRunLocal(command);
+      setError(result?.error || '');
+    });
+  };
+
   const handleToggleMember = (row) => {
     if (!row.player) {
       // A member without a Player row is unexpected (approveJoinRequest
       // creates one); surface a clear error rather than silently no-oping.
       setError(`${row.name} has no player record yet.`);
+      return;
+    }
+    if (offlineRunLocal) {
+      runOffline({ type: row.checkedIn ? 'checkOut' : 'checkIn', playerId: row.player.id });
       return;
     }
     run(() =>
@@ -140,6 +158,10 @@ export function ArenaPrepRosterModal({
   };
 
   const handleToggleWalkIn = (row) => {
+    if (offlineRunLocal) {
+      runOffline({ type: row.checkedIn ? 'checkOut' : 'checkIn', playerId: row.id });
+      return;
+    }
     run(() =>
       row.checkedIn ? checkOutPlayer(arenaId, row.id) : checkInPlayer(arenaId, row.id),
     );
@@ -149,6 +171,12 @@ export function ArenaPrepRosterModal({
   // delete ArenaMembership / JoinRequest / LinkRequest rows, which arrive
   // via the parent's server-rendered props. Router.refresh() pulls them.
   const handleRequest = (fn) => {
+    if (offlineRunLocal) {
+      // Approvals mutate membership rows on the server; there is no local
+      // counterpart, so they wait until the arena is back online.
+      setError('Requests can only be handled while online.');
+      return;
+    }
     setError('');
     startTransition(async () => {
       try {
@@ -177,6 +205,10 @@ export function ArenaPrepRosterModal({
     const last = newLast;
     setNewFirst('');
     setNewLast('');
+    if (offlineRunLocal) {
+      runOffline({ type: 'addPlayer', firstName: first, lastName: last });
+      return;
+    }
     run(() => addPlayer(arenaId, first, last), { refresh: true });
   };
 
