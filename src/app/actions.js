@@ -1488,6 +1488,13 @@ export async function syncOfflineEvents(arenaId, input) {
           skippedCount: skipped.length,
         },
       });
+      // The offline session this batch came from is over: release any
+      // advisory hold in the same transaction so other viewers' "running
+      // the board offline" banner clears with the same state push.
+      await tx.arena.updateMany({
+        where: { id: arenaId },
+        data: { offlineHolderLabel: null, offlineHeldAt: null },
+      });
       outcome = { appliedIds, skipped };
     });
   } catch (err) {
@@ -1511,6 +1518,46 @@ export async function syncOfflineEvents(arenaId, input) {
     skipped: outcome?.skipped ?? [],
     ...(outcome?.alreadySynced ? { alreadySynced: true } : {}),
   };
+}
+
+/**
+ * Declare an advisory "this device is running the board offline" hold.
+ * Fired best-effort by the client when a manager enters offline mode while
+ * the server is still reachable (flaky connection, preemptive entry); a
+ * fully offline device simply can't declare, which is fine: the hold is a
+ * COURTESY BANNER for other viewers, never an enforcement mechanism. The
+ * sync fingerprint check is what protects correctness. Last writer wins.
+ * The Arena NOTIFY trigger broadcasts the change over the existing SSE
+ * stream. Cleared by {@link releaseOfflineHold} and inside
+ * {@link syncOfflineEvents}.
+ */
+export async function declareOfflineHold(arenaId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  // Label from the authenticated account, not client input: "First L."
+  // Fall back through the core `name` field so a session missing the
+  // additional fields still yields something presentable.
+  const first = guard.user.firstName || guard.user.name?.split(' ')[0] || 'A manager';
+  const lastInitial = guard.user.lastName?.charAt(0);
+  const label = lastInitial ? `${first} ${lastInitial}.` : first;
+  await prisma.arena.updateMany({
+    where: { id: arenaId },
+    data: { offlineHolderLabel: label, offlineHeldAt: new Date() },
+  });
+  return {};
+}
+
+/** Clear the advisory offline hold (manager-gated; see {@link declareOfflineHold}). */
+export async function releaseOfflineHold(arenaId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  await prisma.arena.updateMany({
+    where: { id: arenaId },
+    data: { offlineHolderLabel: null, offlineHeldAt: null },
+  });
+  return {};
 }
 
 /**

@@ -11,6 +11,24 @@ import { applyEvent } from '@/lib/board-engine';
 export const OFFLINE_UNAVAILABLE_MESSAGE =
   'Not available offline. Reconnect to use this.';
 
+// How long an advisory offline hold stays credible without a release. A
+// dead/lost device never releases its hold, so viewers stop showing the
+// banner once the stamp is older than a generous open-play session.
+export const OFFLINE_HOLD_TTL_MS = 8 * 60 * 60 * 1000;
+
+/**
+ * Whether an advisory hold from getState should still be surfaced.
+ *
+ * @param {{label: string, heldAt: string}|null|undefined} hold
+ * @param {number} [now] - epoch ms, injectable for tests
+ */
+export function isHoldActive(hold, now = Date.now()) {
+  if (!hold?.label || !hold.heldAt) return false;
+  const heldAt = Date.parse(hold.heldAt);
+  if (!Number.isFinite(heldAt)) return false;
+  return now - heldAt < OFFLINE_HOLD_TTL_MS;
+}
+
 /**
  * Map the arena page's props onto the settings object the board engine
  * consumes. Captured ONCE at offline entry and stored on the pending log, so

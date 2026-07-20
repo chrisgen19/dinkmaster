@@ -85,6 +85,17 @@ model Arena {
   lastSessionResetAt DateTime?
   autoResetOnSession Boolean   @default(true)
 
+  // Advisory offline hold (Phase 4 of offline session mode). Set by
+  // `declareOfflineHold` when a manager starts running the board offline
+  // while still reachable; cleared by `releaseOfflineHold` and inside the
+  // `syncOfflineEvents` transaction. Surfaced through getState so other
+  // viewers see a soft "X is running the board offline" warning. NEVER
+  // enforced: a truly offline device can't declare it, and the sync
+  // fingerprint check is what protects correctness. Consumers must treat a
+  // stale `offlineHeldAt` as expired (a dead device never releases).
+  offlineHolderLabel String?
+  offlineHeldAt      DateTime?
+
   owner        User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   players      Player[]
   courts       Court[]

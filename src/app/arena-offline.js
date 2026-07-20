@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { resolveCommand } from '@/lib/board-engine';
 import { boardFingerprint } from '@/lib/board-fingerprint';
 import { clearPendingLog, loadArenaSnapshot, loadPendingLog, savePendingLog } from '@/lib/offline-store';
-import { syncOfflineEvents } from './actions';
+import { declareOfflineHold, releaseOfflineHold, syncOfflineEvents } from './actions';
 import { appendEvent, createPendingLog, engineSettings, replayEvents } from './arena-offline-state';
 
 /**
@@ -209,6 +209,12 @@ export function useArenaOffline({
     });
     if (!(await savePendingLog(log))) return false;
     activate(log);
+    // Advisory hold, fire-and-forget: reaches the server only when it is
+    // still reachable (flaky connection / preemptive entry). Other viewers
+    // then see "X is running the board offline" via the SSE push. A truly
+    // offline device simply can't declare, which is fine: the hold is a
+    // courtesy banner, and the sync fingerprint protects correctness.
+    declareOfflineHold(arenaId).catch(() => {});
     return true;
   }, [
     arenaId,
@@ -346,6 +352,13 @@ export function useArenaOffline({
    */
   const exitOfflineDiscard = useCallback(async () => {
     await clearPendingLog(arenaId);
+    // Best effort: fails fast while offline, in which case the hold expires
+    // via its client-side TTL instead (see isHoldActive).
+    try {
+      await releaseOfflineHold(arenaId);
+    } catch {
+      // Unreachable server: nothing else to do.
+    }
     channelRef.current?.postMessage({ kind: 'inactive' });
     window.location.reload();
   }, [arenaId]);

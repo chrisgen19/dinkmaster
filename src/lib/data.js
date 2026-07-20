@@ -13,7 +13,8 @@ import { nextStateStamp } from '@/lib/state-freshness';
  *   courts: Array<{id:string,name:string,status:string,team1:string[],team2:string[],fillBumpedPlayerIds:string[],slots:Array<{playerId:string,team:number,prevQueueOrder:number|null,prevWaitRounds:number|null}>}>,
  *   matchHistory: Array<{id:string,courtName:string,team1:Array<{id:string,firstName:string,lastName:string|null}>,team2:Array<{id:string,firstName:string,lastName:string|null}>,score1:number,score2:number,timestamp:string}>,
  *   history: Record<string, Record<string, number>>,
- *   lastSessionResetAt: string|null
+ *   lastSessionResetAt: string|null,
+ *   offlineHold: {label:string, heldAt:string}|null
  * }>}
  */
 export async function getState(arenaId) {
@@ -50,7 +51,10 @@ export async function getState(arenaId) {
     // client can key session-scoped stats (rack tile, My Stats) off the
     // server-persisted timestamp instead of a client-stamped `new Date()`,
     // which would drift under clock skew / network latency around a reset.
-    prisma.arena.findUnique({ where: { id: arenaId }, select: { lastSessionResetAt: true } }),
+    prisma.arena.findUnique({
+      where: { id: arenaId },
+      select: { lastSessionResetAt: true, offlineHolderLabel: true, offlineHeldAt: true },
+    }),
   ]);
 
   const queue = players
@@ -125,5 +129,13 @@ export async function getState(arenaId) {
     matchHistory,
     history,
     lastSessionResetAt: arena?.lastSessionResetAt ? arena.lastSessionResetAt.toISOString() : null,
+    // Advisory "a manager is running the board offline" flag. Both columns
+    // are always written together; require both so a half-cleared row can't
+    // render a nameless banner. Freshness is judged client-side (a dead
+    // device never releases its hold).
+    offlineHold:
+      arena?.offlineHolderLabel && arena?.offlineHeldAt
+        ? { label: arena.offlineHolderLabel, heldAt: arena.offlineHeldAt.toISOString() }
+        : null,
   };
 }

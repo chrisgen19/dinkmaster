@@ -76,6 +76,8 @@ const PLAY = [
   ['checkInPlayer', () => actions.checkInPlayer(ARENA, 'p1')],
   ['checkOutPlayer', () => actions.checkOutPlayer(ARENA, 'p1')],
   ['syncOfflineEvents', () => actions.syncOfflineEvents(ARENA, { batchId: 'batch-12345', events: [], mode: 'strict', settings: { targetScore: 11 } })],
+  ['declareOfflineHold', () => actions.declareOfflineHold(ARENA)],
+  ['releaseOfflineHold', () => actions.releaseOfflineHold(ARENA)],
   ['approveJoinRequest', () => actions.approveJoinRequest(ARENA, 'u2')],
   ['rejectJoinRequest', () => actions.rejectJoinRequest(ARENA, 'u2')],
   ['linkPlayerToMember', () => actions.linkPlayerToMember(ARENA, 'p1', 'u2')],
@@ -427,7 +429,7 @@ describe('arena server actions — authorization', () => {
       const makeTx = (overrides = {}) => ({
         $executeRaw: vi.fn(),
         offlineSyncBatch: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn() },
-        arena: { findUnique: vi.fn().mockResolvedValue({ ...ARENA_SETTINGS }) },
+        arena: { findUnique: vi.fn().mockResolvedValue({ ...ARENA_SETTINGS }), updateMany: vi.fn() },
         player: {
           findMany: vi.fn().mockResolvedValue(PLAYER_ROWS),
           updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -630,6 +632,25 @@ describe('arena server actions — authorization', () => {
         });
       });
 
+      it('releases the advisory offline hold in the same transaction as a successful apply', async () => {
+        const tx = makeTx({
+          arena: {
+            findUnique: vi.fn().mockResolvedValue({ ...ARENA_SETTINGS }),
+            updateMany: vi.fn(),
+          },
+        });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({ events: [{ id: 'e1', type: 'checkOut', payload: { playerId: 'e' } }] }),
+        );
+        expect(tx.arena.updateMany).toHaveBeenCalledWith({
+          where: { id: ARENA },
+          data: { offlineHolderLabel: null, offlineHeldAt: null },
+        });
+      });
+
       it('clamps a future endMatch occurredAt to sync time for Match.createdAt', async () => {
         const slots = [
           { playerId: 'a', team: 1, player: { firstName: 'A', lastName: null, rating: 1000 } },
@@ -671,6 +692,49 @@ describe('arena server actions — authorization', () => {
         expect(created.createdAt.getTime()).toBeLessThanOrEqual(Date.now());
         expect(created.score1).toBe(11);
         expect(created.score2).toBe(7);
+      });
+    });
+
+    describe('offline hold', () => {
+      it('declareOfflineHold() stamps the label from the authenticated account', async () => {
+        requireArenaManager.mockResolvedValue({
+          user: { id: 'u1', firstName: 'Chris', lastName: 'Diomampo' },
+          arena: { id: ARENA, ownerId: 'u1' },
+          role: ROLES.OWNER,
+        });
+        prisma.arena.updateMany.mockResolvedValue({ count: 1 });
+
+        const result = await actions.declareOfflineHold(ARENA);
+        expect(result.error).toBeUndefined();
+        expect(prisma.arena.updateMany).toHaveBeenCalledWith({
+          where: { id: ARENA },
+          data: { offlineHolderLabel: 'Chris D.', offlineHeldAt: expect.any(Date) },
+        });
+      });
+
+      it('declareOfflineHold() falls back to the core name field', async () => {
+        requireArenaManager.mockResolvedValue({
+          user: { id: 'u1', name: 'Solo Organizer' },
+          arena: { id: ARENA, ownerId: 'u1' },
+          role: ROLES.OWNER,
+        });
+        prisma.arena.updateMany.mockResolvedValue({ count: 1 });
+
+        await actions.declareOfflineHold(ARENA);
+        expect(prisma.arena.updateMany).toHaveBeenCalledWith({
+          where: { id: ARENA },
+          data: { offlineHolderLabel: 'Solo', offlineHeldAt: expect.any(Date) },
+        });
+      });
+
+      it('releaseOfflineHold() clears both columns', async () => {
+        prisma.arena.updateMany.mockResolvedValue({ count: 1 });
+        const result = await actions.releaseOfflineHold(ARENA);
+        expect(result.error).toBeUndefined();
+        expect(prisma.arena.updateMany).toHaveBeenCalledWith({
+          where: { id: ARENA },
+          data: { offlineHolderLabel: null, offlineHeldAt: null },
+        });
       });
     });
 
