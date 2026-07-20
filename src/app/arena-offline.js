@@ -2,18 +2,28 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { resolveCommand } from '@/lib/board-engine';
+import { boardFingerprint } from '@/lib/board-fingerprint';
 import { clearPendingLog, loadArenaSnapshot, loadPendingLog, savePendingLog } from '@/lib/offline-store';
+import { syncOfflineEvents } from './actions';
 import { appendEvent, createPendingLog, engineSettings, replayEvents } from './arena-offline-state';
 
 /**
- * Offline session mode for the arena board (Phase 2 of offline support).
+ * Offline session mode for the arena board.
  *
  * While active, a manager's board actions are resolved locally through the
  * pure board engine, appended to a per-arena pending log in IndexedDB, and
  * applied to the page's local state: the server is not called. The pending
  * log survives reloads (the page resumes the offline session on mount) and
- * is the input to the Phase 3 sync replay. Until sync ships, exiting offline
- * mode discards the pending changes (explicitly, behind a confirm).
+ * replays to the server through `syncOfflineEvents` when the connection
+ * returns: automatically on the browser's `online` signal and on resume,
+ * or manually via "Sync now".
+ *
+ * Sync outcomes: success clears the log, applies the server's authoritative
+ * state (via `applySyncedState`, which advances the freshness guard BEFORE
+ * the SSE gate re-opens), and exits offline mode. A `divergence` response
+ * (the board changed while away) or a `blocked` one (e.g. manager role
+ * revoked) parks the log untouched and surfaces a decision dialog: retry
+ * best-effort, keep working offline, copy the log as JSON, or discard.
  *
  * Entry is never silent: the manager either taps "Run offline" on the
  * connection-lost prompt (auto-shown on `offline` events / failed actions)
@@ -28,6 +38,10 @@ import { appendEvent, createPendingLog, engineSettings, replayEvents } from './a
  * @param {() => object} args.getBoardState - current board in getState shape
  * @param {(state: object) => void} args.applyLocalState - write engine output
  *   into the page's board state
+ * @param {(state: object) => void} args.applySyncedState - write the sync
+ *   response's server state into the page AND advance the freshness guard
+ * @param {(summary: {appliedCount: number, skipped: Array}) => void} args.onSynced -
+ *   notification hook for a completed sync
  * @param {number|null} args.lastServerFetchedAt - stamp of the last applied
  *   server snapshot (the offline session's base)
  * @param {() => Promise<boolean>} args.persistSnapshot - save the current
@@ -39,6 +53,8 @@ export function useArenaOffline({
   settingsProps,
   getBoardState,
   applyLocalState,
+  applySyncedState,
+  onSynced,
   lastServerFetchedAt,
   persistSnapshot,
 }) {
@@ -46,6 +62,9 @@ export function useArenaOffline({
   const [pendingCount, setPendingCount] = useState(0);
   const [promptVisible, setPromptVisible] = useState(false);
   const [otherTabActive, setOtherTabActive] = useState(false);
+  // status: 'idle' | 'syncing' | 'divergence' | 'blocked'. `error` carries a
+  // transient failure message ('idle' + error = network sync attempt failed).
+  const [syncState, setSyncState] = useState({ status: 'idle', error: '' });
 
   // Ref mirror of `offlineActive` for the gates in arena.js (SSE frames,
   // action results, render-time prop resync): those run inside stable
@@ -53,6 +72,9 @@ export function useArenaOffline({
   const offlineActiveRef = useRef(false);
   const logRef = useRef(null);
   const channelRef = useRef(null);
+  const syncingRef = useRef(false);
+  // Latest syncNow, reachable from effects without dependency cycles.
+  const syncNowRef = useRef(null);
 
   const activate = useCallback((log) => {
     logRef.current = log;
@@ -105,26 +127,32 @@ export function useArenaOffline({
       const { state } = replayEvents(snapshot.state, log.settings, log.events);
       applyLocalState(state);
       activate(log);
+      // Reloaded after the connection came back (the page itself loaded from
+      // the server): push the finished session up right away.
+      if (navigator.onLine) queueMicrotask(() => syncNowRef.current?.('strict'));
     })();
     return () => {
       cancelled = true;
     };
   }, [arenaId, canManage, applyLocalState, activate]);
 
-  // Connection-loss prompt: never auto-enter, just offer. `offline` is a
-  // definite signal; `online` clears a prompt that's no longer relevant.
-  // Failed server actions also surface it via `notifyActionFailed`.
+  // Connection signals: `offline` offers the prompt (never auto-enters);
+  // `online` clears a stale prompt and, mid-session, auto-syncs the log.
+  // Failed server actions also surface the prompt via `notifyActionFailed`.
   useEffect(() => {
     if (!canManage) return;
-    const show = () => {
+    const onOffline = () => {
       if (!offlineActiveRef.current) setPromptVisible(true);
     };
-    const hide = () => setPromptVisible(false);
-    window.addEventListener('offline', show);
-    window.addEventListener('online', hide);
+    const onOnline = () => {
+      setPromptVisible(false);
+      if (offlineActiveRef.current) syncNowRef.current?.('strict');
+    };
+    window.addEventListener('offline', onOffline);
+    window.addEventListener('online', onOnline);
     return () => {
-      window.removeEventListener('offline', show);
-      window.removeEventListener('online', hide);
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('online', onOnline);
     };
   }, [canManage]);
 
@@ -138,20 +166,24 @@ export function useArenaOffline({
   const enterOffline = useCallback(async () => {
     if (!canManage || offlineActiveRef.current || otherTabActive) return false;
     // The base snapshot must be durable BEFORE the first event: resume and
-    // Phase 3 sync both replay the log over exactly this state.
+    // sync both replay the log over exactly this state.
     const snapshotSaved = await persistSnapshot();
     if (!snapshotSaved) return false;
+    const settings = engineSettings(settingsProps);
     const log = createPendingLog({
       arenaId,
       batchId: crypto.randomUUID(),
       baseFetchedAt: lastServerFetchedAt,
-      settings: engineSettings(settingsProps),
+      // Fingerprint of the state this session forks from; the sync replay
+      // recomputes it server-side to detect divergence before applying.
+      baseFingerprint: boardFingerprint(getBoardState(), settings),
+      settings,
       enteredAt: new Date().toISOString(),
     });
     if (!(await savePendingLog(log))) return false;
     activate(log);
     return true;
-  }, [arenaId, canManage, otherTabActive, persistSnapshot, settingsProps, lastServerFetchedAt, activate]);
+  }, [arenaId, canManage, otherTabActive, persistSnapshot, settingsProps, lastServerFetchedAt, getBoardState, activate]);
 
   /**
    * Run one board command locally: resolve -> persist the event -> apply.
@@ -178,6 +210,98 @@ export function useArenaOffline({
     [getBoardState, applyLocalState],
   );
 
+  /** Leave offline mode without a reload (used after a successful sync). */
+  const deactivate = useCallback(() => {
+    logRef.current = null;
+    offlineActiveRef.current = false;
+    setOfflineActive(false);
+    setPendingCount(0);
+    channelRef.current?.postMessage({ kind: 'inactive' });
+  }, []);
+
+  /**
+   * Replay the pending log to the server. `mode` is 'strict' on every
+   * automatic/first attempt; 'best-effort' only when the manager picked
+   * "Apply anyway" on the divergence dialog.
+   *
+   * Ordering contract on success: apply the returned server state (which
+   * advances the freshness guard) BEFORE deactivating: once the SSE gate
+   * re-opens, any stale pre-sync frame loses to the just-advanced stamp.
+   */
+  const syncNow = useCallback(
+    async (mode = 'strict') => {
+      const log = logRef.current;
+      if (!offlineActiveRef.current || !log || syncingRef.current) return;
+
+      // Nothing recorded: no server call needed. Exit and let the reopened
+      // SSE stream resync (it re-sends full state on connect).
+      if (log.events.length === 0) {
+        await clearPendingLog(arenaId);
+        deactivate();
+        setSyncState({ status: 'idle', error: '' });
+        return;
+      }
+
+      syncingRef.current = true;
+      setSyncState({ status: 'syncing', error: '' });
+      let result;
+      try {
+        result = await syncOfflineEvents(arenaId, {
+          batchId: log.batchId,
+          base: log.base,
+          settings: log.settings,
+          events: log.events,
+          enteredAt: log.enteredAt,
+          mode,
+        });
+      } catch {
+        // Transport failure: still (or again) offline. Keep everything.
+        syncingRef.current = false;
+        setSyncState({
+          status: 'idle',
+          error: 'Could not reach the server. Your changes are still saved on this device.',
+        });
+        return;
+      }
+      syncingRef.current = false;
+
+      if (result?.divergence) {
+        setSyncState({ status: 'divergence', error: '' });
+        return;
+      }
+      if (result?.error) {
+        // Authorization or validation refusal. The log stays parked; the
+        // dialog offers copy-as-JSON / discard / keep-offline.
+        setSyncState({ status: 'blocked', error: result.error });
+        return;
+      }
+
+      await clearPendingLog(arenaId);
+      applySyncedState(result.state);
+      deactivate();
+      setSyncState({ status: 'idle', error: '' });
+      onSynced?.({ appliedCount: result.appliedIds?.length ?? 0, skipped: result.skipped ?? [] });
+    },
+    [arenaId, applySyncedState, deactivate, onSynced],
+  );
+  // Ref assignment kept out of render for react-hooks/refs.
+  useEffect(() => {
+    syncNowRef.current = syncNow;
+  }, [syncNow]);
+
+  /** Copy the pending log to the clipboard (escape hatch when sync is blocked). */
+  const copyLogJson = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(logRef.current, null, 2));
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  /** Close a sync dialog and keep working offline (log untouched). */
+  const dismissSyncState = useCallback(() => setSyncState({ status: 'idle', error: '' }), []);
+
   /**
    * Abandon the offline session: drop the pending log and reload so the page
    * re-renders from the server (the reload also resets the freshness guard
@@ -195,9 +319,13 @@ export function useArenaOffline({
     pendingCount,
     promptVisible,
     otherTabActive,
+    syncState,
     enterOffline,
     exitOfflineDiscard,
     runLocal,
+    syncNow,
+    copyLogJson,
+    dismissSyncState,
     notifyActionFailed,
     dismissPrompt,
   };

@@ -77,22 +77,23 @@ describe('createPendingLog / appendEvent', () => {
       arenaId: 'ar1',
       batchId: 'batch-1',
       baseFetchedAt: 1234,
+      baseFingerprint: 'cafe0123',
       settings: SETTINGS,
       enteredAt: '2026-07-20T10:00:00.000Z',
     });
     expect(log).toEqual({
       arenaId: 'ar1',
       batchId: 'batch-1',
-      base: { fetchedAt: 1234 },
+      base: { fetchedAt: 1234, fingerprint: 'cafe0123' },
       settings: SETTINGS,
       events: [],
       enteredAt: '2026-07-20T10:00:00.000Z',
     });
   });
 
-  it('defaults a missing base stamp to null (first visit was never online)', () => {
+  it('defaults a missing base to nulls (first visit was never online)', () => {
     const log = createPendingLog({ arenaId: 'ar1', batchId: 'b', settings: SETTINGS, enteredAt: 'now' });
-    expect(log.base).toEqual({ fetchedAt: null });
+    expect(log.base).toEqual({ fetchedAt: null, fingerprint: null });
   });
 
   it('appends events immutably, preserving order', () => {

@@ -29,15 +29,16 @@ export function engineSettings({ matchmaking, matchDefaults }) {
 
 /**
  * A fresh, empty pending log for one arena. One log per arena (the IndexedDB
- * `pending` store keys on `arenaId`); `batchId` is the idempotency key the
- * Phase 3 sync endpoint will dedupe on. `base.fetchedAt` records which server
- * snapshot the offline session forked from (Phase 3 adds a fingerprint).
+ * `pending` store keys on `arenaId`); `batchId` is the idempotency key
+ * `syncOfflineEvents` dedupes on. `base` records which server snapshot the
+ * offline session forked from: the read stamp (informational) and the board
+ * fingerprint the server recompares in strict mode.
  */
-export function createPendingLog({ arenaId, batchId, baseFetchedAt, settings, enteredAt }) {
+export function createPendingLog({ arenaId, batchId, baseFetchedAt, baseFingerprint, settings, enteredAt }) {
   return {
     arenaId,
     batchId,
-    base: { fetchedAt: baseFetchedAt ?? null },
+    base: { fetchedAt: baseFetchedAt ?? null, fingerprint: baseFingerprint ?? null },
     settings,
     events: [],
     enteredAt,

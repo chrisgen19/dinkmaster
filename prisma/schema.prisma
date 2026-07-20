@@ -315,6 +315,24 @@ model MatchPlayer {
   @@index([matchId])
 }
 
+/// One synced offline session batch (idempotency ledger for
+/// `syncOfflineEvents`). The id is the CLIENT-generated batch uuid: a retry
+/// of a batch whose transaction committed but whose response was lost finds
+/// this row and returns current state instead of double-applying. Rows are
+/// small and kept for auditing (which device synced what, when).
+model OfflineSyncBatch {
+  id              String   @id // client-generated batch uuid
+  arenaId         String
+  deviceLabel     String?
+  appliedEventIds String[]
+  skippedCount    Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  // No FK to Arena on purpose: the ledger must survive arena deletion so a
+  // late retry of a batch for a deleted arena still dedupes cleanly.
+  @@index([arenaId])
+}
+
 /// Cumulative count of how often two players have been partnered.
 /// Stored canonically with playerA < playerB to keep one row per pair.
 model Partnership {

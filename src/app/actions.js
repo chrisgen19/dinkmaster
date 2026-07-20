@@ -27,6 +27,7 @@ import {
   applyCheckInTx,
   applyCheckOutTx,
   applyEndMatchTx,
+  applyEventTx,
   applyFillCourtTx,
   applyShuffleQueueTx,
   applySkipPlayerTx,
@@ -34,8 +35,10 @@ import {
   groupAverageMetric,
   lockQueue,
   maxQueueOrder,
+  readBoardStateTx,
   unbumpPartnership,
 } from '@/lib/board-apply';
+import { boardFingerprint } from '@/lib/board-fingerprint';
 
 // Separate advisory-lock namespace for invite creation, keyed per arena, so two
 // managers minting a link for the same arena are serialized and can't both pass
@@ -1316,6 +1319,193 @@ export async function skipPlayer(arenaId, playerId, replacementId = null) {
   return {
     notification: moved ? successMsg : '',
     state: await getState(arenaId),
+  };
+}
+
+// Typed replay failures `applyEventTx` can throw. In strict mode any of them
+// rolls the whole batch back (divergence response); in best-effort mode the
+// event is skipped and the rest of the batch still applies. P2002 (unique
+// violation, e.g. an off_ player id colliding on a retry race) is handled
+// alongside these.
+const REPLAY_EVENT_ERRORS = new Set([
+  'COURT_UNAVAILABLE',
+  'NOT_ENOUGH',
+  'QUEUE_CHANGED',
+  'NOT_PLAYING',
+  'NO_SNAPSHOT',
+  'INVALID_COURT',
+  'ALREADY_FINISHED',
+  'OUTCOME_MISMATCH',
+  'BAD_EVENT',
+]);
+
+const MAX_SYNC_EVENTS = 500;
+
+/**
+ * Replay an offline session's event log against the arena, atomically.
+ *
+ * The client records board commands offline (with every nondeterministic
+ * choice resolved and stored on the event: see `src/lib/board-engine.js`),
+ * then calls this once when the connection returns. Everything happens in
+ * ONE transaction under the queue lock:
+ *
+ *   1. Idempotency: the client-generated `batchId` is the primary key of
+ *      `OfflineSyncBatch`. A retry of a batch that already committed (but
+ *      whose response was lost) returns current state, applying nothing.
+ *   2. Divergence check (strict mode): the board+settings fingerprint is
+ *      recomputed from the database and compared to the one the client
+ *      captured at offline entry. Any mismatch returns `{ divergence }`
+ *      WITHOUT applying, and the manager decides: best-effort or discard.
+ *   3. Events apply in order through `applyEventTx` (the same code the
+ *      online actions run), with recorded outcomes validated against live
+ *      reads. Strict mode: one failure rolls back everything. Best-effort
+ *      mode (explicitly chosen after a divergence): failed events are
+ *      skipped and reported; match results almost always survive.
+ *
+ * `occurredAt` on each event becomes `Match.createdAt` (clamped to the
+ * offline window and monotonic within the batch) so the weekly leaderboard
+ * and session stats key off court time, not sync time.
+ *
+ * @param {string} arenaId
+ * @param {object} input - { batchId, base: {fetchedAt, fingerprint},
+ *   settings, events, enteredAt, deviceLabel, mode: 'strict'|'best-effort' }
+ * @returns {Promise<{state: object, appliedIds?: string[],
+ *   skipped?: Array<{id: string, type: string, reason: string}>,
+ *   alreadySynced?: boolean, divergence?: boolean, error?: string}>}
+ */
+export async function syncOfflineEvents(arenaId, input) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  const {
+    batchId,
+    base,
+    settings: rawSettings,
+    events,
+    enteredAt,
+    deviceLabel: rawDeviceLabel,
+    mode,
+  } = input ?? {};
+
+  // Envelope validation. Anything malformed rejects the whole batch up
+  // front; nothing has been applied yet, so the client keeps its log.
+  if (
+    typeof batchId !== 'string' ||
+    !/^[0-9a-zA-Z_-]{8,64}$/.test(batchId) ||
+    !Array.isArray(events) ||
+    events.length > MAX_SYNC_EVENTS ||
+    (mode !== 'strict' && mode !== 'best-effort')
+  ) {
+    return { error: 'Invalid sync batch.', state: await getState(arenaId) };
+  }
+  const targetScore = rawSettings?.targetScore;
+  if (!Number.isInteger(targetScore) || targetScore < MIN_TARGET_SCORE || targetScore > MAX_TARGET_SCORE) {
+    return { error: 'Invalid sync batch.', state: await getState(arenaId) };
+  }
+  const settings = { targetScore };
+  const deviceLabel =
+    typeof rawDeviceLabel === 'string' && rawDeviceLabel.trim()
+      ? rawDeviceLabel.trim().slice(0, 80)
+      : null;
+
+  let outcome = null;
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockQueue(tx, arenaId);
+
+      // Retried batch that already committed: report it as synced, as-is.
+      const existing = await tx.offlineSyncBatch.findUnique({ where: { id: batchId } });
+      if (existing) {
+        outcome = {
+          alreadySynced: true,
+          appliedIds: existing.appliedEventIds,
+          skipped: [],
+        };
+        return;
+      }
+
+      const arena = await tx.arena.findUnique({
+        where: { id: arenaId },
+        select: {
+          targetScore: true,
+          starveThreshold: true,
+          emergencyWait: true,
+          skipRestoresPriority: true,
+          skipPickReplacement: true,
+        },
+      });
+      if (!arena) throw new Error('ARENA_GONE');
+
+      // Strict mode: the batch only applies to the exact board (and play
+      // settings) it forked from. Best-effort skips this check because the
+      // manager already saw the divergence and chose to apply anyway.
+      if (mode === 'strict') {
+        const board = await readBoardStateTx(tx, arenaId);
+        const serverFingerprint = boardFingerprint(board, arena);
+        if (serverFingerprint !== base?.fingerprint) {
+          outcome = { divergence: true };
+          return;
+        }
+      }
+
+      // Clamp event times to the offline window: never in the future, never
+      // before the session started (falling back to a 24h lookback when the
+      // client clock produced garbage), and monotonic within the batch.
+      const now = Date.now();
+      const enteredMs = Date.parse(enteredAt ?? '');
+      let prevMs = Math.min(Number.isFinite(enteredMs) ? enteredMs : now - 24 * 60 * 60 * 1000, now);
+
+      const appliedIds = [];
+      const skipped = [];
+      for (const event of events) {
+        if (typeof event?.id !== 'string' || event.id.length > 80 || typeof event?.type !== 'string') {
+          throw new Error('BAD_EVENT');
+        }
+        const atMs = Date.parse(event.occurredAt ?? '');
+        prevMs = Math.max(prevMs, Math.min(Number.isFinite(atMs) ? atMs : prevMs, now));
+        try {
+          await applyEventTx(tx, arenaId, settings, event, { occurredAt: new Date(prevMs) });
+          appliedIds.push(event.id);
+        } catch (err) {
+          const code = err?.message;
+          const isReplayError = REPLAY_EVENT_ERRORS.has(code) || err?.code === 'P2002';
+          if (!isReplayError) throw err; // infrastructure failure: abort loudly
+          if (mode !== 'best-effort') throw err; // strict: roll back the batch
+          skipped.push({ id: event.id, type: event.type, reason: code ?? 'P2002' });
+        }
+      }
+
+      await tx.offlineSyncBatch.create({
+        data: {
+          id: batchId,
+          arenaId,
+          deviceLabel,
+          appliedEventIds: appliedIds,
+          skippedCount: skipped.length,
+        },
+      });
+      outcome = { appliedIds, skipped };
+    });
+  } catch (err) {
+    if (err?.message === 'ARENA_GONE') {
+      return { error: 'This arena no longer exists.', state: await getState(arenaId) };
+    }
+    if (REPLAY_EVENT_ERRORS.has(err?.message) || err?.code === 'P2002') {
+      // Strict-mode replay failure: everything rolled back. Surface it as a
+      // divergence so the client offers best-effort or discard.
+      return { divergence: true, state: await getState(arenaId) };
+    }
+    throw err;
+  }
+
+  if (outcome?.divergence) {
+    return { divergence: true, state: await getState(arenaId) };
+  }
+  return {
+    state: await getState(arenaId),
+    appliedIds: outcome?.appliedIds ?? [],
+    skipped: outcome?.skipped ?? [],
+    ...(outcome?.alreadySynced ? { alreadySynced: true } : {}),
   };
 }
 

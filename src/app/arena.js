@@ -24,7 +24,12 @@ import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leader
 import { createStateFreshnessGuard } from '@/lib/state-freshness';
 import { saveArenaSnapshot } from '@/lib/offline-store';
 import { useArenaOffline } from './arena-offline';
-import { OfflineActiveBanner, OfflinePromptBanner } from './arena-offline-banner';
+import {
+  OfflineActiveBanner,
+  OfflineBlockedDialog,
+  OfflineDivergenceDialog,
+  OfflinePromptBanner,
+} from './arena-offline-banner';
 import { OFFLINE_UNAVAILABLE_MESSAGE } from './arena-offline-state';
 import { computeSessionStats } from '@/lib/session-stats';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
@@ -165,6 +170,11 @@ export default function Arena({
   // because the prop-refresh resync block right after this needs to call
   // `setLastSessionResetAt` — declaring it later would TDZ-throw on render.
   const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
+  // Error/notification banners. Declared up here (not with the other UI
+  // state below) because the offline hook wiring right after needs the
+  // setters, and react-hooks/immutability enforces declaration order.
+  const [errorMsg, setErrorMsg] = useState('');
+  const [notification, setNotification] = useState('');
 
   // Current board in the getState shape, as a ref so offline-mode callbacks
   // (resolve command, persist snapshot) read the LIVE board without being
@@ -241,14 +251,44 @@ export default function Arena({
 
   const getBoardState = useCallback(() => boardStateRef.current, []);
 
+  // Apply the sync response's server state. Unlike plain applyLocalState,
+  // this ALSO advances the module freshness guard (and the base stamp), so
+  // when offline mode deactivates right after, a stale pre-sync SSE frame
+  // can't win against the just-synced board.
+  const applySyncedState = useCallback((state) => {
+    if (!state) return;
+    shouldApplyServerState(arenaId, state);
+    if (state.fetchedAt) {
+      setLastServerFetchedAt((prev) => (state.fetchedAt > (prev ?? 0) ? state.fetchedAt : prev));
+    }
+    applyLocalState(state);
+  }, [arenaId, applyLocalState]);
+
+  // Post-sync report: success toast, plus an explicit note when best-effort
+  // had to skip events that no longer applied.
+  const handleSynced = useCallback(({ appliedCount, skipped }) => {
+    setNotification(
+      `Offline session synced: ${appliedCount} ${appliedCount === 1 ? 'change' : 'changes'} saved.`,
+    );
+    setTimeout(() => setNotification(''), 5000);
+    setErrorMsg(
+      skipped.length > 0
+        ? `${skipped.length} offline ${skipped.length === 1 ? 'change' : 'changes'} could not be applied (the board had moved on) and ${skipped.length === 1 ? 'was' : 'were'} skipped.`
+        : '',
+    );
+  }, []);
+
   // Offline session mode (manager-only): local board mutations recorded to an
-  // IndexedDB event log while the connection is down. See arena-offline.js.
+  // IndexedDB event log while the connection is down, replayed to the server
+  // on reconnect. See arena-offline.js.
   const offline = useArenaOffline({
     arenaId,
     canManage,
     settingsProps: { matchmaking: matchmakingProp, matchDefaults },
     getBoardState,
     applyLocalState,
+    applySyncedState,
+    onSynced: handleSynced,
     lastServerFetchedAt,
     persistSnapshot,
   });
@@ -319,11 +359,9 @@ export default function Arena({
   const [skipPickerSkippedId, setSkipPickerSkippedId] = useState(null);
   const [skipPickerError, setSkipPickerError] = useState('');
 
-  const [errorMsg, setErrorMsg] = useState('');
   const [activeTab, setActiveTab] = useState('courts');
 
   const [autoMix, setAutoMix] = useState(matchDefaults.autoMixDefault);
-  const [notification, setNotification] = useState('');
 
   // Arena schedule (powers the "This Week" leaderboard window) + its editor.
   const [schedule, setSchedule] = useState(initialSchedule);
@@ -352,6 +390,8 @@ export default function Arena({
   // here (rather than inside the banner) so the modal renders at the page
   // root, outside the banner.
   const [rosterModalOpen, setRosterModalOpen] = useState(false);
+  // "Copied!" feedback inside the sync-blocked dialog's copy-as-JSON button.
+  const [copiedOfflineLog, setCopiedOfflineLog] = useState(false);
 
   // Persist the dismissal for the browser session, per arena, so a router
   // refresh (e.g. after requesting to join) or reload keeps it hidden.
@@ -1092,15 +1132,31 @@ export default function Arena({
     });
   };
 
-  // Exit the offline session. Until sync ships (Phase 3), exiting discards
-  // the pending log, so the confirm spells that out with the exact count.
+  // Exit the offline session WITHOUT syncing: discards the pending log
+  // behind an explicit confirm ("Sync now" is the save path).
   const handleExitOffline = () => {
     const message =
       offline.pendingCount > 0
-        ? `Exit offline mode and DISCARD ${offline.pendingCount} unsynced ${offline.pendingCount === 1 ? 'change' : 'changes'}? Syncing offline changes to the server is not available yet.`
+        ? `Exit offline mode and DISCARD ${offline.pendingCount} unsynced ${offline.pendingCount === 1 ? 'change' : 'changes'}? Use "Sync now" instead to save them to the server.`
         : 'Exit offline mode and return to the live board?';
     if (!window.confirm(message)) return;
     offline.exitOfflineDiscard();
+  };
+
+  // Divergence-dialog discard: same confirm, clearer context.
+  const handleDiscardDiverged = () => {
+    if (!window.confirm(
+      `Discard ${offline.pendingCount} offline ${offline.pendingCount === 1 ? 'change' : 'changes'} and return to the live board? This cannot be undone.`,
+    )) return;
+    offline.exitOfflineDiscard();
+  };
+
+  const handleCopyOfflineLog = () => {
+    startTransition(async () => {
+      const copied = await offline.copyLogJson();
+      setCopiedOfflineLog(copied);
+      if (!copied) setErrorMsg('Could not copy to the clipboard on this device.');
+    });
   };
 
   // Request to join; an owner/organizer must approve before membership is granted.
@@ -1135,13 +1191,41 @@ export default function Arena({
       />
 
       {offline.offlineActive && (
-        <OfflineActiveBanner pendingCount={offline.pendingCount} onExit={handleExitOffline} />
+        <OfflineActiveBanner
+          pendingCount={offline.pendingCount}
+          syncing={offline.syncState.status === 'syncing'}
+          syncError={offline.syncState.error}
+          onSync={() => offline.syncNow('strict')}
+          onExit={handleExitOffline}
+        />
       )}
       {!offline.offlineActive && offline.promptVisible && canManage && (
         <OfflinePromptBanner
           blocked={offline.otherTabActive}
           onEnter={handleEnterOffline}
           onDismiss={offline.dismissPrompt}
+        />
+      )}
+
+      {offline.syncState.status === 'divergence' && (
+        <OfflineDivergenceDialog
+          pendingCount={offline.pendingCount}
+          syncing={false}
+          onBestEffort={() => offline.syncNow('best-effort')}
+          onDiscard={handleDiscardDiverged}
+          onKeepOffline={offline.dismissSyncState}
+        />
+      )}
+      {offline.syncState.status === 'blocked' && (
+        <OfflineBlockedDialog
+          error={offline.syncState.error}
+          copied={copiedOfflineLog}
+          onCopy={handleCopyOfflineLog}
+          onDiscard={handleDiscardDiverged}
+          onClose={() => {
+            setCopiedOfflineLog(false);
+            offline.dismissSyncState();
+          }}
         />
       )}
 

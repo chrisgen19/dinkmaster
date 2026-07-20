@@ -1,5 +1,6 @@
 import { ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
 import { computeMatchRatings } from '@/lib/rating';
+import { validateMatchScore } from '@/lib/scoring';
 
 /**
  * Board mutation appliers: the transaction bodies of the arena's rack/court
@@ -67,6 +68,17 @@ export function lockQueue(tx, arenaId) {
   return tx.$executeRaw`SELECT pg_advisory_xact_lock(${QUEUE_LOCK_KEY}, hashtext(${arenaId}))`;
 }
 
+/**
+ * Set equality for id arrays (order-insensitive, duplicates rejected). Used
+ * to validate recorded offline outcomes: a replayed ordering may only
+ * REORDER the members the live transaction sees, never add or drop any.
+ */
+function sameMembers(a, b) {
+  if (!Array.isArray(a) || a.length !== b.length) return false;
+  const set = new Set(a);
+  return set.size === a.length && b.every((id) => set.has(id));
+}
+
 /** Unbiased Fisher-Yates shuffle (returns a new array). */
 export function shuffle(items) {
   const arr = [...items];
@@ -97,11 +109,22 @@ export async function groupAverageMetric(tx, arenaId) {
  * group-average `gamesOffset` (so a latecomer rotates as a peer, not catch-up)
  * and append them to the bottom of the queue. The caller must hold `lockQueue`.
  */
-export async function addArenaPlayer(tx, arenaId, { userId = null, firstName, lastName }) {
+export async function addArenaPlayer(tx, arenaId, { id, userId = null, firstName, lastName }) {
   const gamesOffset = await groupAverageMetric(tx, arenaId);
   const order = (await maxQueueOrder(tx, arenaId)) + 1;
   return tx.player.create({
-    data: { arenaId, userId, firstName, lastName: lastName || null, queueOrder: order, gamesOffset },
+    data: {
+      // Offline replay supplies the client-generated `off_...` id so events
+      // recorded after the add (check-ins, fills, match snapshots) resolve
+      // to the same row; online creation keeps the cuid() default.
+      ...(id ? { id } : {}),
+      arenaId,
+      userId,
+      firstName,
+      lastName: lastName || null,
+      queueOrder: order,
+      gamesOffset,
+    },
   });
 }
 
@@ -121,6 +144,9 @@ export async function applyShuffleQueueTx(tx, arenaId, { outcome } = {}) {
     select: { id: true },
   });
   if (queued.length < 2) return false;
+  if (outcome && !sameMembers(outcome.order, queued.map((p) => p.id))) {
+    throw new Error('OUTCOME_MISMATCH');
+  }
   const orderedIds = outcome?.order ?? shuffle(queued).map((p) => p.id);
   for (let i = 0; i < orderedIds.length; i++) {
     await tx.player.update({ where: { id: orderedIds[i] }, data: { queueOrder: i + 1 } });
@@ -159,6 +185,19 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome }) {
   if (queued.length < 4) throw new Error('NOT_ENOUGH');
 
   const [p0, p1, p2, p3] = queued.map((p) => p.id);
+  // A recorded outcome must stack exactly the four the transaction sees on
+  // top of the rack, split two-a-side over those same four.
+  if (
+    outcome &&
+    !(
+      sameMembers(outcome.players, [p0, p1, p2, p3]) &&
+      outcome.team1?.length === 2 &&
+      outcome.team2?.length === 2 &&
+      sameMembers([...outcome.team1, ...outcome.team2], [p0, p1, p2, p3])
+    )
+  ) {
+    throw new Error('OUTCOME_MISMATCH');
+  }
   // playerId -> { prevQueueOrder, prevWaitRounds } for the slot snapshot below.
   const snapshot = new Map(
     queued.map((p) => [p.id, { prevQueueOrder: p.queueOrder, prevWaitRounds: p.waitRounds }]),
@@ -355,7 +394,11 @@ export async function applyEndMatchTx(tx, arenaId, { courtId, s1, s2, outcome, o
 
   const base = await maxQueueOrder(tx, arenaId);
   // Recycle finished players back into the rack in randomized order (or the
-  // order a replayed offline event recorded).
+  // order a replayed offline event recorded; that order may only permute the
+  // players actually on this court).
+  if (outcome?.recycleOrder && !sameMembers(outcome.recycleOrder, slots.map((s) => s.playerId))) {
+    throw new Error('OUTCOME_MISMATCH');
+  }
   const recycled = outcome?.recycleOrder
     ? outcome.recycleOrder.map((playerId) => slots.find((s) => s.playerId === playerId))
     : shuffle(slots);
@@ -438,6 +481,9 @@ export async function applyAutoMixTx(tx, arenaId, { outcome } = {}) {
     select: { id: true, gamesPlayed: true, gamesOffset: true, waitRounds: true, skipBoosted: true },
   });
   if (queued.length === 0) return false;
+  if (outcome && !sameMembers(outcome.mixedOrder, queued.map((p) => p.id))) {
+    throw new Error('OUTCOME_MISMATCH');
+  }
   // Sort lexicographically: band first (next-line > emergency > protected
   // > fresh), then in the strict-wait bands (next-line, emergency) by
   // longest-waiting first, then by FEWEST games played-since-joining
@@ -641,4 +687,134 @@ export async function applySkipPlayerTx(tx, arenaId, { playerId, replacementId =
   }
   moved = true;
   return { moved, restoresPriority, replacementError };
+}
+
+// --- Offline replay -------------------------------------------------------
+
+// Client-generated walk-in ids: `off_` + a crypto.randomUUID(). Anything else
+// in an addPlayer event is rejected so a crafted batch can't pick ids that
+// collide with (or impersonate) server-generated cuids.
+const OFFLINE_PLAYER_ID = /^off_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * Read the board in the shape `boardFingerprint` (and the client engine)
+ * consume, inside the caller's transaction and under its queue lock. Mirrors
+ * `getState`'s board fields, minus display-only data the fingerprint ignores.
+ */
+export async function readBoardStateTx(tx, arenaId) {
+  const players = await tx.player.findMany({
+    where: { arenaId, leftAt: null },
+    select: {
+      id: true,
+      queueOrder: true,
+      waitRounds: true,
+      gamesPlayed: true,
+      gamesOffset: true,
+      wins: true,
+      losses: true,
+      rating: true,
+      skipBoosted: true,
+    },
+  });
+  const courts = await tx.court.findMany({
+    where: { arenaId },
+    include: { slots: { select: { playerId: true, team: true } } },
+  });
+  const partnerships = await tx.partnership.findMany({ where: { arenaId } });
+
+  const queue = players
+    .filter((p) => p.queueOrder !== null)
+    .sort((a, b) => a.queueOrder - b.queueOrder)
+    .map((p) => p.id);
+  const history = {};
+  for (const { playerA, playerB, count } of partnerships) {
+    (history[playerA] ??= {})[playerB] = count;
+    (history[playerB] ??= {})[playerA] = count;
+  }
+  return {
+    players,
+    queue,
+    courts: courts.map((c) => ({ id: c.id, status: c.status, slots: c.slots })),
+    history,
+  };
+}
+
+/**
+ * Apply ONE recorded offline event inside the sync transaction. The batch's
+ * auth ran once up front (manager), so per-event auth is settled; recorded
+ * outcomes are validated by the appliers (set-equality against live reads).
+ *
+ * Typed failures throw `Error(CODE)`; the sync action maps them to a
+ * strict-mode rollback or a best-effort skip. `BAD_EVENT` marks a malformed
+ * payload (client bug or tampering), the other codes mean "no longer applies
+ * to this board".
+ *
+ * @param {object} settings - the batch's settings snapshot (score target etc.)
+ * @param {object} event - { id, type, payload, outcome }
+ * @param {{occurredAt: Date}} meta - server-clamped event time
+ */
+export async function applyEventTx(tx, arenaId, settings, event, { occurredAt }) {
+  const payload = event?.payload ?? {};
+  switch (event?.type) {
+    case 'addPlayer': {
+      const firstName = typeof payload.firstName === 'string' ? payload.firstName.trim() : '';
+      const lastName = typeof payload.lastName === 'string' ? payload.lastName.trim() : '';
+      if (
+        !OFFLINE_PLAYER_ID.test(payload.playerId ?? '') ||
+        firstName.length === 0 ||
+        firstName.length > 60 ||
+        lastName.length > 60
+      ) {
+        throw new Error('BAD_EVENT');
+      }
+      await addArenaPlayer(tx, arenaId, { id: payload.playerId, firstName, lastName });
+      return;
+    }
+    case 'checkIn':
+      await applyCheckInTx(tx, arenaId, { playerId: payload.playerId });
+      return;
+    case 'checkOut':
+      await applyCheckOutTx(tx, arenaId, { playerId: payload.playerId });
+      return;
+    case 'shuffleQueue':
+      await applyShuffleQueueTx(tx, arenaId, { outcome: event.outcome });
+      return;
+    case 'fillCourt':
+      await applyFillCourtTx(tx, arenaId, { courtId: payload.courtId, outcome: event.outcome });
+      return;
+    case 'cancelFill':
+      await applyCancelFillTx(tx, arenaId, { courtId: payload.courtId });
+      return;
+    case 'endMatch': {
+      // Validate against the BATCH's target score: the score was entered
+      // under the rules the manager saw at the court, and a concurrent
+      // settings change shows up as divergence, not silent re-validation.
+      const check = validateMatchScore(payload.score1, payload.score2, settings.targetScore);
+      if (!check.ok) throw new Error('BAD_EVENT');
+      await applyEndMatchTx(tx, arenaId, {
+        courtId: payload.courtId,
+        s1: parseInt(payload.score1, 10),
+        s2: parseInt(payload.score2, 10),
+        outcome: { recycleOrder: event.outcome?.recycleOrder },
+        occurredAt,
+      });
+      if (payload.autoMix && event.outcome?.mixedOrder) {
+        await applyAutoMixTx(tx, arenaId, { outcome: { mixedOrder: event.outcome.mixedOrder } });
+      }
+      return;
+    }
+    case 'skipPlayer': {
+      const { replacementError } = await applySkipPlayerTx(tx, arenaId, {
+        playerId: payload.playerId,
+        replacementId: payload.replacementId ?? null,
+        isManager: true, // the batch is manager-authorized as a whole
+      });
+      // The client validated the pick when it recorded the event, so a gone
+      // replacement here means the board diverged from the batch's base.
+      if (replacementError) throw new Error('OUTCOME_MISMATCH');
+      return;
+    }
+    default:
+      throw new Error('BAD_EVENT');
+  }
 }
