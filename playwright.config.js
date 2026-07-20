@@ -6,6 +6,9 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e',
+  // Offline/PWA specs need a production build (the service worker is
+  // disabled in dev) and run via playwright.offline.config.js instead.
+  testIgnore: '**/offline-*.spec.js',
   timeout: 30_000,
   // Generous expect timeout: the first navigation to a route in `next dev`
   // triggers on-demand compilation, which can exceed the 5s default.
