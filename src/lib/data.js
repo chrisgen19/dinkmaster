@@ -8,9 +8,9 @@ import { nextStateStamp } from '@/lib/state-freshness';
  * @param {string} arenaId - the arena whose players/courts/matches to read
  * @returns {Promise<{
  *   fetchedAt: number,
- *   players: Array<{id:string,userId:string|null,firstName:string,lastName:string|null,gamesPlayed:number,wins:number,losses:number,waitRounds:number,rating:number,skipBoosted:boolean}>,
+ *   players: Array<{id:string,userId:string|null,firstName:string,lastName:string|null,gamesPlayed:number,wins:number,losses:number,waitRounds:number,rating:number,skipBoosted:boolean,gamesOffset:number}>,
  *   queue: string[],
- *   courts: Array<{id:string,name:string,status:string,team1:string[],team2:string[]}>,
+ *   courts: Array<{id:string,name:string,status:string,team1:string[],team2:string[],fillBumpedPlayerIds:string[],slots:Array<{playerId:string,team:number,prevQueueOrder:number|null,prevWaitRounds:number|null}>}>,
  *   matchHistory: Array<{id:string,courtName:string,team1:Array<{id:string,firstName:string,lastName:string|null}>,team2:Array<{id:string,firstName:string,lastName:string|null}>,score1:number,score2:number,timestamp:string}>,
  *   history: Record<string, Record<string, number>>,
  *   lastSessionResetAt: string|null
@@ -64,6 +64,16 @@ export async function getState(arenaId) {
     status: c.status,
     team1: c.slots.filter((s) => s.team === 1).map((s) => s.playerId),
     team2: c.slots.filter((s) => s.team === 2).map((s) => s.playerId),
+    // Fill bookkeeping, surfaced so the offline board engine can mirror
+    // cancelFill/endMatch exactly. Board data is already public via the SSE
+    // stream, and these are non-sensitive ints/id arrays.
+    fillBumpedPlayerIds: c.fillBumpedPlayerIds,
+    slots: c.slots.map((s) => ({
+      playerId: s.playerId,
+      team: s.team,
+      prevQueueOrder: s.prevQueueOrder,
+      prevWaitRounds: s.prevWaitRounds,
+    })),
   }));
 
   // Use the snapshotted names so history survives player deletion.
@@ -106,6 +116,9 @@ export async function getState(arenaId) {
       waitRounds: p.waitRounds,
       rating: p.rating,
       skipBoosted: p.skipBoosted,
+      // Needed by the offline board engine: check-in re-anchors gamesOffset to
+      // the group average, and auto-mix sorts by gamesPlayed + gamesOffset.
+      gamesOffset: p.gamesOffset,
     })),
     queue,
     courts: courtState,

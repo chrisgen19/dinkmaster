@@ -6,7 +6,7 @@ import { getCurrentUser, requireUser, requireArenaOwner, requireArenaManager } f
 import { ROLES, canManageArena } from '@/lib/roles';
 import { generateInviteCode } from '@/lib/invite-code';
 import { INVITE_MODES, isInviteMode } from '@/lib/invites';
-import { MAX_WAIT_THRESHOLD, ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
+import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
 import {
   DEFAULT_TARGET_SCORE,
   MIN_TARGET_SCORE,
@@ -14,53 +14,28 @@ import {
   MIN_LEADERBOARD_SIZE,
   MAX_LEADERBOARD_SIZE,
 } from '@/lib/match-defaults';
-import { computeMatchRatings, RATING_BASELINE } from '@/lib/rating';
+import { RATING_BASELINE } from '@/lib/rating';
 import { validateMatchScore } from '@/lib/scoring';
 import { diffLineup, validateLineup } from '@/lib/court-lineup';
-
-/** Canonical (sorted) pair so each partnership has exactly one row. */
-function canonicalPair(x, y) {
-  return x < y ? [x, y] : [y, x];
-}
-
-/** Increment the partnership count for a pair, creating the row if absent. */
-async function bumpPartnership(tx, arenaId, x, y) {
-  const [playerA, playerB] = canonicalPair(x, y);
-  await tx.partnership.upsert({
-    where: { playerA_playerB: { playerA, playerB } },
-    create: { arenaId, playerA, playerB, count: 1 },
-    update: { count: { increment: 1 } },
-  });
-}
-
-/** Decrement a partnership count (floored at 0); no-op if the row is absent. Reverses {@link bumpPartnership}. */
-async function unbumpPartnership(tx, x, y) {
-  const [playerA, playerB] = canonicalPair(x, y);
-  await tx.partnership.updateMany({
-    where: { playerA, playerB, count: { gt: 0 } },
-    data: { count: { decrement: 1 } },
-  });
-}
-
-/** Highest queueOrder currently assigned to an active player, or 0 if the rack is empty. */
-async function maxQueueOrder(tx, arenaId) {
-  const top = await tx.player.aggregate({
-    where: { arenaId, leftAt: null },
-    _max: { queueOrder: true },
-  });
-  return top._max.queueOrder ?? 0;
-}
-
-// App-wide key for a transaction-scoped Postgres advisory lock. Every
-// transaction that assigns queueOrder positions takes this lock first, so
-// concurrent finishes/adds/shuffles are serialized and can never read the
-// same maxQueueOrder and write duplicate positions. The lock is keyed per
-// arena (second key) so unrelated arenas never block each other. Released
-// on commit/rollback.
-const QUEUE_LOCK_KEY = 920425;
-function lockQueue(tx, arenaId) {
-  return tx.$executeRaw`SELECT pg_advisory_xact_lock(${QUEUE_LOCK_KEY}, hashtext(${arenaId}))`;
-}
+// Board mutation internals live in board-apply so the offline sync replay
+// (Phase 3) can apply a recorded event log through the exact same code paths.
+// Each action below still owns its auth guard, transaction, and error mapping.
+import {
+  addArenaPlayer,
+  applyAutoMixTx,
+  applyCancelFillTx,
+  applyCheckInTx,
+  applyCheckOutTx,
+  applyEndMatchTx,
+  applyFillCourtTx,
+  applyShuffleQueueTx,
+  applySkipPlayerTx,
+  bumpPartnership,
+  groupAverageMetric,
+  lockQueue,
+  maxQueueOrder,
+  unbumpPartnership,
+} from '@/lib/board-apply';
 
 // Separate advisory-lock namespace for invite creation, keyed per arena, so two
 // managers minting a link for the same arena are serialized and can't both pass
@@ -85,44 +60,6 @@ async function callerCanManageInvites(tx, arenaId, userId) {
     select: { role: true },
   });
   return !!membership && canManageArena(membership.role);
-}
-
-/** Unbiased Fisher-Yates shuffle (returns a new array). */
-function shuffle(items) {
-  const arr = [...items];
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-/**
- * Create a player on an arena's rack inside a transaction: credit the current
- * group-average `gamesOffset` (so a latecomer rotates as a peer, not catch-up)
- * and append them to the bottom of the queue. The caller must hold `lockQueue`.
- */
-async function addArenaPlayer(tx, arenaId, { userId = null, firstName, lastName }) {
-  const gamesOffset = await groupAverageMetric(tx, arenaId);
-  const order = (await maxQueueOrder(tx, arenaId)) + 1;
-  return tx.player.create({
-    data: { arenaId, userId, firstName, lastName: lastName || null, queueOrder: order, gamesOffset },
-  });
-}
-
-/**
- * The current group's average ordering metric (gamesPlayed + gamesOffset over
- * active players), used to slot a joiner in as a peer rather than giving them a
- * catch-up advantage for games they weren't here for.
- */
-async function groupAverageMetric(tx, arenaId) {
-  const active = await tx.player.findMany({
-    where: { arenaId, leftAt: null },
-    select: { gamesPlayed: true, gamesOffset: true },
-  });
-  return active.length
-    ? Math.round(active.reduce((sum, p) => sum + p.gamesPlayed + p.gamesOffset, 0) / active.length)
-    : 0;
 }
 
 /**
@@ -720,18 +657,7 @@ export async function shuffleQueue(arenaId) {
   let shuffledAny = false;
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
-    // Read the queued set under the lock so we never write a position onto a
-    // player a concurrent fillCourt just moved onto a court.
-    const queued = await tx.player.findMany({
-      where: { arenaId, leftAt: null, queueOrder: { not: null } },
-      select: { id: true },
-    });
-    if (queued.length < 2) return;
-    const shuffled = shuffle(queued);
-    for (let i = 0; i < shuffled.length; i++) {
-      await tx.player.update({ where: { id: shuffled[i].id }, data: { queueOrder: i + 1 } });
-    }
-    shuffledAny = true;
+    shuffledAny = await applyShuffleQueueTx(tx, arenaId);
   });
 
   return {
@@ -750,81 +676,7 @@ export async function fillCourt(arenaId, courtId) {
   try {
     await prisma.$transaction(async (tx) => {
       await lockQueue(tx, arenaId);
-      // Atomically claim the court only if it is still vacant (row-locks it).
-      // The arenaId guard also rejects a courtId from another arena.
-      const claimed = await tx.court.updateMany({
-        where: { id: courtId, arenaId, status: 'vacant' },
-        data: { status: 'playing' },
-      });
-      if (claimed.count !== 1) throw new Error('COURT_UNAVAILABLE');
-
-      // Select the current top 4 inside the tx so we never act on a stale snapshot.
-      // Pull queueOrder/waitRounds too so we can snapshot each player's pre-fill
-      // rack state onto their slot (lets cancelFill restore them precisely).
-      const queued = await tx.player.findMany({
-        where: { arenaId, leftAt: null, queueOrder: { not: null } },
-        orderBy: { queueOrder: 'asc' },
-        take: 4,
-        select: { id: true, queueOrder: true, waitRounds: true },
-      });
-      if (queued.length < 4) throw new Error('NOT_ENOUGH');
-
-      const [p0, p1, p2, p3] = queued.map((p) => p.id);
-      // playerId -> { prevQueueOrder, prevWaitRounds } for the slot snapshot below.
-      const snapshot = new Map(
-        queued.map((p) => [p.id, { prevQueueOrder: p.queueOrder, prevWaitRounds: p.waitRounds }]),
-      );
-
-      // Remove exactly these four from the rack; bail if any slipped away meanwhile.
-      // Clear `skipBoosted` too — once a paddle is actually playing, the
-      // "Next in Line" stamp has served its purpose.
-      const dequeued = await tx.player.updateMany({
-        where: { id: { in: [p0, p1, p2, p3] }, queueOrder: { not: null } },
-        data: { gamesPlayed: { increment: 1 }, queueOrder: null, waitRounds: 0, skipBoosted: false },
-      });
-      if (dequeued.count !== 4) throw new Error('QUEUE_CHANGED');
-
-      // Everyone still waiting in this arena was skipped this round. Capture
-      // exactly who gets the +1 (the four are already dequeued, so excluded) and
-      // record it on the court, so cancelFill can reverse the bump for precisely
-      // these players — not whoever happens to be queued at cancel time.
-      const bumped = await tx.player.findMany({
-        where: { arenaId, leftAt: null, queueOrder: { not: null } },
-        select: { id: true },
-      });
-      await tx.player.updateMany({
-        where: { arenaId, leftAt: null, queueOrder: { not: null } },
-        data: { waitRounds: { increment: 1 } },
-      });
-      await tx.court.update({
-        where: { id: courtId },
-        data: { fillBumpedPlayerIds: bumped.map((p) => p.id) },
-      });
-
-      // Pick the matchup with the fewest prior partnerships (random tie-break).
-      const rows = await tx.partnership.findMany({
-        where: { arenaId, playerA: { in: [p0, p1, p2, p3] }, playerB: { in: [p0, p1, p2, p3] } },
-      });
-      const countFor = (x, y) => {
-        const [a, b] = canonicalPair(x, y);
-        return rows.find((r) => r.playerA === a && r.playerB === b)?.count ?? 0;
-      };
-      const matchups = [
-        { team1: [p0, p1], team2: [p2, p3], weight: countFor(p0, p1) + countFor(p2, p3) },
-        { team1: [p0, p2], team2: [p1, p3], weight: countFor(p0, p2) + countFor(p1, p3) },
-        { team1: [p0, p3], team2: [p1, p2], weight: countFor(p0, p3) + countFor(p1, p2) },
-      ];
-      const minWeight = Math.min(...matchups.map((m) => m.weight));
-      const best = shuffle(matchups.filter((m) => m.weight === minWeight))[0];
-
-      await tx.courtSlot.createMany({
-        data: [
-          ...best.team1.map((playerId) => ({ courtId, playerId, team: 1, ...snapshot.get(playerId) })),
-          ...best.team2.map((playerId) => ({ courtId, playerId, team: 2, ...snapshot.get(playerId) })),
-        ],
-      });
-      await bumpPartnership(tx, arenaId, best.team1[0], best.team1[1]);
-      await bumpPartnership(tx, arenaId, best.team2[0], best.team2[1]);
+      await applyFillCourtTx(tx, arenaId, { courtId });
     });
   } catch (err) {
     if (err?.message === 'NOT_ENOUGH') {
@@ -877,91 +729,7 @@ export async function cancelFill(arenaId, courtId) {
   try {
     await prisma.$transaction(async (tx) => {
       await lockQueue(tx, arenaId);
-      // Read the fill's bookkeeping under the queue lock, BEFORE the atomic
-      // claim clears it — we need the exact set of players the fill bumped.
-      const courtRow = await tx.court.findFirst({
-        where: { id: courtId, arenaId },
-        select: { fillBumpedPlayerIds: true },
-      });
-      const bumpedIds = courtRow?.fillBumpedPlayerIds ?? [];
-
-      // Atomically claim the cancel: only flip playing -> vacant, so a
-      // concurrent endMatch/cancelFill for the same court can't double-process.
-      // Also clear `fillBumpedPlayerIds` so a vacant court never carries the
-      // previous fill's bookkeeping into a future debug session.
-      const claimed = await tx.court.updateMany({
-        where: { id: courtId, arenaId, status: 'playing' },
-        data: { status: 'vacant', fillBumpedPlayerIds: [] },
-      });
-      if (claimed.count !== 1) throw new Error('NOT_PLAYING');
-
-      const slots = await tx.courtSlot.findMany({ where: { courtId } });
-      // fillCourt always writes four slots — anything else means the court row
-      // is corrupt and a partial restore would unbump the wrong teams. Throwing
-      // here aborts the transaction, so the atomic `playing -> vacant` claim
-      // above rolls back along with it and the court returns to `playing`.
-      if (slots.length !== 4) throw new Error('INVALID_COURT');
-      // Need both snapshot fields to restore order + wait fairness exactly;
-      // a partial/absent snapshot (pre-feature slot) is non-cancellable.
-      if (slots.some((s) => s.prevQueueOrder === null || s.prevWaitRounds === null)) {
-        throw new Error('NO_SNAPSHOT');
-      }
-
-      // Reverse the fill's "+1 wait" for exactly the players it bumped, skipping
-      // any who have since left or re-entered a court — so a concurrent finish
-      // elsewhere can't get a decrement it never earned. Floor at 0.
-      if (bumpedIds.length > 0) {
-        await tx.player.updateMany({
-          where: {
-            id: { in: bumpedIds },
-            arenaId,
-            leftAt: null,
-            queueOrder: { not: null },
-            waitRounds: { gt: 0 },
-          },
-          data: { waitRounds: { decrement: 1 } },
-        });
-      }
-
-      // Restore each player's pre-fill wait fairness and undo the games bump.
-      // The waitRounds restore uses `update` (the row exists; we just read it).
-      // The gamesPlayed decrement is guarded by `updateMany` with `gt: 0` so an
-      // inconsistent counter can't go negative.
-      for (const s of slots) {
-        await tx.player.update({
-          where: { id: s.playerId },
-          data: { waitRounds: s.prevWaitRounds },
-        });
-        await tx.player.updateMany({
-          where: { id: s.playerId, gamesPlayed: { gt: 0 } },
-          data: { gamesPlayed: { decrement: 1 } },
-        });
-      }
-
-      // Reinsert the four at the front in their original relative order, then
-      // renumber the whole rack so positions can't collide with players the
-      // queue gained/recycled/shuffled while this court was live.
-      const restored = [...slots]
-        .sort((a, b) => a.prevQueueOrder - b.prevQueueOrder)
-        .map((s) => s.playerId);
-      const others = await tx.player.findMany({
-        where: { arenaId, leftAt: null, queueOrder: { not: null }, id: { notIn: restored } },
-        orderBy: { queueOrder: 'asc' },
-        select: { id: true },
-      });
-      const ordered = [...restored, ...others.map((p) => p.id)];
-      for (let i = 0; i < ordered.length; i++) {
-        await tx.player.update({ where: { id: ordered[i] }, data: { queueOrder: i + 1 } });
-      }
-
-      // Undo the two partnership bumps from the fill (one per team).
-      const team1 = slots.filter((s) => s.team === 1).map((s) => s.playerId);
-      const team2 = slots.filter((s) => s.team === 2).map((s) => s.playerId);
-      if (team1.length === 2) await unbumpPartnership(tx, team1[0], team1[1]);
-      if (team2.length === 2) await unbumpPartnership(tx, team2[0], team2[1]);
-
-      // Slots last, so the player restores above still read the snapshot.
-      await tx.courtSlot.deleteMany({ where: { courtId } });
+      await applyCancelFillTx(tx, arenaId, { courtId });
     });
   } catch (err) {
     // Already finished/cancelled (a concurrent action won, or a duplicate
@@ -1239,82 +1007,11 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
 
   const s1 = parseInt(score1, 10);
   const s2 = parseInt(score2, 10);
-  const team1Won = s1 > s2;
-  const team2Won = s2 > s1;
 
   try {
     await prisma.$transaction(async (tx) => {
       await lockQueue(tx, arenaId);
-      // Atomically claim the finish: only one caller can flip playing -> vacant,
-      // so concurrent endMatch calls for the same court can't double-record.
-      // Also clear the cancel-bookkeeping (`fillBumpedPlayerIds`) so a vacant
-      // court never carries the previous fill's metadata.
-      const claimed = await tx.court.updateMany({
-        where: { id: courtId, arenaId, status: 'playing' },
-        data: { status: 'vacant', fillBumpedPlayerIds: [] },
-      });
-      if (claimed.count !== 1) throw new Error('ALREADY_FINISHED');
-
-      // Read the authoritative slot snapshot inside the transaction.
-      const court = await tx.court.findUnique({ where: { id: courtId } });
-      const slots = await tx.courtSlot.findMany({
-        where: { courtId },
-        include: { player: true },
-      });
-      const team1 = slots.filter((s) => s.team === 1);
-      const team2 = slots.filter((s) => s.team === 2);
-
-      const base = await maxQueueOrder(tx, arenaId);
-      // Recycle finished players back into the rack in randomized order.
-      const recycled = shuffle(slots);
-
-      await tx.match.create({
-        data: {
-          arenaId,
-          courtName: court.name,
-          score1: s1,
-          score2: s2,
-          players: {
-            create: slots.map((s) => ({
-              playerId: s.playerId,
-              playerFirstName: s.player.firstName,
-              playerLastName: s.player.lastName,
-              team: s.team,
-            })),
-          },
-        },
-      });
-
-      if (team1Won || team2Won) {
-        const winners = (team1Won ? team1 : team2).map((s) => s.playerId);
-        const losers = (team1Won ? team2 : team1).map((s) => s.playerId);
-        await tx.player.updateMany({ where: { id: { in: winners } }, data: { wins: { increment: 1 } } });
-        await tx.player.updateMany({ where: { id: { in: losers } }, data: { losses: { increment: 1 } } });
-      }
-
-      // Update Elo skill ratings (Phase 6). A filled court is always two
-      // players per team; guard anyway so a malformed court can't crash a finish.
-      if (team1.length === 2 && team2.length === 2) {
-        const outcome = team1Won ? 1 : team2Won ? 2 : 0;
-        const next = computeMatchRatings({
-          team1: [team1[0].player.rating, team1[1].player.rating],
-          team2: [team2[0].player.rating, team2[1].player.rating],
-          outcome,
-        });
-        await tx.player.update({ where: { id: team1[0].playerId }, data: { rating: next.team1[0] } });
-        await tx.player.update({ where: { id: team1[1].playerId }, data: { rating: next.team1[1] } });
-        await tx.player.update({ where: { id: team2[0].playerId }, data: { rating: next.team2[0] } });
-        await tx.player.update({ where: { id: team2[1].playerId }, data: { rating: next.team2[1] } });
-      }
-
-      await tx.courtSlot.deleteMany({ where: { courtId } });
-
-      for (let i = 0; i < recycled.length; i++) {
-        await tx.player.update({
-          where: { id: recycled[i].playerId },
-          data: { queueOrder: base + i + 1 },
-        });
-      }
+      await applyEndMatchTx(tx, arenaId, { courtId, s1, s2 });
     });
   } catch (err) {
     // Court was already finished/vacant (a concurrent or duplicate call won) — no-op.
@@ -1343,66 +1040,7 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
     try {
       await prisma.$transaction(async (tx) => {
         await lockQueue(tx, arenaId);
-        // Read the thresholds inside the transaction so a concurrent settings
-        // save can't slip in between read and reorder, and so the row is
-        // null-checked explicitly rather than crashing on destructure.
-        const arena = await tx.arena.findUnique({
-          where: { id: arenaId },
-          select: { starveThreshold: true, emergencyWait: true, skipRestoresPriority: true },
-        });
-        if (!arena) throw new Error('ARENA_GONE');
-        const { starveThreshold, emergencyWait, skipRestoresPriority } = arena;
-
-        // Read the queued set under the lock so a concurrent fillCourt can't make
-        // us reassign a position to a player who is now on a court.
-        const queued = await tx.player.findMany({
-          where: { arenaId, leftAt: null, queueOrder: { not: null } },
-          select: { id: true, gamesPlayed: true, gamesOffset: true, waitRounds: true, skipBoosted: true },
-        });
-        if (queued.length === 0) return;
-        // Sort lexicographically: band first (next-line > emergency > protected
-        // > fresh), then in the strict-wait bands (next-line, emergency) by
-        // longest-waiting first, then by FEWEST games played-since-joining
-        // (gamesPlayed + gamesOffset, so a player who has played less goes
-        // ahead but a late joiner can't hog), then a random tie-break for
-        // variety among equals.
-        const scored = queued
-          .map((p) => ({
-            id: p.id,
-            // Gate the boost on the arena setting under the queue lock: a
-            // stale `Player.skipBoosted` (set during a race with a
-            // toggle-off — skipPlayer reads the old `true` value under its
-            // own lock, then commits after `updateArenaMatchmaking`'s wipe
-            // outside the lock) must not elevate the paddle once the arena
-            // is in legacy mode. Treating the arena setting as
-            // authoritative here is simpler than locking the settings save.
-            band: bandOf(p.waitRounds, {
-              starveThreshold,
-              emergencyWait,
-              skipBoosted: p.skipBoosted && skipRestoresPriority,
-            }),
-            waitRounds: p.waitRounds,
-            games: p.gamesPlayed + p.gamesOffset,
-            rand: Math.random(),
-          }))
-          .sort((a, b) => {
-            if (a.band !== b.band) return b.band - a.band; // next-line > emergency > protected > fresh
-            // Both next-line and emergency bands are strictly longest-first.
-            if ((a.band === 3 || a.band === 2) && a.waitRounds !== b.waitRounds) return b.waitRounds - a.waitRounds;
-            if (a.games !== b.games) return a.games - b.games; // fewest games-since-joining first
-            return a.rand - b.rand; // random tie-break among equals
-          });
-        for (let i = 0; i < scored.length; i++) {
-          await tx.player.update({ where: { id: scored[i].id }, data: { queueOrder: i + 1 } });
-        }
-        // One-shot semantic: the next-line boost is consumed by the mix that
-        // elevated them. Clear the flag for anyone in the rack so a paddle
-        // can't surf the boost across multiple mixes.
-        await tx.player.updateMany({
-          where: { arenaId, leftAt: null, queueOrder: { not: null }, skipBoosted: true },
-          data: { skipBoosted: false },
-        });
-        mixed = true;
+        mixed = await applyAutoMixTx(tx, arenaId);
       });
     } catch (err) {
       // ARENA_GONE (concurrent delete) is the only known non-bug failure here.
@@ -1575,24 +1213,7 @@ export async function checkInPlayer(arenaId, playerId) {
 
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
-    const player = await tx.player.findFirst({
-      where: { id: playerId, arenaId, leftAt: null },
-      select: { id: true, queueOrder: true, gamesPlayed: true },
-    });
-    if (!player) return;
-    if (player.queueOrder !== null) return;
-    // Skip if the player is currently on a court — they'll return to the rack
-    // when `endMatch` fires, and double-queueing would put them in two places.
-    const onCourt = await tx.courtSlot.findFirst({
-      where: { playerId: player.id, court: { status: 'playing' } },
-    });
-    if (onCourt) return;
-    const avg = await groupAverageMetric(tx, arenaId);
-    const order = (await maxQueueOrder(tx, arenaId)) + 1;
-    await tx.player.update({
-      where: { id: player.id },
-      data: { queueOrder: order, waitRounds: 0, skipBoosted: false, gamesOffset: avg - player.gamesPlayed },
-    });
+    await applyCheckInTx(tx, arenaId, { playerId });
   });
 
   return { state: await getState(arenaId) };
@@ -1609,10 +1230,7 @@ export async function checkOutPlayer(arenaId, playerId) {
 
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
-    await tx.player.updateMany({
-      where: { id: playerId, arenaId, leftAt: null, queueOrder: { not: null } },
-      data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
-    });
+    await applyCheckOutTx(tx, arenaId, { playerId });
   });
 
   return { state: await getState(arenaId) };
@@ -1680,104 +1298,11 @@ export async function skipPlayer(arenaId, playerId, replacementId = null) {
   let replacementError = '';
   await prisma.$transaction(async (tx) => {
     await lockQueue(tx, arenaId);
-    // Read both relevant arena settings inside the tx so a concurrent
-    // settings save can't slip between read and write.
-    const arena = await tx.arena.findUnique({
-      where: { id: arenaId },
-      select: { skipRestoresPriority: true, skipPickReplacement: true },
-    });
-    if (!arena) return;
-    restoresPriority = arena.skipRestoresPriority;
-
-    // Enforce the same eligibility the UI gates on (deriveRackRow.canSkip),
-    // server-authoritatively: skip is only valid for an ON-DECK paddle (top
-    // ON_DECK_SIZE of the rack) AND only when someone is waiting behind to
-    // take the freed spot. Re-checked under the lock so a direct POST can't
-    // skip an off-deck paddle and dodge the fairness rules.
-    const queued = await tx.player.findMany({
-      where: { arenaId, leftAt: null, queueOrder: { not: null } },
-      orderBy: { queueOrder: 'asc' },
-      select: { id: true, queueOrder: true },
-    });
-    const index = queued.findIndex((p) => p.id === playerId);
-    if (index === -1 || index >= ON_DECK_SIZE || queued.length <= ON_DECK_SIZE) return;
-
-    // Manual replacement picking is gated on caller (manager-only), the arena
-    // setting, and a valid waiting target. Anything that fails the gate falls
-    // back to auto-pick (first waiting). Two distinct failure modes return
-    // clean (no-op) errors so the cause is debuggable and the manager knows
-    // whether to retry:
-    //   - replacement gone from the rack entirely (left / pulled to a court):
-    //     a genuine race → "no longer available" (the UI keeps the picker open
-    //     so they pick again from the refreshed list).
-    //   - replacement is on deck, not waiting: only reachable via a malformed
-    //     POST (the picker never lists on-deck rows) → "invalid replacement".
-    let replacementIdx = ON_DECK_SIZE; // auto: first waiting
-    if (replacementId && isManager && arena.skipPickReplacement) {
-      const idx = queued.findIndex((p) => p.id === replacementId);
-      if (idx === -1) {
-        replacementError = 'That replacement is no longer available. Pick again.';
-        return;
-      }
-      if (idx < ON_DECK_SIZE) {
-        replacementError = 'That player is already on deck — pick a waiting paddle.';
-        return;
-      }
-      replacementIdx = idx;
-    }
-    // A pick of the first-waiting paddle is identical to auto-pick; collapse
-    // them so both take the cheap path below.
-    const isManualPick = replacementIdx !== ON_DECK_SIZE;
-
-    if (restoresPriority) {
-      // On-mode "Next in Line" — the skipped paddle lands just PAST on-deck
-      // (position ON_DECK_SIZE+1), the picked replacement fills the freed
-      // on-deck slot, and the next auto-mix elevates the skipped paddle via
-      // `skipBoosted`. Assemble the target order and write only rows whose
-      // position changes — for auto-pick this is bounded to the on-deck
-      // window; a manual pick of a deep waiting paddle costs writes
-      // proportional to how far it travels (inherent to moving them up).
-      const onDeckMinusSkipped = queued.slice(0, ON_DECK_SIZE).filter((_, k) => k !== index);
-      const replacement = queued[replacementIdx];
-      const waitingMinusReplacement = queued
-        .slice(ON_DECK_SIZE)
-        .filter((p) => p.id !== replacement.id);
-      const reordered = [
-        ...onDeckMinusSkipped,
-        replacement,
-        queued[index],
-        ...waitingMinusReplacement,
-      ];
-      for (let i = 0; i < reordered.length; i++) {
-        if (reordered[i].queueOrder !== i + 1) {
-          await tx.player.update({ where: { id: reordered[i].id }, data: { queueOrder: i + 1 } });
-        }
-      }
-      await tx.player.update({ where: { id: playerId }, data: { skipBoosted: true } });
-    } else {
-      // Off-mode legacy "back of rack + reset" — minimal writes, no dense
-      // renumber (queueOrder is just a sort key, gaps are fine):
-      //   - the skipped paddle goes to max+1 and resets `waitRounds`; clears
-      //     any lingering boost so it can't surf priority across a mode toggle.
-      //   - auto-pick needs no extra write: once the skipped paddle vacates
-      //     its on-deck slot, the first waiting paddle promotes by queueOrder
-      //     on its own.
-      //   - a manual pick takes the skipped paddle's freed slot directly (one
-      //     write), leaving everyone else untouched.
-      const skippedOrder = queued[index].queueOrder;
-      const backOrder = (await maxQueueOrder(tx, arenaId)) + 1;
-      if (isManualPick) {
-        await tx.player.update({
-          where: { id: queued[replacementIdx].id },
-          data: { queueOrder: skippedOrder },
-        });
-      }
-      await tx.player.update({
-        where: { id: playerId },
-        data: { queueOrder: backOrder, waitRounds: 0, skipBoosted: false },
-      });
-    }
-    moved = true;
+    ({ moved, restoresPriority, replacementError } = await applySkipPlayerTx(tx, arenaId, {
+      playerId,
+      replacementId,
+      isManager,
+    }));
   });
 
   if (replacementError) {
