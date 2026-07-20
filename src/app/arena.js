@@ -31,7 +31,7 @@ import {
   OfflineHoldNotice,
   OfflinePromptBanner,
 } from './arena-offline-banner';
-import { OFFLINE_UNAVAILABLE_MESSAGE, isHoldActive } from './arena-offline-state';
+import { OFFLINE_UNAVAILABLE_MESSAGE, holdExpiryDelay, isHoldActive } from './arena-offline-state';
 import { computeSessionStats } from '@/lib/session-stats';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
 import { formatShortName, profileHref } from '@/lib/player-display';
@@ -205,6 +205,17 @@ export default function Arena({
   const advanceServerStamp = (fetchedAt) => {
     if (fetchedAt) setLastServerFetchedAt((prev) => (fetchedAt > (prev ?? 0) ? fetchedAt : prev));
   };
+
+  // Expire a stale advisory hold on its own schedule. The banner's TTL is
+  // checked during render, and an idle arena page can go hours without one
+  // (SSE heartbeats update no state), so a device that died holding the
+  // board would otherwise keep its notice up well past the TTL.
+  useEffect(() => {
+    const delay = holdExpiryDelay(offlineHold);
+    if (delay === null) return;
+    const timer = setTimeout(() => setOfflineHold(null), delay);
+    return () => clearTimeout(timer);
+  }, [offlineHold]);
 
   // Post-commit catch-all keeping the board ref current for every path that
   // sets board state (including the render-time prop resync, which may not

@@ -38,7 +38,13 @@ export default defineConfig({
     // sign-up/sign-in calls as cross-origin.
     command: 'pnpm build && PORT=3021 BETTER_AUTH_URL=http://localhost:3021 pnpm start',
     url: 'http://localhost:3021',
-    reuseExistingServer: !process.env.CI,
+    // Never reuse a server here, unlike the dev config. This command REBUILDS
+    // into .next, so a leftover server from an interrupted run would keep
+    // serving a precache manifest whose hashed chunks the new build just
+    // deleted: the service worker then hangs in `installing` and every
+    // offline assertion fails in a way that looks like a product bug.
+    // Always starting fresh also makes an occupied port fail loudly.
+    reuseExistingServer: false,
     timeout: 300_000, // full production build + migrate deploy
   },
 });

@@ -30,6 +30,21 @@ export function isHoldActive(hold, now = Date.now()) {
 }
 
 /**
+ * Milliseconds until an active hold expires, or null when it is absent or
+ * already stale.
+ *
+ * Viewers need this because {@link isHoldActive} is only re-evaluated when
+ * something re-renders: an idle arena page with no board activity (SSE
+ * heartbeats don't touch React state) could otherwise show a dead device's
+ * notice long past the TTL. Schedule the flip instead of waiting for an
+ * unrelated render.
+ */
+export function holdExpiryDelay(hold, now = Date.now()) {
+  if (!isHoldActive(hold, now)) return null;
+  return Math.max(0, Date.parse(hold.heldAt) + OFFLINE_HOLD_TTL_MS - now);
+}
+
+/**
  * Map the arena page's props onto the settings object the board engine
  * consumes. Captured ONCE at offline entry and stored on the pending log, so
  * every event in a batch is resolved and replayed under the same rules even

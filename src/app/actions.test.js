@@ -632,7 +632,12 @@ describe('arena server actions — authorization', () => {
         });
       });
 
-      it('releases the advisory offline hold in the same transaction as a successful apply', async () => {
+      it('releases the advisory offline hold in the same transaction, scoped to its owner', async () => {
+        requireArenaManager.mockResolvedValue({
+          user: { id: 'u1', firstName: 'Chris', lastName: 'Diomampo' },
+          arena: { id: ARENA, ownerId: 'u1' },
+          role: ROLES.OWNER,
+        });
         const tx = makeTx({
           arena: {
             findUnique: vi.fn().mockResolvedValue({ ...ARENA_SETTINGS }),
@@ -645,8 +650,10 @@ describe('arena server actions — authorization', () => {
           ARENA,
           batchInput({ events: [{ id: 'e1', type: 'checkOut', payload: { playerId: 'e' } }] }),
         );
+        // Scoped by label: a second manager who declared a hold after this
+        // session started must keep their notice while they're still offline.
         expect(tx.arena.updateMany).toHaveBeenCalledWith({
-          where: { id: ARENA },
+          where: { id: ARENA, offlineHolderLabel: 'Chris D.' },
           data: { offlineHolderLabel: null, offlineHeldAt: null },
         });
       });
@@ -727,12 +734,20 @@ describe('arena server actions — authorization', () => {
         });
       });
 
-      it('releaseOfflineHold() clears both columns', async () => {
+      it('releaseOfflineHold() clears both columns, but only its own hold', async () => {
+        requireArenaManager.mockResolvedValue({
+          user: { id: 'u1', firstName: 'Chris', lastName: 'Diomampo' },
+          arena: { id: ARENA, ownerId: 'u1' },
+          role: ROLES.OWNER,
+        });
         prisma.arena.updateMany.mockResolvedValue({ count: 1 });
+
         const result = await actions.releaseOfflineHold(ARENA);
         expect(result.error).toBeUndefined();
+        // Label-scoped so one manager's exit can't clear another's active
+        // hold (last-writer-wins means the displayed holder may be someone else).
         expect(prisma.arena.updateMany).toHaveBeenCalledWith({
-          where: { id: ARENA },
+          where: { id: ARENA, offlineHolderLabel: 'Chris D.' },
           data: { offlineHolderLabel: null, offlineHeldAt: null },
         });
       });
