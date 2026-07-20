@@ -33,11 +33,16 @@ const revision =
 export const { dynamic, dynamicParams, revalidate, generateStaticParams, GET } =
   createSerwistRoute({
     swSrc: "src/app/sw.js",
-    // Precache the offline page and the logo it renders, so the fallback shows
-    // intact even on a route the user never visited online.
-    additionalPrecacheEntries: [
-      { url: "/offline", revision },
-      { url: "/icons/icon-192.png", revision },
-    ],
+    // Precache the offline page so the fallback shows intact even on a route
+    // the user never visited online.
+    //
+    // ROUTES ONLY here. Static files under public/ (the logo this page
+    // renders included) are already in the injected manifest with
+    // content-hash revisions; listing one again with a different revision
+    // creates a conflicting duplicate that makes the Serwist constructor
+    // THROW, so the whole service worker fails evaluation and never
+    // registers. (That exact bug shipped with the /icons/icon-192.png entry
+    // that used to sit in this list.)
+    additionalPrecacheEntries: [{ url: "/offline", revision }],
     useNativeEsbuild: true,
   });
