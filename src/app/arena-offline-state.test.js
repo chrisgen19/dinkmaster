@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
+  OFFLINE_HOLD_TTL_MS,
   OFFLINE_UNAVAILABLE_MESSAGE,
   appendEvent,
   createPendingLog,
   engineSettings,
+  holdExpiryDelay,
+  isHoldActive,
   replayEvents,
 } from './arena-offline-state';
 import { resolveCommand } from '@/lib/board-engine';
@@ -141,5 +144,39 @@ describe('replayEvents', () => {
 describe('OFFLINE_UNAVAILABLE_MESSAGE', () => {
   it('is user-facing copy', () => {
     expect(OFFLINE_UNAVAILABLE_MESSAGE).toMatch(/offline/i);
+  });
+});
+
+describe('isHoldActive', () => {
+  const NOW = Date.parse('2026-07-20T12:00:00.000Z');
+
+  it('is true for a fresh hold and false past the TTL', () => {
+    const fresh = { label: 'Chris D.', heldAt: '2026-07-20T11:00:00.000Z' };
+    const stale = { label: 'Chris D.', heldAt: '2026-07-19T11:00:00.000Z' };
+    expect(isHoldActive(fresh, NOW)).toBe(true);
+    expect(isHoldActive(stale, NOW)).toBe(false);
+  });
+
+  it('rejects missing, partial, or unparseable holds', () => {
+    expect(isHoldActive(null, NOW)).toBe(false);
+    expect(isHoldActive(undefined, NOW)).toBe(false);
+    expect(isHoldActive({ label: '', heldAt: '2026-07-20T11:00:00.000Z' }, NOW)).toBe(false);
+    expect(isHoldActive({ label: 'X', heldAt: 'not-a-date' }, NOW)).toBe(false);
+  });
+});
+
+describe('holdExpiryDelay', () => {
+  const NOW = Date.parse('2026-07-20T12:00:00.000Z');
+
+  it('returns the remaining TTL so a viewer can schedule the banner flip', () => {
+    // Held one hour ago, so seven of the eight hours remain.
+    const hold = { label: 'Chris D.', heldAt: '2026-07-20T11:00:00.000Z' };
+    expect(holdExpiryDelay(hold, NOW)).toBe(OFFLINE_HOLD_TTL_MS - 60 * 60 * 1000);
+  });
+
+  it('returns null when there is nothing to expire', () => {
+    expect(holdExpiryDelay(null, NOW)).toBeNull();
+    expect(holdExpiryDelay({ label: 'Chris D.', heldAt: '2026-07-19T11:00:00.000Z' }, NOW)).toBeNull();
+    expect(holdExpiryDelay({ label: 'X', heldAt: 'not-a-date' }, NOW)).toBeNull();
   });
 });

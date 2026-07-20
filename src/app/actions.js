@@ -1342,6 +1342,18 @@ const REPLAY_EVENT_ERRORS = new Set([
 const MAX_SYNC_EVENTS = 500;
 
 /**
+ * Display label for an advisory offline hold: "First L.", derived from the
+ * authenticated account rather than client input. Falls back through the
+ * core `name` field so a session missing the additional fields still yields
+ * something presentable. Also used to scope hold clears to their owner.
+ */
+function offlineHoldLabel(user) {
+  const first = user.firstName || user.name?.split(' ')[0] || 'A manager';
+  const lastInitial = user.lastName?.charAt(0);
+  return lastInitial ? `${first} ${lastInitial}.` : first;
+}
+
+/**
  * Replay an offline session's event log against the arena, atomically.
  *
  * The client records board commands offline (with every nondeterministic
@@ -1488,6 +1500,15 @@ export async function syncOfflineEvents(arenaId, input) {
           skippedCount: skipped.length,
         },
       });
+      // The offline session this batch came from is over: release the
+      // advisory hold in the same transaction so other viewers' "running
+      // the board offline" banner clears with the same state push. Scoped
+      // to THIS manager's own hold, so a second manager who declared after
+      // this session started keeps their notice (see releaseOfflineHold).
+      await tx.arena.updateMany({
+        where: { id: arenaId, offlineHolderLabel: offlineHoldLabel(guard.user) },
+        data: { offlineHolderLabel: null, offlineHeldAt: null },
+      });
       outcome = { appliedIds, skipped };
     });
   } catch (err) {
@@ -1511,6 +1532,50 @@ export async function syncOfflineEvents(arenaId, input) {
     skipped: outcome?.skipped ?? [],
     ...(outcome?.alreadySynced ? { alreadySynced: true } : {}),
   };
+}
+
+/**
+ * Declare an advisory "this device is running the board offline" hold.
+ * Fired best-effort by the client when a manager enters offline mode while
+ * the server is still reachable (flaky connection, preemptive entry); a
+ * fully offline device simply can't declare, which is fine: the hold is a
+ * COURTESY BANNER for other viewers, never an enforcement mechanism. The
+ * sync fingerprint check is what protects correctness. Last writer wins.
+ * The Arena NOTIFY trigger broadcasts the change over the existing SSE
+ * stream. Cleared by {@link releaseOfflineHold} and inside
+ * {@link syncOfflineEvents}.
+ */
+export async function declareOfflineHold(arenaId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  await prisma.arena.updateMany({
+    where: { id: arenaId },
+    data: { offlineHolderLabel: offlineHoldLabel(guard.user), offlineHeldAt: new Date() },
+  });
+  return {};
+}
+
+/**
+ * Clear the advisory offline hold, but only when THIS manager is the one
+ * currently shown as holding it (manager-gated; see
+ * {@link declareOfflineHold}).
+ *
+ * The scoping matters when two managers overlap: A declares, B declares
+ * (last writer wins, so B is the displayed holder), then A finishes. An
+ * unscoped clear would drop B's notice while B is still offline. Two
+ * DEVICES of the same manager still clear each other, which is acceptable
+ * for a courtesy banner.
+ */
+export async function releaseOfflineHold(arenaId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  await prisma.arena.updateMany({
+    where: { id: arenaId, offlineHolderLabel: offlineHoldLabel(guard.user) },
+    data: { offlineHolderLabel: null, offlineHeldAt: null },
+  });
+  return {};
 }
 
 /**

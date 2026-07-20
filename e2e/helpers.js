@@ -1,4 +1,6 @@
-/** Shared Playwright helpers. Keep both spec files in sync via this module. */
+/** Shared Playwright helpers. Keep all spec files in sync via this module. */
+
+import { expect } from '@playwright/test';
 
 /** A fresh email per call so e2e runs never collide on the unique constraint. */
 export const uniqueEmail = () => `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.local`;
@@ -30,4 +32,46 @@ export async function fillRegisterForm(page, {
     await page.locator('input[type="date"]').fill('1995-01-01');
     await page.locator('select').selectOption('Prefer not to say');
   }
+}
+
+/**
+ * Register a fresh account and land signed in on the arena directory.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {object} [options] - forwarded to {@link fillRegisterForm}
+ * @returns {Promise<string>} the account's email
+ */
+export async function registerAndSignIn(page, options = {}) {
+  const email = options.email ?? uniqueEmail();
+  await page.goto('/register');
+  await fillRegisterForm(page, { ...options, email });
+  await page.getByRole('button', { name: 'Create account' }).click();
+  await expect(page).toHaveURL('/arenas');
+  return email;
+}
+
+/**
+ * Open ONE signed-in context for a whole spec file, registering a single
+ * account for it.
+ *
+ * Necessary against a production server: Better Auth enables rate limiting
+ * only in production (it's off in dev), and sign-up is capped at a few
+ * requests per window, so a suite that registers in every test starts
+ * getting 429s partway through. Sharing one context also keeps the service
+ * worker registered between tests and skips per-test sign-in round trips.
+ *
+ * Call from `test.beforeAll` and close the context in `test.afterAll`.
+ *
+ * @param {import('@playwright/test').Browser} browser
+ * @param {object} [args]
+ * @param {string} [args.baseURL] - base URL for the context
+ * @param {object} [args.form] - forwarded to {@link fillRegisterForm}
+ * @returns {Promise<{context: import('@playwright/test').BrowserContext,
+ *   page: import('@playwright/test').Page, email: string}>}
+ */
+export async function openSignedInContext(browser, { baseURL, form = {} } = {}) {
+  const context = await browser.newContext(baseURL ? { baseURL } : {});
+  const page = await context.newPage();
+  const email = await registerAndSignIn(page, form);
+  return { context, page, email };
 }

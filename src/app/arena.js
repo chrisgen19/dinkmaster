@@ -28,9 +28,10 @@ import {
   OfflineActiveBanner,
   OfflineBlockedDialog,
   OfflineDivergenceDialog,
+  OfflineHoldNotice,
   OfflinePromptBanner,
 } from './arena-offline-banner';
-import { OFFLINE_UNAVAILABLE_MESSAGE } from './arena-offline-state';
+import { OFFLINE_UNAVAILABLE_MESSAGE, holdExpiryDelay, isHoldActive } from './arena-offline-state';
 import { computeSessionStats } from '@/lib/session-stats';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
 import { formatShortName, profileHref } from '@/lib/player-display';
@@ -170,6 +171,9 @@ export default function Arena({
   // because the prop-refresh resync block right after this needs to call
   // `setLastSessionResetAt` — declaring it later would TDZ-throw on render.
   const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
+  // Advisory "a manager is running this board offline" flag from getState;
+  // resynced on every server payload, never touched by local engine states.
+  const [offlineHold, setOfflineHold] = useState(initialState.offlineHold ?? null);
   // Error/notification banners. Declared up here (not with the other UI
   // state below) because the offline hook wiring right after needs the
   // setters, and react-hooks/immutability enforces declaration order.
@@ -202,6 +206,17 @@ export default function Arena({
     if (fetchedAt) setLastServerFetchedAt((prev) => (fetchedAt > (prev ?? 0) ? fetchedAt : prev));
   };
 
+  // Expire a stale advisory hold on its own schedule. The banner's TTL is
+  // checked during render, and an idle arena page can go hours without one
+  // (SSE heartbeats update no state), so a device that died holding the
+  // board would otherwise keep its notice up well past the TTL.
+  useEffect(() => {
+    const delay = holdExpiryDelay(offlineHold);
+    if (delay === null) return;
+    const timer = setTimeout(() => setOfflineHold(null), delay);
+    return () => clearTimeout(timer);
+  }, [offlineHold]);
+
   // Post-commit catch-all keeping the board ref current for every path that
   // sets board state (including the render-time prop resync, which may not
   // touch refs itself under react-hooks/refs).
@@ -229,6 +244,10 @@ export default function Arena({
     setMatchHistory(state.matchHistory);
     setHistory(state.history);
     if ('lastSessionResetAt' in state) setLastSessionResetAt(state.lastSessionResetAt);
+    // Sync responses arrive through this path too (applySyncedState); they
+    // carry `offlineHold: null` after the server cleared it. Engine states
+    // never have the key, so a live hold can't be wiped by local play.
+    if ('offlineHold' in state) setOfflineHold(state.offlineHold ?? null);
   }, []);
 
   // Save the current board as this arena's IndexedDB snapshot: the offline
@@ -327,6 +346,7 @@ export default function Arena({
       // child component refreshing after a link approval) still surfaces a
       // concurrent reset that happened on the server.
       setLastSessionResetAt(initialState.lastSessionResetAt);
+      setOfflineHold(initialState.offlineHold ?? null);
     }
   }
 
@@ -604,6 +624,11 @@ export default function Arena({
     // match finishing right around a reset.
     if ('lastSessionResetAt' in state) {
       setLastSessionResetAt(state.lastSessionResetAt);
+    }
+    // Advisory hold rides every server payload; guarded so a local engine
+    // state (which never carries the key) can't clear a live hold.
+    if ('offlineHold' in state) {
+      setOfflineHold(state.offlineHold ?? null);
     }
   }, [arenaId, offlineActive]);
 
@@ -1220,6 +1245,12 @@ export default function Arena({
           onEnter={handleEnterOffline}
           onDismiss={offline.dismissPrompt}
         />
+      )}
+      {/* Advisory: someone ELSE is running this board offline. Hidden on the
+          holding device itself (it shows the offline banner instead) and once
+          the hold stamp ages past the TTL (a lost device never releases). */}
+      {!offline.offlineActive && isHoldActive(offlineHold) && (
+        <OfflineHoldNotice label={offlineHold.label} />
       )}
 
       {offline.syncState.status === 'divergence' && (

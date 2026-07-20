@@ -102,6 +102,29 @@ export function OfflineActiveBanner({ pendingCount, syncing, syncError, onSync, 
   );
 }
 
+/**
+ * Soft advisory shown to OTHER viewers while a manager runs the board
+ * offline: live updates will lag until that device syncs. Informational
+ * only; nothing is disabled (the sync fingerprint check protects
+ * correctness if someone mutates anyway).
+ */
+export function OfflineHoldNotice({ label }) {
+  return (
+    <div className={barBase}>
+      <div
+        role="status"
+        className="flex items-center gap-2.5 rounded-2xl border border-sky-200 bg-sky-50/95 px-4 py-3 text-sky-900 shadow-lg shadow-sky-900/10"
+      >
+        <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-sky-500" />
+        <p className="min-w-0 text-sm font-semibold leading-snug">
+          {label} is running this board offline. The live view may be behind until their
+          device reconnects and syncs.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /** Shared modal chrome for the two sync-outcome dialogs below. */
 function SyncDialogShell({ title, children }) {
   // iOS-safe scroll lock + portal to <body>, matching the app's other modals
