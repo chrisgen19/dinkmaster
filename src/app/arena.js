@@ -22,6 +22,7 @@ import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT, ON_DECK_SIZE } from '
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE, DEFAULT_SHOW_PARTNERSHIP_MATRIX } from '@/lib/match-defaults';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
 import { createStateFreshnessGuard } from '@/lib/state-freshness';
+import { saveArenaSnapshot } from '@/lib/offline-store';
 import { computeSessionStats } from '@/lib/session-stats';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
 import { formatShortName, profileHref } from '@/lib/player-display';
@@ -561,6 +562,41 @@ export default function Arena({
       source?.close();
     };
   }, [arenaId, applyServerState]);
+
+  // Persist the latest board to IndexedDB (throttled to idle time) so the
+  // offline shell (/offline-board) can render this arena with no connection:
+  // the read-only offline experience. Saved for every viewer, since snapshots
+  // hold only board data that is already publicly readable via this page and
+  // its SSE stream, plus the viewer's own role flags. Failures are swallowed
+  // inside offline-store; a private-mode browser just gets no offline copy.
+  useEffect(() => {
+    const save = () => {
+      saveArenaSnapshot({
+        arenaId,
+        arenaName,
+        savedAt: Date.now(),
+        canManage,
+        viewerRole,
+        viewerUserId,
+        matchmaking: matchmakingProp,
+        matchDefaults,
+        state: { players, queue, courts, matchHistory, history, lastSessionResetAt },
+      });
+    };
+    // requestIdleCallback keeps the write off the interaction path; the
+    // timeout fallback covers Safari (no rIC) with a small fixed delay.
+    let idleId = null;
+    let timerId = null;
+    if ('requestIdleCallback' in window) {
+      idleId = window.requestIdleCallback(save, { timeout: 2000 });
+    } else {
+      timerId = setTimeout(save, 500);
+    }
+    return () => {
+      if (idleId !== null) window.cancelIdleCallback(idleId);
+      if (timerId !== null) clearTimeout(timerId);
+    };
+  }, [arenaId, arenaName, canManage, viewerRole, viewerUserId, matchmakingProp, matchDefaults, players, queue, courts, matchHistory, history, lastSessionResetAt]);
 
   // Run a server action inside a transition and reconcile the returned state.
   // `refresh` additionally re-fetches the server-rendered props (used when an

@@ -8,6 +8,7 @@ import {
 } from "serwist";
 import {
   isApiRequest,
+  isArenaPathname,
   isFontRequest,
   isImageRequest,
   isNavigation,
@@ -81,10 +82,23 @@ const serwist = new Serwist({
       handler: new NetworkOnly(),
     },
   ],
-  // When a document request can't be served from network or cache, show the
-  // precached offline page instead of the browser's dino error.
+  // When a document request can't be served from network or cache, show a
+  // precached fallback instead of the browser's dino error. Entries are
+  // checked in order, so the arena-specific shell must precede the generic
+  // offline page. The shell itself is neutral static HTML (no user data);
+  // it reads the board from IndexedDB client-side, which keeps this within
+  // the shared-device rule above (never cache personalized HTML).
   fallbacks: {
     entries: [
+      {
+        url: "/offline-board",
+        matcher({ request }) {
+          return (
+            request.destination === "document" &&
+            isArenaPathname(new URL(request.url).pathname)
+          );
+        },
+      },
       {
         url: "/offline",
         matcher({ request }) {

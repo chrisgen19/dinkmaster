@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isApiRequest,
+  isArenaPathname,
   isStaticAsset,
   isImageRequest,
   isFontRequest,
@@ -77,5 +78,24 @@ describe('navigation rules', () => {
   it('catch-all isNavigation matches any document navigation (-> NetworkOnly)', () => {
     expect(isNavigation(ctx('/arenas', { mode: 'navigate' }))).toBe(true);
     expect(isNavigation(ctx('/icons/x.png', { destination: 'image' }))).toBe(false);
+  });
+});
+
+describe('isArenaPathname()', () => {
+  it('matches the arena board page, with or without a trailing slash', () => {
+    expect(isArenaPathname('/arena/abc123')).toBe(true);
+    expect(isArenaPathname('/arena/abc123/')).toBe(true);
+  });
+
+  it('excludes deeper arena routes (they fall back to the generic offline page)', () => {
+    expect(isArenaPathname('/arena/abc123/settings')).toBe(false);
+    expect(isArenaPathname('/arena/abc123/settings/general')).toBe(false);
+  });
+
+  it('excludes non-arena and near-miss paths', () => {
+    expect(isArenaPathname('/arenas')).toBe(false);
+    expect(isArenaPathname('/arena/')).toBe(false);
+    expect(isArenaPathname('/arena')).toBe(false);
+    expect(isArenaPathname('/offline-board')).toBe(false);
   });
 });
