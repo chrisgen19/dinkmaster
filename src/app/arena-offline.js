@@ -7,6 +7,12 @@ import { clearPendingLog, loadArenaSnapshot, loadPendingLog, savePendingLog } fr
 import { declareOfflineHold, releaseOfflineHold, syncOfflineEvents } from './actions';
 import { appendEvent, createPendingLog, engineSettings, replayEvents } from './arena-offline-state';
 
+// How long a genuine `offline` signal must persist before the board switches
+// itself to offline mode. Rides out the brief offline/online flaps a phone
+// throws off while roaming a venue, so a momentary blip doesn't churn the
+// session (which would sync-and-exit cleanly anyway, just with a UI flash).
+const OFFLINE_AUTOENTER_DELAY_MS = 800;
+
 /**
  * Offline session mode for the arena board.
  *
@@ -25,10 +31,12 @@ import { appendEvent, createPendingLog, engineSettings, replayEvents } from './a
  * revoked) parks the log untouched and surfaces a decision dialog: retry
  * best-effort, keep working offline, copy the log as JSON, or discard.
  *
- * Entry is never silent: the manager either taps "Run offline" on the
- * connection-lost prompt (auto-shown on `offline` events / failed actions)
- * or resumes an unfinished session on reload. A BroadcastChannel keeps two
- * tabs of the same arena from both writing the single pending log.
+ * Entry: the board switches to offline mode automatically on a genuine
+ * `offline` signal (debounced), resumes an unfinished session on reload, and
+ * falls back to a one-tap "Run offline" prompt only in the ambiguous case (an
+ * action failed while the browser still reports itself online) or when auto
+ * entry can't proceed. A BroadcastChannel keeps two tabs of the same arena
+ * from both writing the single pending log.
  *
  * @param {object} args
  * @param {string} args.arenaId
@@ -77,8 +85,13 @@ export function useArenaOffline({
   const logRef = useRef(null);
   const channelRef = useRef(null);
   const syncingRef = useRef(false);
-  // Latest syncNow, reachable from effects without dependency cycles.
+  // Guards against two entry attempts racing (the debounced `offline` event
+  // and a failed action can both fire): held from the start of enterOffline
+  // until it activates or bails.
+  const enteringRef = useRef(false);
+  // Latest syncNow / autoEnter, reachable from effects without dep cycles.
   const syncNowRef = useRef(null);
+  const autoEnterRef = useRef(null);
 
   const activate = useCallback((log) => {
     logRef.current = log;
@@ -148,28 +161,45 @@ export function useArenaOffline({
     };
   }, [arenaId, canManage, applyLocalState, activate]);
 
-  // Connection signals: `offline` offers the prompt (never auto-enters);
-  // `online` clears a stale prompt and, mid-session, auto-syncs the log.
-  // Failed server actions also surface the prompt via `notifyActionFailed`.
+  // Connection signals. A genuine `offline` event (navigator.onLine went
+  // false) switches the board to offline mode AUTOMATICALLY after a short
+  // debounce: the manager shouldn't have to tap "Run offline" when the
+  // device is plainly offline. `online` cancels a pending switch, clears a
+  // stale prompt, and (mid-session) auto-syncs the log.
   useEffect(() => {
     if (!canManage) return;
+    let enterTimer = null;
     const onOffline = () => {
-      if (!offlineActiveRef.current) setPromptVisible(true);
+      if (offlineActiveRef.current) return;
+      clearTimeout(enterTimer);
+      enterTimer = setTimeout(() => autoEnterRef.current?.(), OFFLINE_AUTOENTER_DELAY_MS);
     };
     const onOnline = () => {
+      clearTimeout(enterTimer);
       setPromptVisible(false);
       if (offlineActiveRef.current) syncNowRef.current?.('strict');
     };
     window.addEventListener('offline', onOffline);
     window.addEventListener('online', onOnline);
     return () => {
+      clearTimeout(enterTimer);
       window.removeEventListener('offline', onOffline);
       window.removeEventListener('online', onOnline);
     };
   }, [canManage]);
 
+  // A server action failed. If the browser also reports itself offline, that
+  // is a definite drop, so switch automatically (same as the `offline`
+  // event). If it still reports ONLINE, the failure is ambiguous (it could
+  // be a server error, not a lost connection), so offer the choice instead
+  // of wrongly forcing the board offline.
   const notifyActionFailed = useCallback(() => {
-    if (canManage && !offlineActiveRef.current) setPromptVisible(true);
+    if (!canManage || offlineActiveRef.current) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      autoEnterRef.current?.();
+    } else {
+      setPromptVisible(true);
+    }
   }, [canManage]);
 
   /**
@@ -200,44 +230,50 @@ export function useArenaOffline({
 
   /** Start an offline session. Resolves false when entry isn't possible. */
   const enterOffline = useCallback(async () => {
-    if (!canManage || offlineActiveRef.current || otherTabActive) return false;
+    if (!canManage || offlineActiveRef.current || otherTabActive || enteringRef.current) {
+      return false;
+    }
+    enteringRef.current = true;
+    try {
+      // Never silently discard unsynced events. A non-empty log can still be
+      // parked in IndexedDB when the resume effect didn't activate (missing
+      // snapshot, empty-tab race, or the connection returned before sync).
+      // Adopt that log instead of overwriting it with a fresh empty one.
+      const existing = await loadPendingLog(arenaId);
+      if (existing && existing.events.length > 0) {
+        const snapshot = await loadArenaSnapshot(arenaId);
+        if (!snapshot) return false; // no base to replay over; keep the log intact
+        const { state } = replayEvents(snapshot.state, existing.settings, existing.events);
+        applyLocalState(state);
+        activate(existing);
+        // Adopting a parked log starts a session just like a fresh entry, so
+        // it needs the same advisory hold.
+        declareHold();
+        return true;
+      }
 
-    // Never silently discard unsynced events. A non-empty log can still be
-    // parked in IndexedDB when the resume effect didn't activate (missing
-    // snapshot, empty-tab race, or the connection returned before sync).
-    // Adopt that log instead of overwriting it with a fresh empty one.
-    const existing = await loadPendingLog(arenaId);
-    if (existing && existing.events.length > 0) {
-      const snapshot = await loadArenaSnapshot(arenaId);
-      if (!snapshot) return false; // no base to replay over; keep the log intact
-      const { state } = replayEvents(snapshot.state, existing.settings, existing.events);
-      applyLocalState(state);
-      activate(existing);
-      // Adopting a parked log starts a session just like a fresh entry, so
-      // it needs the same advisory hold.
+      // The base snapshot must be durable BEFORE the first event: resume and
+      // sync both replay the log over exactly this state.
+      const snapshotSaved = await persistSnapshot();
+      if (!snapshotSaved) return false;
+      const settings = engineSettings(settingsProps);
+      const log = createPendingLog({
+        arenaId,
+        batchId: crypto.randomUUID(),
+        baseFetchedAt: lastServerFetchedAt,
+        // Fingerprint of the state this session forks from; the sync replay
+        // recomputes it server-side to detect divergence before applying.
+        baseFingerprint: boardFingerprint(getBoardState(), settings),
+        settings,
+        enteredAt: new Date().toISOString(),
+      });
+      if (!(await savePendingLog(log))) return false;
+      activate(log);
       declareHold();
       return true;
+    } finally {
+      enteringRef.current = false;
     }
-
-    // The base snapshot must be durable BEFORE the first event: resume and
-    // sync both replay the log over exactly this state.
-    const snapshotSaved = await persistSnapshot();
-    if (!snapshotSaved) return false;
-    const settings = engineSettings(settingsProps);
-    const log = createPendingLog({
-      arenaId,
-      batchId: crypto.randomUUID(),
-      baseFetchedAt: lastServerFetchedAt,
-      // Fingerprint of the state this session forks from; the sync replay
-      // recomputes it server-side to detect divergence before applying.
-      baseFingerprint: boardFingerprint(getBoardState(), settings),
-      settings,
-      enteredAt: new Date().toISOString(),
-    });
-    if (!(await savePendingLog(log))) return false;
-    activate(log);
-    declareHold();
-    return true;
   }, [
     arenaId,
     canManage,
@@ -250,6 +286,19 @@ export function useArenaOffline({
     applyLocalState,
     declareHold,
   ]);
+
+  // Automatic entry from a connection signal. Falls back to the manual prompt
+  // only when entry can't proceed (another tab already owns the offline
+  // session, or device storage is unavailable), so the manager is never left
+  // with a dead board and no affordance. Kept in a ref so the connection
+  // effect can call the latest without a dependency cycle.
+  const autoEnter = useCallback(async () => {
+    const entered = await enterOffline();
+    if (!entered && !offlineActiveRef.current) setPromptVisible(true);
+  }, [enterOffline]);
+  useEffect(() => {
+    autoEnterRef.current = autoEnter;
+  }, [autoEnter]);
 
   /**
    * Run one board command locally: resolve -> persist the event -> apply.

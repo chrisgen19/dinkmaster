@@ -56,10 +56,12 @@ async function waitForServiceWorker(page) {
   });
 }
 
-/** Enter offline mode via the connection-lost prompt. */
+/**
+ * Wait for offline mode to be active. The board switches AUTOMATICALLY on a
+ * genuine offline signal (a real drop or a synthetic `offline` event), so
+ * there is no "Run offline" prompt to click on this path.
+ */
 async function enterOfflineMode(page) {
-  await expect(page.getByText(/Connection lost/)).toBeVisible();
-  await page.getByRole('button', { name: 'Run offline' }).click();
   await expect(page.getByText(/Running the board locally/)).toBeVisible();
 }
 
@@ -87,9 +89,8 @@ test.describe('offline session mode (production build)', () => {
     await addWalkIns(page, ['Ana', 'Ben', 'Cai', 'Dee', 'Eli', 'Fay']);
     await waitForServiceWorker(page);
 
-    // Real network loss: a failed server action offers the offline prompt.
+    // Real network loss: the board switches to offline mode on its own.
     await context.setOffline(true);
-    await page.getByRole('button', { name: /Stack Next 4 Paddles/ }).first().click();
     await enterOfflineMode(page);
 
     // A local rotation: fill a court, record 11-7.

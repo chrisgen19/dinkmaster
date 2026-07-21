@@ -8,19 +8,28 @@ import { createPortal } from 'react-dom';
  * state and handlers live in the `useArenaOffline` hook (arena-offline.js).
  */
 
-const barBase =
-  'mt-2 w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8';
+// Floating wrapper: pins the banner to the bottom of the viewport so the
+// offline status stays visible no matter how far the manager has scrolled.
+// Sits above page content (z-40) but below modals (z-100) and the transient
+// toast (z-50); lifted clear of the mobile bottom-nav pill (which floats at
+// `bottom-4`), and drops to a normal bottom margin on desktop where there is
+// no bottom nav. The safe-area inset keeps it above the iOS home indicator.
+const floatBase =
+  'fixed left-1/2 -translate-x-1/2 z-40 w-[calc(100%-1.5rem)] max-w-2xl ' +
+  'bottom-[calc(6rem+env(safe-area-inset-bottom))] md:bottom-6';
 
 /**
- * One-tap offer shown when the connection drops (or a server action fails)
- * for a manager who is not yet running offline. Never auto-enters.
+ * One-tap offer shown when a server action fails but the browser still
+ * reports itself online (an ambiguous case: could be a server error, not a
+ * dropped connection). A genuine offline signal switches automatically
+ * without this prompt.
  */
 export function OfflinePromptBanner({ onEnter, onDismiss, blocked }) {
   return (
-    <div className={barBase}>
+    <div className={floatBase}>
       <div
         role="alert"
-        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/95 px-4 py-3 text-amber-900 shadow-lg shadow-amber-900/10 animate-fade-in"
+        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/95 px-4 py-3 text-amber-900 shadow-xl shadow-amber-900/15 backdrop-blur-md animate-fade-in"
       >
         <p className="min-w-0 text-sm font-semibold leading-snug">
           {blocked
@@ -58,10 +67,10 @@ export function OfflinePromptBanner({ onEnter, onDismiss, blocked }) {
  */
 export function OfflineActiveBanner({ pendingCount, syncing, syncError, onSync, onExit }) {
   return (
-    <div className={barBase}>
+    <div className={floatBase}>
       <div
         role="status"
-        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-100/95 px-4 py-3 text-amber-950 shadow-lg shadow-amber-900/10"
+        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-100/95 px-4 py-3 text-amber-950 shadow-xl shadow-amber-900/15 backdrop-blur-md animate-fade-in"
       >
         <div className="min-w-0">
           <p className="text-sm font-semibold leading-snug">
@@ -110,10 +119,10 @@ export function OfflineActiveBanner({ pendingCount, syncing, syncError, onSync, 
  */
 export function OfflineHoldNotice({ label }) {
   return (
-    <div className={barBase}>
+    <div className={floatBase}>
       <div
         role="status"
-        className="flex items-center gap-2.5 rounded-2xl border border-sky-200 bg-sky-50/95 px-4 py-3 text-sky-900 shadow-lg shadow-sky-900/10"
+        className="flex items-center gap-2.5 rounded-2xl border border-sky-200 bg-sky-50/95 px-4 py-3 text-sky-900 shadow-xl shadow-sky-900/15 backdrop-blur-md animate-fade-in"
       >
         <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-sky-500" />
         <p className="min-w-0 text-sm font-semibold leading-snug">
