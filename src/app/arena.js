@@ -1174,13 +1174,14 @@ export default function Arena({
     });
   };
 
-  // Exit the offline session WITHOUT syncing: discards the pending log
-  // behind an explicit confirm ("Sync now" is the save path).
+  // Discard the offline session WITHOUT syncing: drops the pending log behind
+  // an explicit confirm (syncing is the save path). Only meaningful when there
+  // are unsynced changes; with none it just returns to the live board.
   const handleExitOffline = () => {
     const message =
       offline.pendingCount > 0
-        ? `Exit offline mode and DISCARD ${offline.pendingCount} unsynced ${offline.pendingCount === 1 ? 'change' : 'changes'}? Use "Sync now" instead to save them to the server.`
-        : 'Exit offline mode and return to the live board?';
+        ? `Discard ${offline.pendingCount} unsynced ${offline.pendingCount === 1 ? 'change' : 'changes'} and return to the live board? They will be lost; sync instead to save them.`
+        : 'Leave offline mode and return to the live board?';
     if (!window.confirm(message)) return;
     offline.exitOfflineDiscard();
   };
@@ -1238,7 +1239,7 @@ export default function Arena({
           syncing={offline.syncState.status === 'syncing'}
           syncError={offline.syncState.error}
           onSync={() => offline.syncNow('strict')}
-          onExit={handleExitOffline}
+          onDiscard={handleExitOffline}
         />
       )}
       {!offline.offlineActive && offline.promptVisible && canManage && (

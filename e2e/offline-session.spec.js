@@ -62,7 +62,7 @@ async function waitForServiceWorker(page) {
  * there is no "Run offline" prompt to click on this path.
  */
 async function enterOfflineMode(page) {
-  await expect(page.getByText(/Running the board locally/)).toBeVisible();
+  await expect(page.getByText(/Running locally/)).toBeVisible();
 }
 
 test.describe('offline session mode (production build)', () => {
@@ -95,12 +95,12 @@ test.describe('offline session mode (production build)', () => {
 
     // A local rotation: fill a court, record 11-7.
     await page.getByRole('button', { name: /Stack Next 4 Paddles/ }).first().click();
-    await expect(page.getByText(/1 change saved on this device/)).toBeVisible();
+    await expect(page.getByText(/1 saved/)).toBeVisible();
     await page.getByRole('button', { name: /Finish Game & Record Score/ }).first().click();
     await page.getByRole('textbox', { name: 'Team A score' }).fill('11');
     await page.getByRole('textbox', { name: 'Team B score' }).fill('7');
     await page.getByRole('button', { name: 'Save Score' }).click();
-    await expect(page.getByText(/2 changes saved on this device/)).toBeVisible();
+    await expect(page.getByText(/2 saved/)).toBeVisible();
 
     // Abort EVERYTHING (including SW fetches) so the NetworkOnly navigation
     // truly fails and the precached fallback shell takes over. Precache
@@ -116,7 +116,7 @@ test.describe('offline session mode (production build)', () => {
     await context.setOffline(false);
     await page.getByRole('button', { name: 'Try again' }).click();
     await expect(page.getByText(/Offline session synced: 2 changes saved/)).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText(/Running the board locally/)).toHaveCount(0);
+    await expect(page.getByText(/Running locally/)).toHaveCount(0);
 
     // The offline match is in the log with its score.
     await page.getByRole('tab', { name: /Match Log/ }).first().click();
@@ -149,12 +149,12 @@ test.describe('offline session mode (production build)', () => {
     await expect(editor.getByText(/Replace Ana/)).toBeVisible(); // picker opened
     await editor.getByRole('button').filter({ has: page.getByText('Eli', { exact: true }) }).click();
     await editor.getByRole('button', { name: 'Save Lineup' }).click();
-    await expect(page.getByText(/1 change saved on this device/)).toBeVisible();
+    await expect(page.getByText(/1 saved/)).toBeVisible();
 
     // Sync and confirm the substitution persisted server-side.
     await page.getByRole('button', { name: 'Sync now' }).click();
     await expect(page.getByText(/Offline session synced: 1 change saved/)).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText(/Running the board locally/)).toHaveCount(0);
+    await expect(page.getByText(/Running locally/)).toHaveCount(0);
 
     // Reload from the server (no local state) and confirm the swap persisted.
     // Court slots render as "View <name>'s profile" list items; rack rows don't,
@@ -201,7 +201,7 @@ test.describe('offline session mode (production build)', () => {
     await expect(page.getByText('Zed', { exact: true }).first()).toBeVisible();
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: /Stack Next 4 Paddles/ }).first().click();
-    await expect(page.getByText(/2 changes saved on this device/)).toBeVisible();
+    await expect(page.getByText(/2 saved/)).toBeVisible();
 
     // Strict sync detects the divergence; the manager applies what fits.
     await page.getByRole('button', { name: 'Sync now' }).click();
@@ -236,7 +236,7 @@ test.describe('offline session mode (production build)', () => {
     await expect(pageB.getByText(/is running this board offline/)).toBeVisible({ timeout: 10_000 });
 
     await page.getByRole('button', { name: 'Sync now' }).click();
-    await expect(page.getByText(/Running the board locally/)).toHaveCount(0);
+    await expect(page.getByText(/Running locally/)).toHaveCount(0);
     await expect(pageB.getByText(/is running this board offline/)).toHaveCount(0, { timeout: 10_000 });
 
     await contextB.close();
@@ -255,13 +255,13 @@ test.describe('offline session mode (production build)', () => {
     await page.getByRole('button', { name: 'Add', exact: true }).last().click();
     await expect(page.getByText('Rex', { exact: true }).first()).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(page.getByText(/1 change saved on this device/)).toBeVisible();
+    await expect(page.getByText(/1 saved/)).toBeVisible();
 
     // Reload with the network actually up: the live page loads, the pending
     // log resumes, and (navigator.onLine) the session syncs immediately.
     await page.reload();
     await expect(page.getByText(/Offline session synced: 1 change saved/)).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText(/Running the board locally/)).toHaveCount(0);
+    await expect(page.getByText(/Running locally/)).toHaveCount(0);
     await expect(page.getByText('Rex', { exact: true }).first()).toBeVisible();
   });
 
@@ -279,14 +279,47 @@ test.describe('offline session mode (production build)', () => {
     await page.route('**/arena/**', failPost);
     try {
       await page.getByRole('button', { name: /Stack Next 4 Paddles/ }).first().click();
-      await expect(page.getByText(/Connection lost/)).toBeVisible();
+      await expect(page.getByText(/didn't save/)).toBeVisible();
       // The board did NOT auto-enter (the browser still reports online).
-      await expect(page.getByText(/Running the board locally/)).toHaveCount(0);
+      await expect(page.getByText(/Running locally/)).toHaveCount(0);
       // Dismissing leaves the board online; no offline session was started.
       await page.getByRole('button', { name: 'Dismiss' }).click();
-      await expect(page.getByText(/Connection lost/)).toHaveCount(0);
+      await expect(page.getByText(/didn't save/)).toHaveCount(0);
     } finally {
       await page.unroute('**/arena/**');
+    }
+  });
+
+  test('offline directory: launching at /arenas lists saved arenas', async () => {
+    const arenaUrl = await createArena(page, `Directory E2E ${Date.now()}`);
+    await addWalkIns(page, ['Ana', 'Ben', 'Cai', 'Dee']);
+    await waitForServiceWorker(page);
+    // Let the idle snapshot write land in IndexedDB before going offline.
+    await page.waitForTimeout(1500);
+    const arenaId = arenaUrl.split('/arena/')[1];
+
+    // Launch the app at /arenas, the PWA start_url, fully offline:
+    //  - setOffline(true) is required: it also kills the SW navigation-preload
+    //    request, which context.route can't intercept (it's browser-issued),
+    //    so without it the preload reaches the still-running test server.
+    //  - route.abort covers the SW's own runtime fetches.
+    //  - the `?offline` query dodges the back/forward cache (this test visited
+    //    /arenas online already; a real cold PWA launch has no bfcache entry).
+    // The SW matches on pathname, so it serves the precached board shell,
+    // which lists arenas saved in IndexedDB.
+    await context.setOffline(true);
+    await context.route('**/*', (route) => route.abort('internetdisconnected'));
+    try {
+      await page.goto('/arenas?offline=1', { waitUntil: 'domcontentloaded' });
+      await expect(page.getByRole('heading', { name: 'Your arenas' })).toBeVisible();
+
+      // The saved arena is listed and links to its (offline) board.
+      const link = page.getByRole('link', { name: /Directory E2E/ }).first();
+      await expect(link).toBeVisible();
+      await expect(link).toHaveAttribute('href', `/arena/${arenaId}`);
+    } finally {
+      await context.unroute('**/*');
+      await context.setOffline(false);
     }
   });
 });

@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useEffect, useState } from 'react';
 import { ON_DECK_SIZE } from '@/lib/matchmaking';
 import { listArenaSnapshots, loadArenaSnapshot, loadPendingLog } from '@/lib/offline-store';
@@ -97,31 +98,86 @@ function OfflineRack({ queue, playersById }) {
   );
 }
 
-function SnapshotIndex({ snapshots }) {
-  if (snapshots.length === 0) {
-    return (
-      <p className="max-w-sm text-sm text-slate-500">
-        No arena has been saved for offline use yet. Open an arena while online
-        and it will be available here next time.
-      </p>
-    );
-  }
+/**
+ * Offline arena directory: what the manager sees when they launch the app
+ * (`/arenas`, the PWA start_url) with no connection. Lists every arena saved
+ * in IndexedDB so they can still open a board, instead of the dead-end
+ * generic offline page.
+ */
+function OfflineDirectory({ snapshots }) {
   return (
-    <ul className="w-full max-w-sm space-y-2 text-left">
-      {snapshots.map((s) => (
-        <li key={s.arenaId}>
-          <a
-            href={`/arena/${s.arenaId}`}
-            className="block rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition-colors hover:border-emerald-300"
-          >
-            <span className="block truncate font-semibold text-slate-900">{s.arenaName}</span>
-            <span className="block text-xs text-slate-500">
-              Saved {new Date(s.savedAt).toLocaleString()}
-            </span>
-          </a>
-        </li>
-      ))}
-    </ul>
+    <main className="min-h-screen bg-slate-50">
+      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/85 px-4 py-3 backdrop-blur md:px-6">
+        <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            {/* unoptimized so it hits the precached raw icon path; the
+                /_next/image optimizer route isn't available offline. */}
+            <Image
+              src="/icons/icon-192.png"
+              alt=""
+              width={36}
+              height={36}
+              unoptimized
+              className="h-9 w-9 shrink-0 rounded-xl ring-1 ring-inset ring-slate-200"
+            />
+            <div className="min-w-0">
+              <p className="font-display font-extrabold leading-none text-slate-900">DinkMaster</p>
+              <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-amber-700">
+                <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                Offline
+              </p>
+            </div>
+          </div>
+          <RetryButton />
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-2xl px-4 py-6 md:px-6">
+        <h1 className="font-display text-xl font-extrabold tracking-tight text-slate-900">
+          Your arenas
+        </h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Saved for offline use. Open one to see its last board; reconnect for the latest.
+        </p>
+
+        {snapshots.length === 0 ? (
+          <p className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
+            No arena has been saved yet. Open an arena while online and it will appear
+            here next time.
+          </p>
+        ) : (
+          <ul className="mt-4 space-y-2.5">
+            {snapshots.map((s) => (
+              <li key={s.arenaId}>
+                <a
+                  href={`/arena/${s.arenaId}`}
+                  className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm transition-colors hover:border-emerald-300 hover:bg-emerald-50/40"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-bold text-slate-900">{s.arenaName}</span>
+                    <span className="block text-xs text-slate-400">
+                      Saved {new Date(s.savedAt).toLocaleString()}
+                    </span>
+                  </span>
+                  <svg
+                    aria-hidden="true"
+                    className="h-5 w-5 shrink-0 text-slate-300"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M9 18l6-6-6-6" />
+                  </svg>
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </main>
   );
 }
 
@@ -162,18 +218,20 @@ export function OfflineBoardShell() {
     return <main className="min-h-screen bg-slate-50" />;
   }
 
-  if (view.kind !== 'board') {
+  // Launched offline at /arenas: show the directory of saved arenas.
+  if (view.kind === 'index') {
+    return <OfflineDirectory snapshots={view.snapshots} />;
+  }
+
+  // Arena URL, but nothing saved for it: a dead end until reconnect.
+  if (view.kind === 'missing') {
     return (
       <main className="min-h-screen flex flex-col items-center justify-center gap-6 px-6 text-center bg-slate-50">
         <h1 className="font-display text-2xl font-bold text-slate-900">You&apos;re offline</h1>
-        {view.kind === 'index' ? (
-          <SnapshotIndex snapshots={view.snapshots} />
-        ) : (
-          <p className="max-w-sm text-sm text-slate-500">
-            This arena hasn&apos;t been saved for offline use yet. Reconnect to
-            load it once, and it will be available offline afterwards.
-          </p>
-        )}
+        <p className="max-w-sm text-sm text-slate-500">
+          This arena hasn&apos;t been saved for offline use yet. Reconnect to load it
+          once, and it will be available offline afterwards.
+        </p>
         <RetryButton />
       </main>
     );

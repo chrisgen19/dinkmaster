@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isApiRequest,
+  isArenaDirectoryPath,
   isArenaPathname,
   isStaticAsset,
   isImageRequest,
@@ -97,5 +98,19 @@ describe('isArenaPathname()', () => {
     expect(isArenaPathname('/arena/')).toBe(false);
     expect(isArenaPathname('/arena')).toBe(false);
     expect(isArenaPathname('/offline-board')).toBe(false);
+  });
+});
+
+describe('isArenaDirectoryPath()', () => {
+  it('matches the /arenas directory, with or without a trailing slash', () => {
+    expect(isArenaDirectoryPath('/arenas')).toBe(true);
+    expect(isArenaDirectoryPath('/arenas/')).toBe(true);
+  });
+
+  it('excludes an individual arena, /arenas/new, and other paths', () => {
+    expect(isArenaDirectoryPath('/arena/abc123')).toBe(false);
+    expect(isArenaDirectoryPath('/arenas/new')).toBe(false);
+    expect(isArenaDirectoryPath('/')).toBe(false);
+    expect(isArenaDirectoryPath('/offline-board')).toBe(false);
   });
 });

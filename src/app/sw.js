@@ -8,6 +8,7 @@ import {
 } from "serwist";
 import {
   isApiRequest,
+  isArenaDirectoryPath,
   isArenaPathname,
   isFontRequest,
   isImageRequest,
@@ -93,10 +94,12 @@ const serwist = new Serwist({
       {
         url: "/offline-board",
         matcher({ request }) {
-          return (
-            request.destination === "document" &&
-            isArenaPathname(new URL(request.url).pathname)
-          );
+          if (request.destination !== "document") return false;
+          const { pathname } = new URL(request.url);
+          // The board shell backs both an individual arena (`/arena/<id>`,
+          // rendered from its IndexedDB snapshot) and the directory
+          // (`/arenas`, the PWA start_url, rendered as a list of saved arenas).
+          return isArenaPathname(pathname) || isArenaDirectoryPath(pathname);
         },
       },
       {
