@@ -488,6 +488,12 @@ describe('editCourtLineup', () => {
     }
     // e's pre-fill wait fairness survived the sub and cancel.
     expect(playerIn(cancelled, 'e').waitRounds).toBe(1);
+    // The subbed-in waiter (e) must restore AFTER the players who stayed on
+    // court, matching the server: its slot snapshot sorts past theirs. A raw
+    // queue-index snapshot would sort e first and diverge from the replay.
+    const stayed = [team1[1], team2[0], team2[1]];
+    const qIndex = (id) => cancelled.queue.indexOf(id);
+    for (const s of stayed) expect(qIndex('e')).toBeGreaterThan(qIndex(s));
   });
 
   it('rejects an invalid lineup and a subbed-in player who is not waiting', () => {

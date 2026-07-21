@@ -304,6 +304,16 @@ function applyEditCourtLineup(state, settings, event) {
   let queue = state.queue;
   let fillBumpedPlayerIds = court.fillBumpedPlayerIds ?? [];
 
+  // An incoming waiter's `prevQueueOrder` must sort AFTER the players staying
+  // on court, matching the server: `applyEditCourtLineupTx` records the
+  // waiter's real (persisted) queueOrder, which is always behind the on-court
+  // four. The offline queue is truncated (on-court players aren't in it), so a
+  // raw 1-based index would collide with the slot range and make a later
+  // cancelFill restore a different order than the server replay does. Placing
+  // the waiter at maxSlot + 1 + (their queue index) preserves waiter order and
+  // reproduces the server's exact value in the common fresh-fill case.
+  const maxSlotOrder = Math.max(0, ...slots.map((s) => s.prevQueueOrder ?? 0));
+
   // Subbed-in players must be active, waiting in this arena, and not already
   // on any court. (added and removed are always equal length: four on court.)
   if (diff.added.length > 0) {
@@ -318,7 +328,10 @@ function applyEditCourtLineup(state, settings, event) {
       // A subbed-in paddle the original fill bumped still carries that +1;
       // snapshot the pre-bump value so a later cancelFill restores it exactly.
       const prevWaitRounds = bumpedSet.has(id) ? Math.max(0, p.waitRounds - 1) : p.waitRounds;
-      incomingSnap.set(id, { prevQueueOrder: state.queue.indexOf(id) + 1, prevWaitRounds });
+      incomingSnap.set(id, {
+        prevQueueOrder: maxSlotOrder + 1 + state.queue.indexOf(id),
+        prevWaitRounds,
+      });
       patches[id] = { gamesPlayed: p.gamesPlayed + 1, waitRounds: 0, skipBoosted: false };
     }
     const addedSet = new Set(diff.added);
