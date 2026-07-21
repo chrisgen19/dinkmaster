@@ -306,12 +306,22 @@ function applyEditCourtLineup(state, settings, event) {
 
   // An incoming waiter's `prevQueueOrder` must sort AFTER the players staying
   // on court, matching the server: `applyEditCourtLineupTx` records the
-  // waiter's real (persisted) queueOrder, which is always behind the on-court
-  // four. The offline queue is truncated (on-court players aren't in it), so a
-  // raw 1-based index would collide with the slot range and make a later
-  // cancelFill restore a different order than the server replay does. Placing
-  // the waiter at maxSlot + 1 + (their queue index) preserves waiter order and
+  // waiter's real (persisted) queueOrder, which is behind the on-court four
+  // after a fresh fill. The offline queue is truncated (on-court players
+  // aren't in it), so a raw 1-based index would collide with the slot range
+  // and make a later cancelFill restore a different order than the server
+  // replay does. Placing the waiter at maxSlot + 1 + (their queue index)
   // reproduces the server's exact value in the common fresh-fill case.
+  //
+  // KNOWN BOUNDED EDGE: the server's fillCourt leaves the rack gappy while any
+  // edit renumbers it dense, and the array-based offline queue can't tell the
+  // two apart. So a re-substitution before a cancel (sub a player out, then
+  // back in, then cancelFill the court, all offline) can restore a different
+  // rack ORDER than the server. It self-heals on sync (the authoritative state
+  // is applied) and is inert for later actions (fills/end-matches validate by
+  // set, and cancel returns the same four to the front either way). A fully
+  // exact fix means modeling persisted queueOrder through the engine, which is
+  // disproportionate to this contrived, self-healing case.
   const maxSlotOrder = Math.max(0, ...slots.map((s) => s.prevQueueOrder ?? 0));
 
   // Subbed-in players must be active, waiting in this arena, and not already
