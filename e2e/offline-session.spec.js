@@ -264,4 +264,29 @@ test.describe('offline session mode (production build)', () => {
     await expect(page.getByText(/Running the board locally/)).toHaveCount(0);
     await expect(page.getByText('Rex', { exact: true }).first()).toBeVisible();
   });
+
+  test('an action failing while the browser is online prompts, not auto-switch', async () => {
+    await createArena(page, `Ambiguous E2E ${Date.now()}`);
+    await addWalkIns(page, ['Ana', 'Ben', 'Cai', 'Dee']);
+    await waitForServiceWorker(page);
+
+    // Fail the next board action while navigator.onLine stays TRUE by aborting
+    // the server-action POST (no setOffline). This is the ambiguous case (the
+    // failure could be a server error, not a dropped connection), so the board
+    // must offer the prompt rather than auto-switching to offline mode.
+    const failPost = (route) =>
+      route.request().method() === 'POST' ? route.abort('failed') : route.continue();
+    await page.route('**/arena/**', failPost);
+    try {
+      await page.getByRole('button', { name: /Stack Next 4 Paddles/ }).first().click();
+      await expect(page.getByText(/Connection lost/)).toBeVisible();
+      // The board did NOT auto-enter (the browser still reports online).
+      await expect(page.getByText(/Running the board locally/)).toHaveCount(0);
+      // Dismissing leaves the board online; no offline session was started.
+      await page.getByRole('button', { name: 'Dismiss' }).click();
+      await expect(page.getByText(/Connection lost/)).toHaveCount(0);
+    } finally {
+      await page.unroute('**/arena/**');
+    }
+  });
 });

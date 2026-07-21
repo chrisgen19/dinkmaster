@@ -293,7 +293,15 @@ export function useArenaOffline({
   // with a dead board and no affordance. Kept in a ref so the connection
   // effect can call the latest without a dependency cycle.
   const autoEnter = useCallback(async () => {
-    const entered = await enterOffline();
+    let entered = false;
+    try {
+      entered = await enterOffline();
+    } catch {
+      // enterOffline's IndexedDB helpers return false rather than throw, but
+      // this runs from a setTimeout callback where a rejection would be
+      // swallowed silently, so catch it so the fallback prompt below still
+      // shows and the "never stuck" guarantee holds.
+    }
     if (!entered && !offlineActiveRef.current) setPromptVisible(true);
   }, [enterOffline]);
   useEffect(() => {
