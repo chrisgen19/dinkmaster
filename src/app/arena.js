@@ -1249,9 +1249,12 @@ export default function Arena({
         />
       )}
       {/* Advisory: someone ELSE is running this board offline. Hidden on the
-          holding device itself (it shows the offline banner instead) and once
-          the hold stamp ages past the TTL (a lost device never releases). */}
-      {!offline.offlineActive && isHoldActive(offlineHold) && (
+          holding device itself (it shows the offline banner instead), once the
+          hold stamp ages past the TTL (a lost device never releases), and
+          while the connection-lost prompt is up (all three banners share one
+          floating slot), so the actionable prompt takes precedence over
+          this informational notice rather than painting on top of it. */}
+      {!offline.offlineActive && !offline.promptVisible && isHoldActive(offlineHold) && (
         <OfflineHoldNotice label={offlineHold.label} />
       )}
 
