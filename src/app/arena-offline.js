@@ -58,6 +58,7 @@ const OFFLINE_AUTOENTER_DELAY_MS = 800;
 export function useArenaOffline({
   arenaId,
   canManage,
+  offlineBoot = false,
   settingsProps,
   getBoardState,
   applyLocalState,
@@ -132,7 +133,7 @@ export function useArenaOffline({
 
   // Resume an unfinished offline session after a reload: pending events are
   // replayed over the saved base snapshot (NOT the fresh server props: the
-  // local session stays internally consistent until Phase 3 syncs it).
+  // local session stays internally consistent until it syncs).
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -142,15 +143,25 @@ export function useArenaOffline({
       }
       try {
         const log = await loadPendingLog(arenaId);
-        if (!log || log.events.length === 0 || cancelled) return;
-        const snapshot = await loadArenaSnapshot(arenaId);
-        if (!snapshot || cancelled) return; // no base to replay over; log kept for the offline shell
-        const { state } = replayEvents(snapshot.state, log.settings, log.events);
-        applyLocalState(state);
-        activate(log);
-        // Reloaded after the connection came back (the page itself loaded from
-        // the server): push the finished session up right away.
-        if (navigator.onLine) queueMicrotask(() => syncNowRef.current?.('strict'));
+        if (cancelled) return;
+        if (log && log.events.length > 0) {
+          const snapshot = await loadArenaSnapshot(arenaId);
+          if (!snapshot || cancelled) return; // no base to replay over; log kept for the offline shell
+          const { state } = replayEvents(snapshot.state, log.settings, log.events);
+          applyLocalState(state);
+          activate(log);
+          // Reloaded after the connection came back (the page itself loaded
+          // from the server): push the finished session up right away.
+          if (navigator.onLine) queueMicrotask(() => syncNowRef.current?.('strict'));
+          return;
+        }
+        // No pending session. On a COLD OFFLINE BOOT (the offline shell mounted
+        // this board from a snapshot while the device is offline), no `offline`
+        // event will fire to trigger auto-entry, so start a fresh local session
+        // here. The ref is already assigned by now: this runs after an `await`,
+        // by which point the synchronous mount effects (including the one that
+        // sets autoEnterRef) have all run.
+        if (offlineBoot && !navigator.onLine) autoEnterRef.current?.();
       } finally {
         // Snapshot writes can resume once we've decided (activated or not).
         if (!cancelled) setResuming(false);
@@ -159,7 +170,7 @@ export function useArenaOffline({
     return () => {
       cancelled = true;
     };
-  }, [arenaId, canManage, applyLocalState, activate]);
+  }, [arenaId, canManage, offlineBoot, applyLocalState, activate]);
 
   // Connection signals. A genuine `offline` event (navigator.onLine went
   // false) switches the board to offline mode AUTOMATICALLY after a short

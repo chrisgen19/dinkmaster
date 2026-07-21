@@ -152,12 +152,17 @@ export default function Arena({
   viewerRole,
   viewerUserId,
   isAuthenticated,
-  members,
+  members = [],
   pendingRequests = [],
   viewerPending = false,
   pendingLinkRequests = [],
   viewerLinkContext = null,
   invites = [],
+  // Set when this component is mounted by the offline shell from an IndexedDB
+  // snapshot (a cold offline boot), rather than server-rendered live. It tells
+  // the offline hook to start/resume a local session on mount even though no
+  // `offline` event fired (the device was already offline before load).
+  offlineBoot = false,
 }) {
   const router = useRouter();
   const [players, setPlayers] = useState(initialState.players);
@@ -263,9 +268,29 @@ export default function Arena({
         viewerUserId,
         matchmaking: matchmakingProp,
         matchDefaults,
+        // Extra props the interactive board needs when the offline shell
+        // mounts <Arena> from this snapshot (cold offline boot). Server-only
+        // data (members, requests, invites) is intentionally omitted; it
+        // defaults to empty offline.
+        description,
+        schedule: initialSchedule,
+        sessionPrep,
+        isAuthenticated,
         state: boardStateRef.current,
       }),
-    [arenaId, arenaName, canManage, viewerRole, viewerUserId, matchmakingProp, matchDefaults],
+    [
+      arenaId,
+      arenaName,
+      canManage,
+      viewerRole,
+      viewerUserId,
+      matchmakingProp,
+      matchDefaults,
+      description,
+      initialSchedule,
+      sessionPrep,
+      isAuthenticated,
+    ],
   );
 
   const getBoardState = useCallback(() => boardStateRef.current, []);
@@ -303,6 +328,7 @@ export default function Arena({
   const offline = useArenaOffline({
     arenaId,
     canManage,
+    offlineBoot,
     settingsProps: { matchmaking: matchmakingProp, matchDefaults },
     getBoardState,
     applyLocalState,
