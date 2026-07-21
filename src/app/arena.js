@@ -176,6 +176,13 @@ export default function Arena({
   // because the prop-refresh resync block right after this needs to call
   // `setLastSessionResetAt` — declaring it later would TDZ-throw on render.
   const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
+  // Arena schedule (powers the "This Week" leaderboard window). Declared up
+  // here, before `persistSnapshot`, so the offline snapshot captures the LIVE
+  // schedule: `handleSaveSchedule` updates this state without a
+  // `router.refresh()`, so the `initialSchedule` prop would go stale after an
+  // edit. Its editor state (modal open / error) stays with the other UI state
+  // below. (Same up-front-declaration reason as `lastSessionResetAt`.)
+  const [schedule, setSchedule] = useState(initialSchedule);
   // Advisory "a manager is running this board offline" flag from getState;
   // resynced on every server payload, never touched by local engine states.
   const [offlineHold, setOfflineHold] = useState(initialState.offlineHold ?? null);
@@ -273,7 +280,7 @@ export default function Arena({
         // data (members, requests, invites) is intentionally omitted; it
         // defaults to empty offline.
         description,
-        schedule: initialSchedule,
+        schedule,
         sessionPrep,
         isAuthenticated,
         state: boardStateRef.current,
@@ -287,7 +294,7 @@ export default function Arena({
       matchmakingProp,
       matchDefaults,
       description,
-      initialSchedule,
+      schedule,
       sessionPrep,
       isAuthenticated,
     ],
@@ -409,8 +416,8 @@ export default function Arena({
 
   const [autoMix, setAutoMix] = useState(matchDefaults.autoMixDefault);
 
-  // Arena schedule (powers the "This Week" leaderboard window) + its editor.
-  const [schedule, setSchedule] = useState(initialSchedule);
+  // Schedule editor state (the `schedule` value itself is declared up top so
+  // `persistSnapshot` can capture the live edit; see there).
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   // Schedule-save failures surface in the modal (not the page-level banner),
   // so the user sees the error against the form they were editing.
