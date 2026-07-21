@@ -281,7 +281,13 @@ export default function Arena({
         // defaults to empty offline.
         description,
         schedule,
-        sessionPrep,
+        // Merge the LIVE reset timestamp over the prop: `prepareNextSession`
+        // updates the `lastSessionResetAt` state (via applyResult) without
+        // refreshing the `sessionPrep` prop, so the prop goes stale after a
+        // "Start a new session". Without this, a cold offline boot would
+        // initialize the session boundary from the old reset time and
+        // mis-window the prep banner and session-scoped stats.
+        sessionPrep: { ...sessionPrep, lastSessionResetAt },
         isAuthenticated,
         state: boardStateRef.current,
       }),
@@ -296,6 +302,7 @@ export default function Arena({
       description,
       schedule,
       sessionPrep,
+      lastSessionResetAt,
       isAuthenticated,
     ],
   );
