@@ -968,15 +968,10 @@ export default function Arena({
     });
   };
 
-  // Open the manual team editor for a live court (manager-only).
-  // Lineup editing is outside the offline command scope (complex diff, rare
-  // mid-session), so the editor is blocked at open while offline.
+  // Open the manual team editor for a live court (manager-only). Works
+  // offline too: the edit runs through the local board engine.
   const handleRequestEditCourt = (court) => {
     if (!canManage) return;
-    if (offline.offlineActive) {
-      setErrorMsg(OFFLINE_UNAVAILABLE_MESSAGE);
-      return;
-    }
     setEditError('');
     setCourtToEdit(court);
   };
@@ -989,7 +984,12 @@ export default function Arena({
     if (!courtToEdit) return;
     const courtId = courtToEdit.id;
     startTransition(async () => {
-      const result = await editCourtLineup(arenaId, courtId, team1Ids, team2Ids);
+      // Offline: resolve through the local engine. It mirrors the server's
+      // race copy ("rack changed. Please try again."), so the same re-pick
+      // path below applies. applyLocalState is driven inside runLocal.
+      const result = offline.offlineActive
+        ? await offline.runLocal({ type: 'editCourtLineup', courtId, team1Ids, team2Ids })
+        : await editCourtLineup(arenaId, courtId, team1Ids, team2Ids);
       const raced = result?.error && /no longer available|Please try again/i.test(result.error);
       if (raced) {
         if (result.state) applyResult({ state: result.state });
@@ -998,7 +998,9 @@ export default function Arena({
         // open time — a concurrent edit could have changed the on-court four),
         // then remount so the working lineup re-seeds from that authoritative
         // four and drops the now-unavailable pick instead of resubmitting it.
-        const freshCourt = result.state?.courts?.find((c) => c.id === courtId);
+        // Offline, runLocal applies state itself and returns none, so fall back
+        // to the live board state (unchanged on a rejected edit).
+        const freshCourt = (result.state?.courts ?? courts).find((c) => c.id === courtId);
         if (freshCourt) setCourtToEdit(freshCourt);
         setEditResetKey((k) => k + 1);
       } else {

@@ -76,6 +76,7 @@ describe('OFFLINE_COMMANDS', () => {
       'shuffleQueue',
       'fillCourt',
       'cancelFill',
+      'editCourtLineup',
       'endMatch',
       'skipPlayer',
     ]);
@@ -394,6 +395,149 @@ describe('skipPlayer', () => {
     expect(
       resolveCommand(four, SETTINGS, { type: 'skipPlayer', playerId: 'a', isManager: true }, opts()),
     ).toEqual({ event: null, state: four });
+  });
+});
+
+describe('editCourtLineup', () => {
+  // Fill c1 (a,b,c,d on court), leaving e,f waiting.
+  const filledState = () =>
+    resolveCommand(makeState(), SETTINGS, { type: 'fillCourt', courtId: 'c1' }, opts()).state;
+  const onCourt = (state) => {
+    const c = state.courts[0];
+    return { team1: c.team1, team2: c.team2 };
+  };
+
+  it('swaps partners without touching the rack, adjusting the partnership matrix', () => {
+    const state = filledState();
+    const { team1, team2 } = onCourt(state);
+    // Repartner: one from each team trades sides.
+    const nextT1 = [team1[0], team2[0]];
+    const nextT2 = [team1[1], team2[1]];
+    const result = resolveCommand(
+      state,
+      SETTINGS,
+      { type: 'editCourtLineup', courtId: 'c1', team1Ids: nextT1, team2Ids: nextT2 },
+      opts(),
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.state.queue).toEqual(state.queue); // rack untouched
+    expect(new Set(result.state.courts[0].team1)).toEqual(new Set(nextT1));
+    // Old pairs decremented to zero, new pairs at one.
+    expect(result.state.history[team1[0]][team1[1]]).toBe(0);
+    expect(result.state.history[nextT1[0]][nextT1[1]]).toBe(1);
+    expect(result.state.history[nextT2[0]][nextT2[1]]).toBe(1);
+  });
+
+  it('substitutes a waiter in: dequeues them, returns the subbed-out paddle to the front', () => {
+    const state = filledState();
+    const { team1, team2 } = onCourt(state);
+    const out = team1[0];
+    const inPlayer = 'e'; // first waiter
+    const result = resolveCommand(
+      state,
+      SETTINGS,
+      { type: 'editCourtLineup', courtId: 'c1', team1Ids: [inPlayer, team1[1]], team2Ids: team2 },
+      opts(),
+    );
+    expect(result.error).toBeUndefined();
+    // e left the rack and onto the court (games credited); out returned to front.
+    expect(result.state.queue[0]).toBe(out);
+    expect(result.state.queue).not.toContain(inPlayer);
+    expect(playerIn(result.state, inPlayer).gamesPlayed).toBe(1);
+    expect(playerIn(result.state, out).gamesPlayed).toBe(0); // credit undone
+    // Restore-priority default: the subbed-out paddle is Next-in-Line.
+    expect(playerIn(result.state, out).skipBoosted).toBe(true);
+    // Court slots carry a snapshot for the incoming player (cancel-safe).
+    const inSlot = result.state.courts[0].slots.find((s) => s.playerId === inPlayer);
+    expect(inSlot.prevQueueOrder).not.toBeNull();
+  });
+
+  it('legacy mode sends the subbed-out paddle back with no boost', () => {
+    const settings = { ...SETTINGS, skipRestoresPriority: false };
+    const state = resolveCommand(makeState(), settings, { type: 'fillCourt', courtId: 'c1' }, opts()).state;
+    const { team1, team2 } = onCourt(state);
+    const out = team1[0];
+    const result = resolveCommand(
+      state,
+      settings,
+      { type: 'editCourtLineup', courtId: 'c1', team1Ids: ['e', team1[1]], team2Ids: team2 },
+      opts(),
+    );
+    expect(playerIn(result.state, out).skipBoosted).toBe(false);
+    expect(playerIn(result.state, out).waitRounds).toBe(0);
+  });
+
+  it('a subbed fill round-trips through cancelFill back to the pre-fill rack', () => {
+    // e has waited a round; verify the sub + cancel restores everyone exactly.
+    const base = makeState({
+      players: makeState().players.map((p) => (p.id === 'e' ? { ...p, waitRounds: 1 } : p)),
+    });
+    const filled = resolveCommand(base, SETTINGS, { type: 'fillCourt', courtId: 'c1' }, opts()).state;
+    const { team1, team2 } = onCourt(filled);
+    const edited = resolveCommand(
+      filled,
+      SETTINGS,
+      { type: 'editCourtLineup', courtId: 'c1', team1Ids: ['e', team1[1]], team2Ids: team2 },
+      opts(),
+    ).state;
+    const cancelled = resolveCommand(edited, SETTINGS, { type: 'cancelFill', courtId: 'c1' }, opts()).state;
+    // The court is vacant and everyone is back on the rack with games at zero.
+    expect(cancelled.courts[0].status).toBe('vacant');
+    for (const p of base.players) {
+      expect(playerIn(cancelled, p.id).gamesPlayed).toBe(0);
+    }
+    // e's pre-fill wait fairness survived the sub and cancel.
+    expect(playerIn(cancelled, 'e').waitRounds).toBe(1);
+  });
+
+  it('rejects an invalid lineup and a subbed-in player who is not waiting', () => {
+    const state = filledState();
+    const { team1, team2 } = onCourt(state);
+    // Not four distinct players.
+    expect(
+      resolveCommand(
+        state,
+        SETTINGS,
+        { type: 'editCourtLineup', courtId: 'c1', team1Ids: [team1[0], team1[0]], team2Ids: team2 },
+        opts(),
+      ).error,
+    ).toMatch(/four different players/);
+    // Sub in someone who is on ANOTHER court, not the rack.
+    const twoCourts = {
+      ...state,
+      courts: [state.courts[0], makeCourt('c2', { status: 'playing', team1: ['e', 'f'], team2: [] })],
+    };
+    expect(
+      resolveCommand(
+        twoCourts,
+        SETTINGS,
+        { type: 'editCourtLineup', courtId: 'c1', team1Ids: ['e', team1[1]], team2Ids: team2 },
+        opts(),
+      ).error,
+    ).toMatch(/rack changed/);
+  });
+
+  it('errors on a vacant court and no-ops an unchanged lineup', () => {
+    const vacant = makeState();
+    expect(
+      resolveCommand(
+        vacant,
+        SETTINGS,
+        { type: 'editCourtLineup', courtId: 'c1', team1Ids: ['a', 'b'], team2Ids: ['c', 'd'] },
+        opts(),
+      ).error,
+    ).toMatch(/no longer active/);
+    const state = filledState();
+    const { team1, team2 } = onCourt(state);
+    // Same lineup, same sides: no change to record.
+    expect(
+      resolveCommand(
+        state,
+        SETTINGS,
+        { type: 'editCourtLineup', courtId: 'c1', team1Ids: team1, team2Ids: team2 },
+        opts(),
+      ),
+    ).toEqual({ event: null, state });
   });
 });
 

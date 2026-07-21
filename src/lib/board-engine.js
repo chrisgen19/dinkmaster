@@ -1,6 +1,7 @@
 import { ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
 import { RATING_BASELINE, computeMatchRatings } from '@/lib/rating';
 import { validateMatchScore } from '@/lib/scoring';
+import { diffLineup, validateLineup } from '@/lib/court-lineup';
 
 /**
  * Pure, client-side board engine for offline session mode.
@@ -35,6 +36,7 @@ export const OFFLINE_COMMANDS = [
   'shuffleQueue',
   'fillCourt',
   'cancelFill',
+  'editCourtLineup',
   'endMatch',
   'skipPlayer',
 ];
@@ -44,6 +46,11 @@ export const OFFLINE_COMMANDS = [
 const MSG_NOT_ENOUGH = 'Need at least 4 players stacked in the queue to load a court!';
 const MSG_COURT_CHANGED = 'The court or queue changed while loading. Please try again.';
 const MSG_NOT_PLAYING = 'This court is no longer active — it was already finished or cancelled.';
+// editCourtLineup uses its own NOT_PLAYING / INVALID_COURT / QUEUE_CHANGED copy.
+const MSG_EDIT_NOT_PLAYING = 'This court is no longer active — it was finished or cancelled.';
+const MSG_EDIT_INVALID = "This court is in an unexpected state and can't be edited — finish or cancel the match instead.";
+const MSG_EDIT_QUEUE_CHANGED = 'A chosen player is no longer available — the rack changed. Please try again.';
+const MSG_EDIT_INVALID_LINEUP = 'Pick exactly four different players, two per team.';
 const MSG_REPLACEMENT_GONE = 'That replacement is no longer available. Pick again.';
 const MSG_REPLACEMENT_ON_DECK = 'That player is already on deck — pick a waiting paddle.';
 
@@ -270,6 +277,93 @@ function applyCancelFill(state, event) {
   };
 }
 
+function applyEditCourtLineup(state, settings, event) {
+  const { courtId, team1Ids, team2Ids } = event.payload;
+  const court = state.courts.find((c) => c.id === courtId);
+  if (!court || court.status !== 'playing') return { error: MSG_EDIT_NOT_PLAYING };
+
+  const slots = court.slots ?? [];
+  if (slots.length !== 4) return { error: MSG_EDIT_INVALID };
+  const current = {
+    team1: slots.filter((s) => s.team === 1).map((s) => s.playerId),
+    team2: slots.filter((s) => s.team === 2).map((s) => s.playerId),
+  };
+  if (current.team1.length !== 2 || current.team2.length !== 2) return { error: MSG_EDIT_INVALID };
+
+  const diff = diffLineup(current, { team1: team1Ids, team2: team2Ids });
+  if (!diff.changed) return { state, changed: false };
+
+  // Slot snapshots keyed by player id (mirrors applyEditCourtLineupTx): a
+  // stayed player keeps their existing slot snapshot; an incoming player's is
+  // built below so cancelFill can still restore them.
+  const stayedSnap = new Map(
+    slots.map((s) => [s.playerId, { prevQueueOrder: s.prevQueueOrder, prevWaitRounds: s.prevWaitRounds }]),
+  );
+  const incomingSnap = new Map();
+  const patches = {};
+  let queue = state.queue;
+  let fillBumpedPlayerIds = court.fillBumpedPlayerIds ?? [];
+
+  // Subbed-in players must be active, waiting in this arena, and not already
+  // on any court. (added and removed are always equal length: four on court.)
+  if (diff.added.length > 0) {
+    for (const id of diff.added) {
+      if (!state.queue.includes(id) || isOnPlayingCourt(state, id)) {
+        return { error: MSG_EDIT_QUEUE_CHANGED };
+      }
+    }
+    const bumpedSet = new Set(court.fillBumpedPlayerIds ?? []);
+    for (const id of diff.added) {
+      const p = playerById(state, id);
+      // A subbed-in paddle the original fill bumped still carries that +1;
+      // snapshot the pre-bump value so a later cancelFill restores it exactly.
+      const prevWaitRounds = bumpedSet.has(id) ? Math.max(0, p.waitRounds - 1) : p.waitRounds;
+      incomingSnap.set(id, { prevQueueOrder: state.queue.indexOf(id) + 1, prevWaitRounds });
+      patches[id] = { gamesPlayed: p.gamesPlayed + 1, waitRounds: 0, skipBoosted: false };
+    }
+    const addedSet = new Set(diff.added);
+    queue = queue.filter((id) => !addedSet.has(id));
+    fillBumpedPlayerIds = fillBumpedPlayerIds.filter((id) => !addedSet.has(id));
+  }
+
+  // Subbed-out players: undo the game credit and return them to the FRONT of
+  // the rack (queued waiters keep their order, so wait fairness is preserved).
+  // Same skip-restores-priority toggle that governs skipPlayer.
+  if (diff.removed.length > 0) {
+    for (const id of diff.removed) {
+      const p = playerById(state, id);
+      const base = { gamesPlayed: Math.max(0, p.gamesPlayed - 1) };
+      patches[id] = settings.skipRestoresPriority
+        ? { ...base, waitRounds: stayedSnap.get(id)?.prevWaitRounds ?? 0, skipBoosted: true }
+        : { ...base, waitRounds: 0, skipBoosted: false };
+    }
+    queue = [...diff.removed, ...queue];
+  }
+
+  const slotSnap = (id) => incomingSnap.get(id) ?? stayedSnap.get(id) ?? { prevQueueOrder: null, prevWaitRounds: null };
+  const newSlots = [
+    ...team1Ids.map((playerId) => ({ playerId, team: 1, ...slotSnap(playerId) })),
+    ...team2Ids.map((playerId) => ({ playerId, team: 2, ...slotSnap(playerId) })),
+  ];
+
+  let history = state.history;
+  for (const [x, y] of diff.pairsToUnbump) history = adjustPair(history, x, y, -1);
+  for (const [x, y] of diff.pairsToBump) history = adjustPair(history, x, y, +1);
+
+  return {
+    state: {
+      ...state,
+      players: patchPlayers(state.players, patches),
+      queue,
+      courts: state.courts.map((c) =>
+        c.id === courtId ? { ...c, team1: team1Ids, team2: team2Ids, fillBumpedPlayerIds, slots: newSlots } : c,
+      ),
+      history,
+    },
+    changed: true,
+  };
+}
+
 function applyEndMatch(state, settings, event) {
   const { courtId, score1, score2, autoMix, matchId } = event.payload;
   const outcome = event.outcome ?? {};
@@ -446,6 +540,8 @@ export function applyEvent(state, settings, event) {
       return applyFillCourt(state, event);
     case 'cancelFill':
       return applyCancelFill(state, event);
+    case 'editCourtLineup':
+      return applyEditCourtLineup(state, settings, event);
     case 'endMatch':
       return applyEndMatch(state, settings, event);
     case 'skipPlayer':
@@ -522,6 +618,19 @@ export function resolveCommand(state, settings, command, opts = {}) {
     case 'cancelFill':
       event = { ...base, payload: { courtId: command.courtId }, outcome: null };
       break;
+    case 'editCourtLineup': {
+      // Deterministic (the manager picks the exact teams), so no outcome to
+      // record. Validate the lineup up front, mirroring the server action.
+      if (!validateLineup(command.team1Ids, command.team2Ids).ok) {
+        return { error: MSG_EDIT_INVALID_LINEUP };
+      }
+      event = {
+        ...base,
+        payload: { courtId: command.courtId, team1Ids: command.team1Ids, team2Ids: command.team2Ids },
+        outcome: null,
+      };
+      break;
+    }
     case 'endMatch': {
       const court = state.courts.find((c) => c.id === command.courtId);
       if (!court || court.status !== 'playing') return { error: MSG_NOT_PLAYING };

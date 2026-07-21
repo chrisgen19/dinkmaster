@@ -123,6 +123,46 @@ test.describe('offline session mode (production build)', () => {
     await expect(page.getByText('7', { exact: true }).first()).toBeVisible();
   });
 
+  test('Edit Teams works offline: substitute a waiter, then sync', async () => {
+    const arenaUrl = await createArena(page, `Edit Teams E2E ${Date.now()}`);
+    await addWalkIns(page, ['Ana', 'Ben', 'Cai', 'Dee', 'Eli', 'Fay']);
+    await waitForServiceWorker(page);
+
+    // Fill a court ONLINE first (Ana-Ben-Cai-Dee on court, Eli + Fay waiting),
+    // so there's a live lineup to edit once the connection drops.
+    await page.getByRole('button', { name: /Stack Next 4 Paddles/ }).first().click();
+    await expect(page.getByRole('button', { name: 'Edit Teams' }).first()).toBeVisible();
+
+    // Enter offline mode via a synthetic offline event: the server stays
+    // reachable, so the earlier fill and the later sync both work while the
+    // Edit Teams path runs entirely through the local engine.
+    await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+    await enterOfflineMode(page);
+
+    // Substitute Ana out for Eli (a waiter) via the manual team editor. Scope
+    // the picks to the dialog so the rack's own "Eli" controls behind the
+    // modal can't intercept the selector.
+    await page.getByRole('button', { name: 'Edit Teams' }).first().click();
+    const editor = page.getByRole('dialog');
+    await editor.getByRole('button', { name: 'Replace Ana' }).click();
+    await expect(editor.getByText(/Replace Ana/)).toBeVisible(); // picker opened
+    await editor.getByRole('button').filter({ has: page.getByText('Eli', { exact: true }) }).click();
+    await editor.getByRole('button', { name: 'Save Lineup' }).click();
+    await expect(page.getByText(/1 change saved on this device/)).toBeVisible();
+
+    // Sync and confirm the substitution persisted server-side.
+    await page.getByRole('button', { name: 'Sync now' }).click();
+    await expect(page.getByText(/Offline session synced: 1 change saved/)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/Running the board locally/)).toHaveCount(0);
+
+    // Reload from the server (no local state) and confirm the swap persisted.
+    // Court slots render as "View <name>'s profile" list items; rack rows don't,
+    // so these two assertions cleanly separate on-court from waiting.
+    await page.goto(arenaUrl);
+    await expect(page.getByRole('listitem', { name: /View Eli.s profile/ })).toBeVisible();
+    await expect(page.getByRole('listitem', { name: /View Ana.s profile/ })).toHaveCount(0);
+  });
+
   test('flaky network: other viewers see the hold, divergence resolves best-effort', async ({ browser }) => {
     const arenaUrl = await createArena(page, `Hold E2E ${Date.now()}`);
     await addWalkIns(page, ['Ana', 'Ben', 'Cai', 'Dee', 'Eli', 'Fay']);
