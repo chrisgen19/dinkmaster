@@ -152,12 +152,17 @@ export default function Arena({
   viewerRole,
   viewerUserId,
   isAuthenticated,
-  members,
+  members = [],
   pendingRequests = [],
   viewerPending = false,
   pendingLinkRequests = [],
   viewerLinkContext = null,
   invites = [],
+  // Set when this component is mounted by the offline shell from an IndexedDB
+  // snapshot (a cold offline boot), rather than server-rendered live. It tells
+  // the offline hook to start/resume a local session on mount even though no
+  // `offline` event fired (the device was already offline before load).
+  offlineBoot = false,
 }) {
   const router = useRouter();
   const [players, setPlayers] = useState(initialState.players);
@@ -171,6 +176,13 @@ export default function Arena({
   // because the prop-refresh resync block right after this needs to call
   // `setLastSessionResetAt` — declaring it later would TDZ-throw on render.
   const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
+  // Arena schedule (powers the "This Week" leaderboard window). Declared up
+  // here, before `persistSnapshot`, so the offline snapshot captures the LIVE
+  // schedule: `handleSaveSchedule` updates this state without a
+  // `router.refresh()`, so the `initialSchedule` prop would go stale after an
+  // edit. Its editor state (modal open / error) stays with the other UI state
+  // below. (Same up-front-declaration reason as `lastSessionResetAt`.)
+  const [schedule, setSchedule] = useState(initialSchedule);
   // Advisory "a manager is running this board offline" flag from getState;
   // resynced on every server payload, never touched by local engine states.
   const [offlineHold, setOfflineHold] = useState(initialState.offlineHold ?? null);
@@ -263,9 +275,36 @@ export default function Arena({
         viewerUserId,
         matchmaking: matchmakingProp,
         matchDefaults,
+        // Extra props the interactive board needs when the offline shell
+        // mounts <Arena> from this snapshot (cold offline boot). Server-only
+        // data (members, requests, invites) is intentionally omitted; it
+        // defaults to empty offline.
+        description,
+        schedule,
+        // Merge the LIVE reset timestamp over the prop: `prepareNextSession`
+        // updates the `lastSessionResetAt` state (via applyResult) without
+        // refreshing the `sessionPrep` prop, so the prop goes stale after a
+        // "Start a new session". Without this, a cold offline boot would
+        // initialize the session boundary from the old reset time and
+        // mis-window the prep banner and session-scoped stats.
+        sessionPrep: { ...sessionPrep, lastSessionResetAt },
+        isAuthenticated,
         state: boardStateRef.current,
       }),
-    [arenaId, arenaName, canManage, viewerRole, viewerUserId, matchmakingProp, matchDefaults],
+    [
+      arenaId,
+      arenaName,
+      canManage,
+      viewerRole,
+      viewerUserId,
+      matchmakingProp,
+      matchDefaults,
+      description,
+      schedule,
+      sessionPrep,
+      lastSessionResetAt,
+      isAuthenticated,
+    ],
   );
 
   const getBoardState = useCallback(() => boardStateRef.current, []);
@@ -303,6 +342,7 @@ export default function Arena({
   const offline = useArenaOffline({
     arenaId,
     canManage,
+    offlineBoot,
     settingsProps: { matchmaking: matchmakingProp, matchDefaults },
     getBoardState,
     applyLocalState,
@@ -383,8 +423,8 @@ export default function Arena({
 
   const [autoMix, setAutoMix] = useState(matchDefaults.autoMixDefault);
 
-  // Arena schedule (powers the "This Week" leaderboard window) + its editor.
-  const [schedule, setSchedule] = useState(initialSchedule);
+  // Schedule editor state (the `schedule` value itself is declared up top so
+  // `persistSnapshot` can capture the live edit; see there).
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   // Schedule-save failures surface in the modal (not the page-level banner),
   // so the user sees the error against the form they were editing.

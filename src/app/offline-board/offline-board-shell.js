@@ -4,6 +4,7 @@ import Image from 'next/image';
 import { useEffect, useState } from 'react';
 import { ON_DECK_SIZE } from '@/lib/matchmaking';
 import { listArenaSnapshots, loadArenaSnapshot, loadPendingLog } from '@/lib/offline-store';
+import Arena from '../arena';
 import { replayEvents } from '../arena-offline-state';
 import { RetryButton } from '../offline/retry-button';
 
@@ -238,6 +239,34 @@ export function OfflineBoardShell() {
   }
 
   const { snapshot, state, pendingCount } = view;
+
+  // A manager gets the FULL interactive board, mounted from the snapshot and
+  // started in offline mode (offlineBoot). This is what lets them RESUME an
+  // offline session that was interrupted (app closed, phone locked) while
+  // still offline, and keep running the board: check in/out, fill, score,
+  // skip, edit teams. Server-only props (members, requests, invites) are
+  // omitted from the snapshot and default to empty offline. Spectators, who
+  // can't run the board anyway, get the lightweight read-only view below.
+  if (snapshot.canManage) {
+    return (
+      <Arena
+        initialState={state}
+        arenaId={snapshot.arenaId}
+        arenaName={snapshot.arenaName}
+        description={snapshot.description}
+        schedule={snapshot.schedule}
+        matchmaking={snapshot.matchmaking}
+        matchDefaults={snapshot.matchDefaults}
+        sessionPrep={snapshot.sessionPrep}
+        canManage={snapshot.canManage}
+        viewerRole={snapshot.viewerRole}
+        viewerUserId={snapshot.viewerUserId}
+        isAuthenticated={snapshot.isAuthenticated ?? true}
+        offlineBoot
+      />
+    );
+  }
+
   const playersById = new Map(state.players.map((p) => [p.id, p]));
 
   return (

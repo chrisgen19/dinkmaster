@@ -84,7 +84,7 @@ test.describe('offline session mode (production build)', () => {
     await context?.close();
   });
 
-  test('full round trip: run offline, reload into the SW shell, reconnect and sync', async () => {
+  test('full round trip: run offline, reopen offline and RESUME the interactive board, reconnect and sync', async () => {
     const arenaUrl = await createArena(page, `Offline E2E ${Date.now()}`);
     await addWalkIns(page, ['Ana', 'Ben', 'Cai', 'Dee', 'Eli', 'Fay']);
     await waitForServiceWorker(page);
@@ -102,20 +102,24 @@ test.describe('offline session mode (production build)', () => {
     await page.getByRole('button', { name: 'Save Score' }).click();
     await expect(page.getByText(/2 saved/)).toBeVisible();
 
-    // Abort EVERYTHING (including SW fetches) so the NetworkOnly navigation
-    // truly fails and the precached fallback shell takes over. Precache
-    // lookups are cache hits, not network, so the shell still renders.
+    // Simulate the app being reopened while STILL offline (phone locked, PWA
+    // swiped away): a hard reload with even SW fetches aborted, so the
+    // NetworkOnly navigation fails and the precached shell takes over. For a
+    // MANAGER the shell mounts the full interactive board and RESUMES the
+    // session from IndexedDB, rather than a read-only view.
     await context.route('**/*', (route) => route.abort('internetdisconnected'));
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await expect(page.getByText(/showing the board saved/i)).toBeVisible();
-    await expect(page.getByText(/unsynced/i)).toBeVisible();
+    await expect(page.getByText(/Running locally · 2 saved/)).toBeVisible();
     expect(page.url()).toBe(arenaUrl); // shell serves IN PLACE of the arena URL
+    // Still fully interactive: keep running the board after the reboot.
+    await expect(page.getByRole('button', { name: 'Add', exact: true }).first()).toBeVisible();
+    await page.getByRole('button', { name: /Stack Next 4 Paddles/ }).first().click();
+    await expect(page.getByText(/3 saved/)).toBeVisible();
 
-    // Reconnect: the live page resumes the session and auto-syncs.
+    // Reconnect: auto-sync fires on the online event and everything persists.
     await context.unroute('**/*');
     await context.setOffline(false);
-    await page.getByRole('button', { name: 'Try again' }).click();
-    await expect(page.getByText(/Offline session synced: 2 changes saved/)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/Offline session synced: 3 changes saved/)).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText(/Running locally/)).toHaveCount(0);
 
     // The offline match is in the log with its score.
