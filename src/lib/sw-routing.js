@@ -55,3 +55,14 @@ export function isNavigation({ request }) {
 export function isArenaPathname(pathname) {
   return /^\/arena\/[^/]+\/?$/.test(pathname);
 }
+
+/**
+ * The arena directory (`/arenas`), which is the PWA's `start_url`. When the
+ * app is launched offline it lands here, so this route is served the offline
+ * board shell too. The shell renders a list of arenas saved in IndexedDB
+ * when it can't parse an arena id from the URL, giving the manager a way to
+ * pick a saved arena instead of the dead-end generic offline page.
+ */
+export function isArenaDirectoryPath(pathname) {
+  return pathname === '/arenas' || pathname === '/arenas/';
+}

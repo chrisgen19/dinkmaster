@@ -2,21 +2,57 @@
 
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useOnline } from './use-online';
 
 /**
- * Banners for the arena's offline session mode. Presentational only: all
- * state and handlers live in the `useArenaOffline` hook (arena-offline.js).
+ * Banners for the arena's offline session mode. Presentational only: session
+ * state and handlers come from the `useArenaOffline` hook (arena-offline.js);
+ * connectivity is read locally via `useOnline` since it is purely a display
+ * concern (which state to show, whether a manual sync is even possible).
+ *
+ * Design: compact floating pills, not full-width cards. The happy path needs
+ * NO buttons: entry is automatic, and sync fires on reconnect. Manual
+ * controls appear only when they can do something the automatic path can't
+ * (retry a failed/missed sync; discard the session). The device's raw
+ * offline state lives in the header pill (OfflineIndicator); these banners
+ * carry the local-SESSION status.
  */
 
-// Floating wrapper: pins the banner to the bottom of the viewport so the
-// offline status stays visible no matter how far the manager has scrolled.
-// Sits above page content (z-40) but below modals (z-100) and the transient
-// toast (z-50); lifted clear of the mobile bottom-nav pill (which floats at
-// `bottom-4`), and drops to a normal bottom margin on desktop where there is
-// no bottom nav. The safe-area inset keeps it above the iOS home indicator.
+// Floating wrapper: a bottom-centered pill that hugs its content and stays
+// visible however far the manager has scrolled. Above page content (z-40),
+// below modals (z-100) and the toast (z-50); lifted clear of the mobile
+// bottom-nav pill (`bottom-4`) and the iOS home indicator (safe-area inset),
+// dropping to a normal margin on desktop where there is no bottom nav.
 const floatBase =
-  'fixed left-1/2 -translate-x-1/2 z-40 w-[calc(100%-1.5rem)] max-w-2xl ' +
+  'fixed left-1/2 -translate-x-1/2 z-40 w-auto max-w-[calc(100%-1.5rem)] ' +
   'bottom-[calc(6rem+env(safe-area-inset-bottom))] md:bottom-6';
+
+// Per-tone class sets (Tailwind can't build class names dynamically, so each
+// combination is spelled out): amber = local/pending, sky = syncing, red =
+// sync failed.
+const TONES = {
+  amber: {
+    pill: 'border-amber-300/80 bg-amber-100/95 text-amber-950',
+    dot: 'bg-amber-500',
+    primary: 'bg-amber-600 text-white hover:bg-amber-700',
+    ghost: 'text-amber-900/70 hover:bg-amber-200/70 hover:text-amber-950',
+  },
+  sky: {
+    pill: 'border-sky-300/80 bg-sky-100/95 text-sky-950',
+    dot: 'bg-sky-500',
+    primary: 'bg-sky-600 text-white hover:bg-sky-700',
+    ghost: 'text-sky-900/70 hover:bg-sky-200/70 hover:text-sky-950',
+  },
+  red: {
+    pill: 'border-red-300/80 bg-red-100/95 text-red-950',
+    dot: 'bg-red-500',
+    primary: 'bg-red-600 text-white hover:bg-red-700',
+    ghost: 'text-red-900/70 hover:bg-red-200/70 hover:text-red-950',
+  },
+};
+
+const pillBase =
+  'flex items-center gap-2.5 rounded-2xl border px-4 py-2 shadow-lg backdrop-blur-md animate-fade-in';
 
 /**
  * One-tap offer shown when a server action fails but the browser still
@@ -25,87 +61,102 @@ const floatBase =
  * without this prompt.
  */
 export function OfflinePromptBanner({ onEnter, onDismiss, blocked }) {
+  const t = TONES.amber;
   return (
     <div className={floatBase}>
-      <div
-        role="alert"
-        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/95 px-4 py-3 text-amber-900 shadow-xl shadow-amber-900/15 backdrop-blur-md animate-fade-in"
-      >
-        <p className="min-w-0 text-sm font-semibold leading-snug">
-          {blocked
-            ? 'Connection lost. Offline mode is already running in another tab of this arena.'
-            : 'Connection lost. Keep running the board offline? Changes save on this device until you reconnect.'}
-        </p>
-        <div className="flex shrink-0 items-center gap-2">
-          {!blocked && (
-            <button
-              type="button"
-              onClick={onEnter}
-              className="rounded-lg bg-amber-600 px-3.5 py-2 text-sm font-bold text-white transition-colors hover:bg-amber-700"
-            >
-              Run offline
-            </button>
-          )}
+      <div role="alert" className={`${pillBase} ${t.pill}`}>
+        <span className="text-[13px] font-semibold">
+          {blocked ? 'Offline in another tab' : "That change didn't save. Work offline?"}
+        </span>
+        {!blocked && (
           <button
             type="button"
-            onClick={onDismiss}
-            className="rounded-lg px-3 py-2 text-sm font-bold text-amber-800/80 transition-colors hover:bg-amber-100 hover:text-amber-900"
+            onClick={onEnter}
+            className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold transition-colors ${t.primary}`}
           >
-            Dismiss
+            Run offline
           </button>
-        </div>
+        )}
+        <button
+          type="button"
+          onClick={onDismiss}
+          className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold transition-colors ${t.ghost}`}
+        >
+          Dismiss
+        </button>
       </div>
     </div>
   );
 }
 
 /**
- * Persistent banner while an offline session is running: pending change
- * count, the sync affordance, and exit (confirm + discard handled by the
- * caller). `syncError` is the transient "couldn't reach the server" note
- * after a failed attempt; syncing disables both buttons.
+ * Status pill while an offline session is running. Connectivity-aware:
+ *  - offline: pure status ("Running locally · N saved"), no sync button (the
+ *    server is unreachable);
+ *  - online, pending: same status plus a "Sync now" fallback (auto-sync fires
+ *    on reconnect, so this only shows if that hasn't happened yet);
+ *  - syncing: "Syncing…", no controls;
+ *  - sync failed: "Sync failed" plus "Retry".
+ * Discard is always present but visually demoted: it's the escape hatch to
+ * abandon the session, not a routine control.
  */
-export function OfflineActiveBanner({ pendingCount, syncing, syncError, onSync, onExit }) {
+export function OfflineActiveBanner({ pendingCount, syncing, syncError, onSync, onDiscard }) {
+  const online = useOnline();
+  // Kept short so the pill stays one line on a phone: "· N saved" only when
+  // there's something saved.
+  const saved = pendingCount === 0 ? '' : ` · ${pendingCount} saved`;
+
+  let tone;
+  let text;
+  let showSync = false;
+  if (syncing) {
+    tone = 'sky';
+    text = 'Syncing…';
+  } else if (syncError) {
+    tone = 'red';
+    text = `Sync failed${saved}`;
+    showSync = online;
+  } else {
+    tone = 'amber';
+    text = `Running locally${saved}`;
+    showSync = online;
+  }
+  const t = TONES[tone];
+
   return (
     <div className={floatBase}>
-      <div
-        role="status"
-        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-100/95 px-4 py-3 text-amber-950 shadow-xl shadow-amber-900/15 backdrop-blur-md animate-fade-in"
-      >
-        <div className="min-w-0">
-          <p className="text-sm font-semibold leading-snug">
-            <span className="mr-2 inline-flex items-center gap-1.5 rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide">
-              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-amber-600" />
-              Offline
-            </span>
-            Running the board locally
-            {' · '}
-            {pendingCount === 0
-              ? 'no changes yet'
-              : `${pendingCount} ${pendingCount === 1 ? 'change' : 'changes'} saved on this device`}
-          </p>
-          {syncError && (
-            <p className="mt-1 text-xs font-medium text-amber-800">{syncError}</p>
+      <div role="status" className={`${pillBase} ${t.pill}`}>
+        <span className="flex items-center gap-2 whitespace-nowrap text-[13px] font-semibold">
+          {syncing ? (
+            <span
+              aria-hidden="true"
+              className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-sky-600 border-t-transparent"
+            />
+          ) : (
+            <span
+              aria-hidden="true"
+              className={`h-2 w-2 shrink-0 rounded-full ${t.dot} ${online ? '' : 'animate-pulse'}`}
+            />
           )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+          {text}
+        </span>
+        {showSync && (
           <button
             type="button"
             onClick={onSync}
-            disabled={syncing}
-            className="rounded-lg bg-amber-600 px-3.5 py-2 text-sm font-bold text-white transition-colors hover:bg-amber-700 disabled:opacity-60"
+            className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold transition-colors ${t.primary}`}
           >
-            {syncing ? 'Syncing…' : 'Sync now'}
+            {syncError ? 'Retry' : 'Sync now'}
           </button>
-          <button
-            type="button"
-            onClick={onExit}
-            disabled={syncing}
-            className="rounded-lg border border-amber-400 px-3.5 py-2 text-sm font-bold text-amber-900 transition-colors hover:bg-amber-200 disabled:opacity-60"
-          >
-            Exit offline
-          </button>
-        </div>
+        )}
+        <button
+          type="button"
+          onClick={onDiscard}
+          disabled={syncing}
+          className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold transition-colors disabled:opacity-40 ${t.ghost}`}
+        >
+          Discard
+        </button>
       </div>
     </div>
   );
@@ -118,17 +169,14 @@ export function OfflineActiveBanner({ pendingCount, syncing, syncError, onSync, 
  * correctness if someone mutates anyway).
  */
 export function OfflineHoldNotice({ label }) {
+  const t = TONES.sky;
   return (
     <div className={floatBase}>
-      <div
-        role="status"
-        className="flex items-center gap-2.5 rounded-2xl border border-sky-200 bg-sky-50/95 px-4 py-3 text-sky-900 shadow-xl shadow-sky-900/15 backdrop-blur-md animate-fade-in"
-      >
-        <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-sky-500" />
-        <p className="min-w-0 text-sm font-semibold leading-snug">
-          {label} is running this board offline. The live view may be behind until their
-          device reconnects and syncs.
-        </p>
+      <div role="status" className={`${pillBase} ${t.pill}`}>
+        <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${t.dot}`} />
+        <span className="text-[13px] font-semibold">
+          {label} is running this board offline
+        </span>
       </div>
     </div>
   );
