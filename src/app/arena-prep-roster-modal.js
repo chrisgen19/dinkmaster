@@ -11,26 +11,75 @@ import {
   approveLinkRequest,
   rejectLinkRequest,
 } from './actions';
+import { matchesNameQuery, byDisplayName } from '@/lib/player-display';
+import { PlayerSearchField } from './player-search-field';
 import { ArenaRequestsList } from './arena-requests-list';
 
-/** First name primary, last name secondary, both case-insensitive. */
-function byPlayerName(a, b) {
-  const af = (a.firstName ?? a.name ?? '').trim();
-  const bf = (b.firstName ?? b.name ?? '').trim();
-  const first = af.localeCompare(bf, undefined, { sensitivity: 'base' });
-  if (first !== 0) return first;
-  const al = (a.lastName ?? '').trim();
-  const bl = (b.lastName ?? '').trim();
-  return al.localeCompare(bl, undefined, { sensitivity: 'base' });
+// Mirror of MEMBERS_SEARCH_MIN (arena-members.js): hide the search + filter
+// chips until the combined roster exceeds this — a short list needs neither.
+const ROSTER_SEARCH_MIN = 5;
+
+// Chip ids double as the filter predicate selector; labels deliberately avoid
+// the bare words "In"/"Out" so they can't collide with a row's toggle button
+// under an exact-name role lookup (see the e2e specs).
+const FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'in', label: 'In rack' },
+  { id: 'out', label: 'Not in' },
+];
+
+// Below this the visual viewport shrink is browser chrome (a collapsing URL
+// bar), not a keyboard, and shifting the sheet for it would just look like jitter.
+const KEYBOARD_INSET_MIN = 60;
+
+/**
+ * Pixels of the layout viewport hidden behind the on-screen keyboard.
+ *
+ * `interactive-widget=resizes-content` (layout.js) already handles this where
+ * it is honoured: Chrome/Android shrinks the LAYOUT viewport, so `innerHeight`
+ * drops with it and this returns 0 — the hook costs nothing and needs no
+ * browser sniffing to stand down. Safari/iOS ignores the token and shrinks only
+ * the VISUAL viewport, which would strand the footer bar (search, walk-in form)
+ * behind the keyboard with no scroll path to it, since the footer deliberately
+ * sits outside the modal's scroll container.
+ */
+function useKeyboardInset() {
+  const [inset, setInset] = useState(0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return undefined;
+    const update = () => {
+      const hidden = window.innerHeight - vv.height - vv.offsetTop;
+      setInset(hidden > KEYBOARD_INSET_MIN ? Math.round(hidden) : 0);
+    };
+    update();
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
+  }, []);
+  return inset;
 }
 
 /**
- * Manager-only roster prep modal. Lists every active member with a check-in
- * toggle, walk-ins with the same toggle, an inline walk-in add form, and
- * any pending join/link requests at the top (shared `ArenaRequestsList`
- * with the Members tab so the two surfaces never drift). Closing the modal
- * does NOT undo any toggles — each toggle hits a server action immediately
- * so the rack reflects state as soon as it changes.
+ * Manager-only roster prep modal. Members and walk-ins share ONE list —
+ * each row carries its own kind label, so finding a person never means
+ * guessing which of two lists they live in. Rows are grouped by rack state
+ * (in the rack, ordered by paddle position; then everyone else, alphabetical).
+ * Pending join/link requests render at the top via the shared
+ * `ArenaRequestsList` (also used by the Members tab, so the two never drift).
+ *
+ * Both inputs live in the footer bar, in the thumb zone: search is the
+ * high-frequency action during a session, and adding a walk-in swaps that
+ * same bar into the name form rather than claiming permanent height. On
+ * phones the panel is a bottom sheet kept clear of the on-screen keyboard by
+ * the app-wide `interactiveWidget: 'resizes-content'` in layout.js, with
+ * `useKeyboardInset` covering the browsers that ignore that token.
+ *
+ * Closing the modal does NOT undo any toggles — each toggle hits a server
+ * action immediately so the rack reflects state as soon as it changes.
  *
  * Request approvals create/modify `ArenaMembership` rows which live on
  * server-side props, not in the modal's local state. Those handlers call
@@ -66,45 +115,100 @@ export function ArenaPrepRosterModal({
   const [newFirst, setNewFirst] = useState('');
   const [newLast, setNewLast] = useState('');
   const [error, setError] = useState('');
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  // The footer bar is either the search row or the add-walk-in form, never
+  // both — one row of thumb-zone height, whichever the manager needs.
+  const [addOpen, setAddOpen] = useState(false);
+  const keyboardInset = useKeyboardInset();
+
+  // The form stays open across adds — a session usually starts with a queue of
+  // people at the door — so closing it is explicit, and drops any half-typed name.
+  const closeAddWalkIn = () => {
+    setNewFirst('');
+    setNewLast('');
+    setAddOpen(false);
+  };
 
   // Escape closes the modal — partner to the backdrop click and the ✕ button.
+  // It backs out of the add-walk-in bar first, so a manager who opened it by
+  // mistake doesn't lose the whole roster. PlayerSearchField likewise swallows
+  // Escape while it holds text, clearing the query instead of closing.
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape') return;
+      if (addOpen) {
+        closeAddWalkIn();
+        return;
+      }
+      onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, addOpen]);
 
-  // Member rows derived from {members, players, queue}: each member's linked
-  // active Player tells us whether they're currently in the rack. Sorted
-  // alphabetically by display name so finding someone in a long list is
-  // predictable; the rack position is shown inline for already-checked-in
-  // members, so sort order doesn't need to mirror queue order.
-  const memberRows = useMemo(() => {
+  // One normalized row shape for both kinds, derived from {members, players,
+  // queue}: a member's linked active Player is what puts them on the rack, a
+  // walk-in IS the Player. Everything downstream (search, grouping, the
+  // toggle handler) works off this shape and never branches on kind again.
+  const rosterRows = useMemo(() => {
     const playerByUser = new Map();
     for (const p of players) {
       if (p.userId) playerByUser.set(p.userId, p);
     }
-    const queueSet = new Set(queue);
-    return members
-      .map((m) => {
-        const player = playerByUser.get(m.userId) ?? null;
-        const checkedIn = !!player && queueSet.has(player.id);
-        return { ...m, player, checkedIn };
-      })
-      .sort(byPlayerName);
+    const rackNumberOf = new Map(queue.map((id, i) => [id, i + 1]));
+
+    const memberRows = members.map((m) => {
+      const player = playerByUser.get(m.userId) ?? null;
+      const rackNumber = player ? (rackNumberOf.get(player.id) ?? 0) : 0;
+      return {
+        key: `member:${m.userId}`,
+        playerId: player?.id ?? null,
+        displayName: m.name,
+        kind: 'member',
+        label: m.role.toLowerCase(),
+        checkedIn: rackNumber > 0,
+        rackNumber,
+      };
+    });
+
+    // Walk-ins = active Player rows with no userId.
+    const walkInRows = players
+      .filter((p) => !p.userId)
+      .map((p) => {
+        const rackNumber = rackNumberOf.get(p.id) ?? 0;
+        return {
+          key: `walkIn:${p.id}`,
+          playerId: p.id,
+          displayName: p.lastName ? `${p.firstName} ${p.lastName}` : p.firstName,
+          kind: 'walkIn',
+          label: 'walk-in',
+          checkedIn: rackNumber > 0,
+          rackNumber,
+        };
+      });
+
+    return [...memberRows, ...walkInRows];
   }, [members, players, queue]);
 
-  // Walk-ins = active Player rows with no userId. Also alphabetized; the
-  // Prep Roster modal is a discovery surface, not a play surface.
-  const walkInRows = useMemo(() => {
-    const queueSet = new Set(queue);
-    return players
-      .filter((p) => !p.userId)
-      .map((p) => ({ ...p, checkedIn: queueSet.has(p.id) }))
-      .sort(byPlayerName);
-  }, [players, queue]);
+  // Search + chips appear once the roster is long enough to need them, gated
+  // on the RAW total so the controls can't vanish mid-filter as results narrow.
+  const showControls = rosterRows.length > ROSTER_SEARCH_MIN;
+
+  // Checked-in players lead, ordered by paddle position so the group reads
+  // like the rack itself; everyone else follows alphabetically, which is the
+  // predictable place to look for a name that isn't playing yet.
+  const { inRack, notIn, counts } = useMemo(() => {
+    const inAll = rosterRows.filter((r) => r.checkedIn);
+    const outAll = rosterRows.filter((r) => !r.checkedIn);
+    const matches = (r) => matchesNameQuery(r.displayName, showControls ? query : '');
+    return {
+      counts: { all: rosterRows.length, in: inAll.length, out: outAll.length },
+      inRack:
+        filter === 'out' ? [] : inAll.filter(matches).sort((a, b) => a.rackNumber - b.rackNumber),
+      notIn: filter === 'in' ? [] : outAll.filter(matches).sort(byDisplayName),
+    };
+  }, [rosterRows, query, filter, showControls]);
 
   // Rack actions (check-in/out, add walk-in) return a fresh state envelope
   // we reconcile into the parent's local rack state via `onApplyResult` —
@@ -139,31 +243,21 @@ export function ArenaPrepRosterModal({
     });
   };
 
-  const handleToggleMember = (row) => {
-    if (!row.player) {
+  const handleToggle = (row) => {
+    if (!row.playerId) {
       // A member without a Player row is unexpected (approveJoinRequest
       // creates one); surface a clear error rather than silently no-oping.
-      setError(`${row.name} has no player record yet.`);
+      setError(`${row.displayName} has no player record yet.`);
       return;
     }
     if (offlineRunLocal) {
-      runOffline({ type: row.checkedIn ? 'checkOut' : 'checkIn', playerId: row.player.id });
+      runOffline({ type: row.checkedIn ? 'checkOut' : 'checkIn', playerId: row.playerId });
       return;
     }
     run(() =>
       row.checkedIn
-        ? checkOutPlayer(arenaId, row.player.id)
-        : checkInPlayer(arenaId, row.player.id),
-    );
-  };
-
-  const handleToggleWalkIn = (row) => {
-    if (offlineRunLocal) {
-      runOffline({ type: row.checkedIn ? 'checkOut' : 'checkIn', playerId: row.id });
-      return;
-    }
-    run(() =>
-      row.checkedIn ? checkOutPlayer(arenaId, row.id) : checkInPlayer(arenaId, row.id),
+        ? checkOutPlayer(arenaId, row.playerId)
+        : checkInPlayer(arenaId, row.playerId),
     );
   };
 
@@ -198,6 +292,14 @@ export function ArenaPrepRosterModal({
 
   const hasRequests = pendingRequests.length > 0 || pendingLinkRequests.length > 0;
 
+  // A just-added walk-in lands on the rack. Reset the view so the manager
+  // always sees the add take effect, even if a search or the "Not in" chip
+  // would otherwise hide the new row.
+  const clearViewFilters = () => {
+    setQuery('');
+    if (filter === 'out') setFilter('all');
+  };
+
   const handleAddWalkIn = (e) => {
     e.preventDefault();
     if (!newFirst.trim()) return;
@@ -205,6 +307,7 @@ export function ArenaPrepRosterModal({
     const last = newLast;
     setNewFirst('');
     setNewLast('');
+    clearViewFilters();
     if (offlineRunLocal) {
       runOffline({ type: 'addPlayer', firstName: first, lastName: last });
       return;
@@ -215,36 +318,65 @@ export function ArenaPrepRosterModal({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
+      // Padding lifts the sheet off the keyboard; the panel's own max-height
+      // gives back the same pixels so it can't grow past the top of the screen.
+      // Both no-op at 0, which is every case except iOS with a keyboard up.
+      style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}
+      className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
     >
       <div
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="prep-roster-title"
-        className="bg-white rounded-2xl border border-slate-200 max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl animate-scale-up"
+        style={keyboardInset ? { maxHeight: `calc(100dvh - ${keyboardInset}px)` } : undefined}
+        className="bg-white rounded-t-2xl sm:rounded-2xl border border-slate-200 max-w-lg w-full max-h-[92dvh] sm:max-h-[85vh] flex flex-col shadow-2xl animate-scale-up"
       >
-        <div className="p-6 pb-4 flex items-start justify-between gap-4 border-b border-slate-100">
-          <div className="min-w-0">
-            <h3 id="prep-roster-title" className="text-base font-extrabold text-slate-900">
-              Prep roster
-            </h3>
-            <p className="text-xs text-slate-400 mt-1 leading-snug">
-              Toggle members and walk-ins in or out of the rack and add new walk-ins for the next session.
-              Changes apply immediately. To permanently delete a walk-in, go to Members → Walk-ins.
-            </p>
+        {/* Header sits outside the scroll container, so the chips are pinned by
+            construction. Kept deliberately short — every pixel here is a row
+            the list can't show on a phone. */}
+        <div className="p-6 pb-4 border-b border-slate-100">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h3 id="prep-roster-title" className="text-base font-extrabold text-slate-900">
+                Prep roster
+              </h3>
+              <p className="text-xs text-slate-400 mt-1 leading-snug">
+                Toggle players in or out of the rack. Changes apply immediately.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close roster"
+              className="shrink-0 grid place-items-center h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100 transition"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close roster"
-            className="shrink-0 grid place-items-center h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100 transition"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M18 6 6 18" />
-              <path d="m6 6 12 12" />
-            </svg>
-          </button>
+
+          {showControls && (
+            <div role="group" aria-label="Filter roster" className="mt-3 flex flex-wrap gap-1.5">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setFilter(f.id)}
+                  aria-pressed={filter === f.id}
+                  className={`rounded-lg px-3 py-1.5 text-[11px] font-extrabold uppercase tracking-wider transition ${
+                    filter === f.id
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {f.label} <span className="tabular-nums opacity-70">{counts[f.id]}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {error && (
@@ -273,76 +405,56 @@ export function ArenaPrepRosterModal({
             </section>
           )}
 
-          <section>
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400">
-                Members ({memberRows.length})
-              </h4>
-              <span className="text-[10px] text-slate-400">
-                {memberRows.filter((m) => m.checkedIn).length} checked in
-              </span>
-            </div>
-            {memberRows.length === 0 ? (
-              <p className="text-xs text-slate-400 italic">No members yet.</p>
-            ) : (
-              <ul className="space-y-1.5">
-                {memberRows.map((row) => (
-                  <li
-                    key={row.userId}
-                    className={`flex items-center justify-between gap-3 p-3 rounded-xl border transition ${
-                      row.checkedIn
-                        ? 'border-emerald-200 bg-emerald-50/60'
-                        : 'border-slate-200 bg-white hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-slate-800 truncate">{row.name}</p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">
-                        {row.role.toLowerCase()}
-                        {row.checkedIn && row.player ? ` · #${queue.indexOf(row.player.id) + 1} on rack` : ''}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleToggleMember(row)}
-                      disabled={isPending}
-                      className={`shrink-0 text-xs font-extrabold uppercase tracking-wider px-3 py-1.5 rounded-lg transition disabled:opacity-50 ${
-                        row.checkedIn
-                          ? 'bg-emerald-700 text-white hover:bg-emerald-800'
-                          : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                      }`}
-                    >
-                      {row.checkedIn ? '✓ In' : 'Out'}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          {counts.all === 0 ? (
+            <p className="text-xs text-slate-400 italic">No members or walk-ins yet.</p>
+          ) : (
+            <>
+              <RosterGroup
+                title="In the rack"
+                rows={inRack}
+                isPending={isPending}
+                onToggle={handleToggle}
+              />
+              <RosterGroup
+                title="Not in"
+                rows={notIn}
+                isPending={isPending}
+                onToggle={handleToggle}
+              />
+              {inRack.length === 0 && notIn.length === 0 && (
+                <p className="px-1 py-6 text-center text-xs text-slate-500">
+                  {query.trim()
+                    ? `No players match “${query}”.`
+                    : filter === 'in'
+                      ? 'Nobody is checked in yet.'
+                      : 'Everyone is checked in.'}
+                </p>
+              )}
+            </>
+          )}
+        </div>
 
-          <section>
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400">
-                Walk-ins ({walkInRows.length})
-              </h4>
-              <span className="text-[10px] text-slate-400">
-                {walkInRows.filter((w) => w.checkedIn).length} checked in
-              </span>
-            </div>
-            <form onSubmit={handleAddWalkIn} className="flex gap-2 mb-3">
+        {/* Thumb-zone bar: search by default, the walk-in name form while
+            adding. One row either way, so the list keeps the height. */}
+        <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4 border-t border-slate-100 bg-slate-50/40 rounded-b-none sm:rounded-b-2xl space-y-3">
+          {addOpen ? (
+            <form onSubmit={handleAddWalkIn} className="flex gap-2">
               <input
                 type="text"
                 placeholder="First name"
+                aria-label="Walk-in first name"
                 value={newFirst}
+                autoFocus
                 onChange={(e) => setNewFirst(e.target.value)}
-                className="flex-1 min-w-0 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-lg px-3 py-2 text-sm outline-none transition text-slate-800 placeholder-slate-400"
+                className="flex-1 min-w-0 bg-white border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-lg px-3 py-2 text-sm outline-none transition text-slate-800 placeholder-slate-400"
               />
               <input
                 type="text"
                 placeholder="Last (opt.)"
+                aria-label="Walk-in last name"
                 value={newLast}
                 onChange={(e) => setNewLast(e.target.value)}
-                className="flex-1 min-w-0 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-lg px-3 py-2 text-sm outline-none transition text-slate-800 placeholder-slate-400"
+                className="flex-1 min-w-0 bg-white border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-lg px-3 py-2 text-sm outline-none transition text-slate-800 placeholder-slate-400"
               />
               <button
                 type="submit"
@@ -351,58 +463,120 @@ export function ArenaPrepRosterModal({
               >
                 Add
               </button>
+              <button
+                type="button"
+                onClick={closeAddWalkIn}
+                aria-label="Done adding walk-ins"
+                className="shrink-0 grid place-items-center h-[38px] w-9 rounded-lg text-slate-500 hover:bg-slate-200/70 transition"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
+              </button>
             </form>
-            {walkInRows.length === 0 ? (
-              <p className="text-xs text-slate-400 italic">No walk-ins yet.</p>
-            ) : (
-              <ul className="space-y-1.5">
-                {walkInRows.map((row) => (
-                  <li
-                    key={row.id}
-                    className={`flex items-center justify-between gap-3 p-3 rounded-xl border transition ${
-                      row.checkedIn
-                        ? 'border-emerald-200 bg-emerald-50/60'
-                        : 'border-slate-200 bg-white hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-slate-800 truncate">
-                        {row.lastName ? `${row.firstName} ${row.lastName}` : row.firstName}
-                      </p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">
-                        walk-in
-                        {row.checkedIn ? ` · #${queue.indexOf(row.id) + 1} on rack` : ''}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleToggleWalkIn(row)}
-                      disabled={isPending}
-                      className={`shrink-0 text-xs font-extrabold uppercase tracking-wider px-3 py-1.5 rounded-lg transition disabled:opacity-50 ${
-                        row.checkedIn
-                          ? 'bg-emerald-700 text-white hover:bg-emerald-800'
-                          : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                      }`}
-                    >
-                      {row.checkedIn ? '✓ In' : 'Out'}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+          ) : (
+            <div className="flex gap-2 items-center">
+              {showControls && (
+                <PlayerSearchField
+                  value={query}
+                  onChange={setQuery}
+                  disabled={isPending}
+                  placeholder="Search players…"
+                  className="flex-1"
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => setAddOpen(true)}
+                className={`shrink-0 border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-extrabold px-4 py-2 rounded-lg text-sm transition ${
+                  showControls ? '' : 'flex-1'
+                }`}
+              >
+                + Walk-in
+              </button>
+            </div>
+          )}
+          {/* The delete hint rides along with the add bar, where it's actually
+              relevant — a permanent line costs a row of list height on a phone. */}
+          <div className={`flex items-center gap-3 ${addOpen ? 'justify-between' : 'justify-end'}`}>
+            {addOpen && (
+              <p className="text-[10px] text-slate-400 leading-snug">
+                Delete a walk-in for good in Members → Walk-ins.
+              </p>
             )}
-          </section>
-        </div>
-
-        <div className="p-4 border-t border-slate-100 bg-slate-50/40 rounded-b-2xl flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-sm bg-slate-900 hover:bg-slate-800 text-white font-bold px-5 py-2 rounded-lg transition"
-          >
-            Done
-          </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="shrink-0 text-sm bg-slate-900 hover:bg-slate-800 text-white font-bold px-5 py-2 rounded-lg transition"
+            >
+              Done
+            </button>
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+/** One rack-state group. Renders nothing when the current view empties it. */
+function RosterGroup({ title, rows, isPending, onToggle }) {
+  if (rows.length === 0) return null;
+  return (
+    <section>
+      <h4 className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400 mb-3">
+        {title} ({rows.length})
+      </h4>
+      <ul className="space-y-1.5">
+        {rows.map((row) => (
+          <RosterRow key={row.key} row={row} isPending={isPending} onToggle={onToggle} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * A single roster row, identical for members and walk-ins. The kind reads off
+ * the meta line under the name: members show their role, walk-ins get an
+ * amber chip so they stay scannable in a long mixed list.
+ */
+function RosterRow({ row, isPending, onToggle }) {
+  return (
+    <li
+      className={`flex items-center justify-between gap-3 p-3 rounded-xl border transition ${
+        row.checkedIn
+          ? 'border-emerald-200 bg-emerald-50/60'
+          : 'border-slate-200 bg-white hover:bg-slate-50'
+      }`}
+    >
+      <div className="min-w-0">
+        <p className="text-sm font-bold text-slate-800 truncate">{row.displayName}</p>
+        <p className="text-[10px] mt-1 flex items-center gap-1.5 flex-wrap">
+          {row.kind === 'walkIn' ? (
+            <span className="font-extrabold uppercase tracking-wider text-amber-700 bg-amber-50 ring-1 ring-amber-100 rounded px-1.5 py-0.5">
+              walk-in
+            </span>
+          ) : (
+            <span className="font-semibold text-slate-500">{row.label}</span>
+          )}
+          {row.checkedIn && (
+            <span className="text-slate-400">· #{row.rackNumber} on rack</span>
+          )}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={() => onToggle(row)}
+        disabled={isPending}
+        className={`shrink-0 text-xs font-extrabold uppercase tracking-wider px-3 py-1.5 rounded-lg transition disabled:opacity-50 ${
+          row.checkedIn
+            ? 'bg-emerald-700 text-white hover:bg-emerald-800'
+            : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+        }`}
+      >
+        {row.checkedIn ? '✓ In' : 'Out'}
+      </button>
+    </li>
   );
 }

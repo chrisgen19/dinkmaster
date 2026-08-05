@@ -41,6 +41,12 @@ export const metadata = {
 export const viewport = {
   // Drives the browser/standalone UI tint; matches the manifest theme_color.
   themeColor: "#059669",
+  // Shrink the LAYOUT viewport when the on-screen keyboard opens, instead of
+  // the default `resizes-visual` which leaves it at full height. Modals that
+  // anchor an input to their footer (prep roster, court edit, skip picker)
+  // otherwise sit partly behind the keyboard with no way to scroll to it, so
+  // you type blind. With this, `dvh`-sized panels shrink to the space left.
+  interactiveWidget: "resizes-content",
 };
 
 // Disable the service worker in development so we never fight stale caches while

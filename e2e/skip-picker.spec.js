@@ -44,6 +44,9 @@ async function addWalkIn(page, first) {
  */
 async function buildRack(page, walkInNames) {
   await page.getByRole('button', { name: 'Add', exact: true }).click();
+  // The footer bar shows search by default; "+ Walk-in" swaps it to the form,
+  // which then stays open across consecutive adds.
+  await page.getByRole('dialog', { name: 'Prep roster' }).getByRole('button', { name: '+ Walk-in' }).click();
   for (const name of walkInNames) await addWalkIn(page, name);
   await page.getByRole('button', { name: 'Close roster' }).click();
   await expect(page.getByText(`${walkInNames.length + 1} in rack`).first()).toBeVisible();
