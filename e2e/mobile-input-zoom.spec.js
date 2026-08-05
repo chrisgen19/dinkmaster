@@ -79,6 +79,11 @@ test('prep roster inputs do not trigger iOS zoom on a touch device', async ({
   const dialog = page.getByRole('dialog', { name: 'Prep roster' });
   await expect(dialog).toBeVisible();
 
+  // The roster is an immediate-save management workflow. A stray backdrop
+  // tap must not dismiss it; only its explicit close action or Escape may.
+  await page.getByTestId('prep-roster-backdrop').click({ position: { x: 5, y: 5 } });
+  await expect(dialog).toBeVisible();
+
   // The search field only renders once the roster passes ROSTER_SEARCH_MIN, so
   // stock it first — otherwise this test would silently assert on nothing.
   await dialog.getByRole('button', { name: '+ Walk-in' }).click();
@@ -100,6 +105,14 @@ test('prep roster inputs do not trigger iOS zoom on a touch device', async ({
   // page reports a fine pointer even at 390px and every check below is vacuous.
   const cdp = await context.newCDPSession(page);
   await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+
+  // Touch sheets put the dismiss action in the header so the footer can stay
+  // one row tall. Keep the text explicit and the target comfortable to tap.
+  await page.setViewportSize(ORIENTATIONS[0][1]);
+  const mobileDismiss = dialog.getByRole('button', { name: 'Done, close roster' });
+  await expect(mobileDismiss.getByText('Done', { exact: true })).toBeVisible();
+  const dismissBox = await mobileDismiss.boundingBox();
+  expect(dismissBox?.height, 'mobile Done target height').toBeGreaterThanOrEqual(44);
 
   await expectNoZoom(page, dialog, 2, 'walk-in name inputs');
 
