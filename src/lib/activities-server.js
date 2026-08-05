@@ -4,7 +4,7 @@
 // split as leaderboard.js / leaderboard-server.js.
 
 import { prisma } from '@/lib/prisma';
-import { DEFAULT_HORIZON_DAYS, upcomingWindows } from '@/lib/activities';
+import { DEFAULT_HORIZON_DAYS, computeActivityStandings, upcomingWindows } from '@/lib/activities';
 import { DEFAULT_TIMEZONE } from '@/lib/sessions';
 
 /** The arena columns every activity read needs. */
@@ -119,6 +119,12 @@ export async function listActivities(arenaId, { scope = 'upcoming', now, take = 
       // The full status list serves the counts; `userId` rides along so the
       // viewer's own row can be picked out without a second query per activity.
       attendees: { select: { status: true, userId: true, position: true } },
+      // Past cards name the night's winner, which needs the results. Loaded
+      // only for `past` — an upcoming night has none, and the arena board's
+      // `take: 3` upcoming read must stay cheap.
+      ...(scope === 'past'
+        ? { matches: { include: { players: true }, orderBy: { createdAt: 'asc' } } }
+        : {}),
     },
   });
 
@@ -141,6 +147,35 @@ export function activityScopeFilter(scope, now) {
     : { OR: [{ status: 'LIVE' }, { ...byWindow, endsAt: { gt: now } }] };
 }
 
+/**
+ * The night's top finisher, or null when nothing was played.
+ *
+ * Shapes raw Match rows the way `computeActivityStandings` expects and takes
+ * rank 1 — reusing the ranking rather than re-deriving "most wins" here, so a
+ * tie breaks the same way on the card as it does in the standings table.
+ */
+function topPlayer(matches, activityId) {
+  if (!matches || matches.length === 0) return null;
+  const shaped = matches.map((m) => ({
+    score1: m.score1,
+    score2: m.score2,
+    timestamp: m.createdAt.toISOString(),
+    activityId: m.activityId,
+    team1: m.players
+      .filter((p) => p.team === 1)
+      .map((p) => ({ id: p.playerId, firstName: p.playerFirstName, lastName: p.playerLastName })),
+    team2: m.players
+      .filter((p) => p.team === 2)
+      .map((p) => ({ id: p.playerId, firstName: p.playerFirstName, lastName: p.playerLastName })),
+  }));
+  const { standings } = computeActivityStandings({ matches: shaped, activityId, limit: 1 });
+  const top = standings[0];
+  // A night where nobody won a game (all ties) has a rank 1 with zero wins —
+  // no winner to crown.
+  if (!top || top.wins === 0) return null;
+  return { playerId: top.playerId, name: top.name, wins: top.wins, games: top.games };
+}
+
 /** Count attendees by status without a second query — the lists are small (tens, not thousands). */
 function shapeSummary(row, viewerUserId = null) {
   const counts = { going: 0, waitlist: 0, declined: 0, checkedIn: 0, noShow: 0 };
@@ -159,6 +194,10 @@ function shapeSummary(row, viewerUserId = null) {
     // The viewer's own RSVP, so the buttons render in the right state on first
     // paint rather than flashing "not answered" and correcting after hydration.
     viewerRsvp: viewer,
+    // Who won the night, when the caller loaded the matches. Ranked by the same
+    // pure function the detail page uses, so the card and the standings table
+    // can't disagree about who came first.
+    winner: row.matches ? topPlayer(row.matches, row.id) : null,
     id: row.id,
     title: row.title,
     startsAt: row.startsAt.toISOString(),

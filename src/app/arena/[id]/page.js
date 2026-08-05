@@ -29,11 +29,14 @@ export default async function ArenaPage({ params }) {
   await ensureUpcomingActivities(id);
 
   const now = new Date();
-  const [initialState, members, user, upcoming] = await Promise.all([
+  const [initialState, members, user, upcoming, recent] = await Promise.all([
     getState(id),
     getArenaMembers(id),
     getCurrentUser(),
-    listActivities(id, { scope: 'upcoming', now, take: 3 }),
+    listActivities(id, { scope: 'upcoming', now, take: 4 }),
+    // The Activities tab shows a short digest of recent nights; the full list
+    // lives on the dedicated route.
+    listActivities(id, { scope: 'past', now, take: 3 }),
   ]);
 
   // The session the banner offers to prep: soonest by start, skipping any whose
@@ -117,6 +120,9 @@ export default async function ArenaPage({ params }) {
       }}
       nextActivity={nextActivity}
       activityAttendees={activityAttendees}
+      upcomingActivities={upcoming}
+      recentActivities={recent}
+      activitiesNowIso={now.toISOString()}
       canManage={canManage}
       viewerRole={viewerRole}
       viewerUserId={user?.id ?? null}

@@ -4,7 +4,7 @@
  * language stays in sync across breakpoints.
  *
  * Inline SVGs keep the bundle slim and the stroke weight consistent with the
- * rest of the app chrome — no icon library dependency for these six glyphs.
+ * rest of the app chrome — no icon library dependency for these glyphs.
  */
 
 const TAB_ICONS = {
@@ -23,6 +23,13 @@ const TAB_ICONS = {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="18" height="18" rx="3" />
       <path d="M3 9h18M9 3v18" />
+    </svg>
+  ),
+  activities: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <path d="M16 2v4M8 2v4M3 10h18" />
+      <path d="m9 16 2 2 4-4" />
     </svg>
   ),
   history: (

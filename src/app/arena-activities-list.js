@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import Link from 'next/link';
 import { BackPill } from './back-pill';
 import { ArenaActivityRsvp } from './arena-activity-rsvp';
+import { ArenaActivityCreate } from './arena-activity-create';
 import { activityTimeRange, activityTitle, deriveActivityState } from '@/lib/activities';
 
 /** Badge styling per derived state. */
@@ -65,7 +66,7 @@ export function ArenaActivitiesList({
         {canManage && (
           <Link
             href={`/arena/${arenaId}/settings/schedule`}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs md:text-sm font-extrabold px-3 py-2 md:px-4 md:py-2.5 shadow-sm transition"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-white ring-1 ring-slate-200 hover:bg-slate-50 text-slate-700 text-xs md:text-sm font-extrabold px-3 py-2 md:px-4 md:py-2.5 shadow-sm transition"
           >
             Edit schedule
           </Link>
@@ -89,6 +90,8 @@ export function ArenaActivitiesList({
           Past
         </ScopePill>
       </div>
+
+      {canManage && scope === 'upcoming' && <ArenaActivityCreate arenaId={arenaId} />}
 
       {activities.length === 0 ? (
         <EmptyState arenaId={arenaId} scope={scope} canManage={canManage} hasSchedule={hasSchedule} />
@@ -168,6 +171,16 @@ function ActivityCard({ arenaId, activity, now, canRsvp }) {
             <span className="text-slate-400">No RSVPs yet</span>
           )}
         </div>
+
+        {activity.winner && (
+          <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-800 ring-1 ring-amber-200">
+            <span aria-hidden="true">🏆</span>
+            <span className="truncate">{activity.winner.name}</span>
+            <span className="font-semibold text-amber-600 tabular-nums">
+              {activity.winner.wins}W
+            </span>
+          </p>
+        )}
 
         {activity.notes && (
           <p className="mt-2 line-clamp-2 text-xs text-slate-500">{activity.notes}</p>

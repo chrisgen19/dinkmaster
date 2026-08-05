@@ -39,7 +39,7 @@ vi.mock('@/lib/prisma', () => ({
     },
     arenaInvite: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
     user: { findUnique: vi.fn() },
-    activity: { findFirst: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), createMany: vi.fn(), upsert: vi.fn() },
+    activity: { findFirst: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn(), createMany: vi.fn(), upsert: vi.fn() },
     activityAttendee: { findFirst: vi.fn(), findMany: vi.fn(), count: vi.fn(), aggregate: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   },
 }));
@@ -92,6 +92,7 @@ const PLAY = [
   ['prepareNextSession', () => actions.prepareNextSession(ARENA)],
   ['startActivity', () => actions.startActivity(ARENA)],
   ['updateArenaActivities', () => actions.updateArenaActivities(ARENA, { rsvpEnabled: true, defaultActivityCapacity: null, activityHorizonDays: 28 })],
+  ['createActivity', () => actions.createActivity(ARENA, { startsAt: '2026-09-01T10:00:00Z', endsAt: '2026-09-01T14:00:00Z' })],
   ['updateActivity', () => actions.updateActivity(ARENA, 'act1', { capacity: 16 })],
   ['setAttendeeStatus', () => actions.setAttendeeStatus(ARENA, 'act1', 'p1', 'GOING')],
   ['checkInFromRsvp', () => actions.checkInFromRsvp(ARENA, 'act1')],
@@ -905,6 +906,8 @@ describe('arena server actions — authorization', () => {
     describe('checkInPlayer()', () => {
       // gamesPlayed 4 with a single active peer averaging 10 → gamesOffset
       // re-anchors to 10 - 4 = 6 so the returner sorts as a peer, not catch-up.
+      // Racking someone also records them present for the open activity, so the
+      // stub needs both activity delegates.
       const baseTx = () => ({
         $executeRaw: vi.fn(),
         player: {
@@ -914,6 +917,13 @@ describe('arena server actions — authorization', () => {
           update: vi.fn(),
         },
         courtSlot: { findFirst: vi.fn().mockResolvedValue(null) },
+        activity: activityStub(),
+        activityAttendee: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          create: vi.fn(),
+          update: vi.fn(),
+          updateMany: vi.fn(),
+        },
       });
 
       it('appends to the queue tail and re-anchors gamesOffset to the group average', async () => {
@@ -3028,6 +3038,11 @@ describe('activity attendance — RSVP, capacity, and the waitlist', () => {
         activity: { findFirst: vi.fn().mockResolvedValue({ id: ACT }) },
         activityAttendee: {
           findMany: vi.fn().mockResolvedValue(going),
+          // applyCheckInTx records attendance per player before the bulk
+          // updateMany below sweeps them all to CHECKED_IN.
+          findFirst: vi.fn().mockResolvedValue(null),
+          create: vi.fn(),
+          update: vi.fn(),
           updateMany: vi.fn(),
         },
         // applyCheckInTx internals
@@ -3064,6 +3079,146 @@ describe('activity attendance — RSVP, capacity, and the waitlist', () => {
 
       expect(result.checkedIn).toBe(0);
       expect(tx.activityAttendee.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('attendance recorded on check-in', () => {
+    // Racking someone IS the attendance record — it's the moment the app learns
+    // they turned up. That covers the walk-in who never RSVP'd as well as the
+    // member who did, which is why it lives in applyCheckInTx rather than being
+    // seeded when the session starts.
+    const checkInTx = ({ existing = null, live = { id: 'activity-1' } } = {}) => ({
+      $executeRaw: vi.fn(),
+      player: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: 'p1', userId: 'u1', firstName: 'Ana', lastName: 'Reyes', queueOrder: null, gamesPlayed: 4,
+        }),
+        findMany: vi.fn().mockResolvedValue([{ gamesPlayed: 10, gamesOffset: 0 }]),
+        aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 3 } }),
+        update: vi.fn(),
+      },
+      courtSlot: { findFirst: vi.fn().mockResolvedValue(null) },
+      activity: { findFirst: vi.fn().mockResolvedValue(live) },
+      activityAttendee: {
+        findFirst: vi.fn().mockResolvedValue(existing),
+        create: vi.fn(),
+        update: vi.fn(),
+      },
+    });
+
+    it('marks a racked player present for the open activity', async () => {
+      const tx = checkInTx();
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.checkInPlayer(ARENA, 'p1');
+
+      expect(tx.activityAttendee.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            activityId: 'activity-1',
+            playerId: 'p1',
+            userId: 'u1',
+            displayName: 'Ana Reyes',
+            status: 'CHECKED_IN',
+          }),
+        }),
+      );
+    });
+
+    it('upgrades an existing RSVP rather than duplicating it', async () => {
+      const tx = checkInTx({ existing: { id: 'att1' } });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.checkInPlayer(ARENA, 'p1');
+
+      expect(tx.activityAttendee.create).not.toHaveBeenCalled();
+      expect(tx.activityAttendee.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'att1' },
+          data: expect.objectContaining({ status: 'CHECKED_IN', position: null }),
+        }),
+      );
+    });
+
+    it('still racks the player when no activity is open', async () => {
+      // Attendance is a record, not a gate: it must never fail a check-in.
+      const tx = checkInTx({ live: null });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.checkInPlayer(ARENA, 'p1');
+
+      expect(tx.player.update).toHaveBeenCalled();
+      expect(tx.activityAttendee.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createActivity()', () => {
+    beforeEach(() => {
+      prisma.arena.findUnique.mockResolvedValue({ timezone: 'Asia/Manila', defaultActivityCapacity: null });
+      prisma.activity.create.mockResolvedValue({ id: 'new-act' });
+    });
+
+    it('creates a MANUAL one-off outside the recurring schedule', async () => {
+      const result = await actions.createActivity(ARENA, {
+        title: 'Holiday Smash',
+        startsAt: '2026-09-01T10:00:00Z',
+        endsAt: '2026-09-01T14:00:00Z',
+        capacity: 12,
+        notes: 'Bring a paddle',
+      });
+
+      expect(result.activityId).toBe('new-act');
+      expect(prisma.activity.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            arenaId: ARENA,
+            title: 'Holiday Smash',
+            // MANUAL so the schedule materializer never treats it as its own.
+            source: 'MANUAL',
+            status: 'SCHEDULED',
+            capacity: 12,
+            notes: 'Bring a paddle',
+            timezone: 'Asia/Manila',
+          }),
+        }),
+      );
+    });
+
+    it('falls back to the arena default capacity when none is given', async () => {
+      prisma.arena.findUnique.mockResolvedValue({ timezone: 'UTC', defaultActivityCapacity: 16 });
+      await actions.createActivity(ARENA, {
+        startsAt: '2026-09-01T10:00:00Z',
+        endsAt: '2026-09-01T14:00:00Z',
+      });
+      expect(prisma.activity.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ capacity: 16 }) }),
+      );
+    });
+
+    it('translates the unique-start collision instead of leaking a P2002', async () => {
+      // `@@unique([arenaId, startsAt])` is what makes materialization
+      // idempotent; here it stops two sessions stacking on one instant.
+      const err = new Error('unique');
+      err.code = 'P2002';
+      prisma.activity.create.mockRejectedValue(err);
+
+      const result = await actions.createActivity(ARENA, {
+        startsAt: '2026-09-01T10:00:00Z',
+        endsAt: '2026-09-01T14:00:00Z',
+      });
+      expect(result.error).toMatch(/already starts at that time/i);
+    });
+
+    it.each([
+      ['an unparseable start', { startsAt: 'nonsense', endsAt: '2026-09-01T14:00:00Z' }],
+      ['an end before the start', { startsAt: '2026-09-01T14:00:00Z', endsAt: '2026-09-01T10:00:00Z' }],
+      ['an end equal to the start', { startsAt: '2026-09-01T10:00:00Z', endsAt: '2026-09-01T10:00:00Z' }],
+      ['an over-long title', { startsAt: '2026-09-01T10:00:00Z', endsAt: '2026-09-01T14:00:00Z', title: 'x'.repeat(81) }],
+      ['a capacity past the rail', { startsAt: '2026-09-01T10:00:00Z', endsAt: '2026-09-01T14:00:00Z', capacity: 9999 }],
+    ])('rejects %s', async (_label, input) => {
+      const result = await actions.createActivity(ARENA, input);
+      expect(result.error).toBeTruthy();
+      expect(prisma.activity.create).not.toHaveBeenCalled();
     });
   });
 

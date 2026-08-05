@@ -792,7 +792,7 @@ export async function applyAutoMixTx(tx, arenaId, { outcome } = {}) {
 export async function applyCheckInTx(tx, arenaId, { playerId }) {
   const player = await tx.player.findFirst({
     where: { id: playerId, arenaId, leftAt: null },
-    select: { id: true, queueOrder: true, gamesPlayed: true },
+    select: { id: true, userId: true, firstName: true, lastName: true, queueOrder: true, gamesPlayed: true },
   });
   if (!player) return;
   if (player.queueOrder !== null) return;
@@ -807,6 +807,53 @@ export async function applyCheckInTx(tx, arenaId, { playerId }) {
   await tx.player.update({
     where: { id: player.id },
     data: { queueOrder: order, waitRounds: 0, skipBoosted: false, gamesOffset: avg - player.gamesPlayed },
+  });
+  await recordAttendanceTx(tx, arenaId, player);
+}
+
+/**
+ * Mark a player present for the arena's open activity.
+ *
+ * Racking someone IS the attendance record — it's the moment the app learns
+ * they turned up. Doing it here rather than at session start means the roll is
+ * built from who actually played, and it covers the walk-in who never RSVP'd
+ * just as well as the member who did.
+ *
+ * Upserts over any existing RSVP, so a "going" becomes "checked in" and even a
+ * "can't make it" is corrected by the person walking through the door. Never
+ * throws: attendance is a record, not a gate, so it must not be able to fail a
+ * check-in.
+ */
+async function recordAttendanceTx(tx, arenaId, player) {
+  const activity = await tx.activity.findFirst({
+    where: { arenaId, status: 'LIVE' },
+    orderBy: { startsAt: 'desc' },
+    select: { id: true },
+  });
+  if (!activity) return;
+
+  const displayName = [player.firstName, player.lastName].filter(Boolean).join(' ');
+  const existing = await tx.activityAttendee.findFirst({
+    where: { activityId: activity.id, playerId: player.id },
+    select: { id: true },
+  });
+
+  if (existing) {
+    await tx.activityAttendee.update({
+      where: { id: existing.id },
+      data: { status: 'CHECKED_IN', position: null, checkedInAt: new Date(), displayName },
+    });
+    return;
+  }
+  await tx.activityAttendee.create({
+    data: {
+      activityId: activity.id,
+      playerId: player.id,
+      userId: player.userId ?? null,
+      displayName,
+      status: 'CHECKED_IN',
+      checkedInAt: new Date(),
+    },
   });
 }
 

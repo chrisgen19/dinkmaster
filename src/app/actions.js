@@ -1415,6 +1415,74 @@ export async function checkInFromRsvp(arenaId, activityId) {
 }
 
 /**
+ * Create a one-off activity. Manager-gated.
+ *
+ * The schedule materializer only ever produces `SCHEDULE` rows on the club's
+ * recurring play days; this is how a manager adds the things that don't fit
+ * that pattern — a tournament, a holiday session, a make-up night.
+ * `source: MANUAL` keeps it clearly distinct so the materializer never treats
+ * it as one of its own.
+ *
+ * @param {string} arenaId
+ * @param {{title?:string, startsAt:string, endsAt:string, capacity?:number|null, notes?:string}} input
+ */
+export async function createActivity(arenaId, { title, startsAt, endsAt, capacity, notes } = {}) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  const start = new Date(startsAt);
+  const end = new Date(endsAt);
+  if (Number.isNaN(start.getTime())) return { error: 'Enter a valid start date and time.' };
+  if (Number.isNaN(end.getTime())) return { error: 'Enter a valid end date and time.' };
+  if (end <= start) return { error: 'The end time must be after the start time.' };
+
+  const cleanTitle = (title ?? '').trim();
+  if (cleanTitle.length > 80) return { error: 'Title must be 80 characters or fewer.' };
+  const cleanNotes = (notes ?? '').trim();
+  if (cleanNotes.length > 500) return { error: 'Notes must be 500 characters or fewer.' };
+
+  let cap = null;
+  if (capacity !== null && capacity !== undefined && capacity !== '') {
+    cap = Number(capacity);
+    if (!Number.isInteger(cap) || cap < 1 || cap > MAX_ACTIVITY_CAPACITY) {
+      return { error: `Capacity must be a whole number between 1 and ${MAX_ACTIVITY_CAPACITY}.` };
+    }
+  }
+
+  const arena = await prisma.arena.findUnique({
+    where: { id: arenaId },
+    select: { timezone: true, defaultActivityCapacity: true },
+  });
+  if (!arena) return { error: 'This arena no longer exists.' };
+
+  // `@@unique([arenaId, startsAt])` is what makes materialization idempotent;
+  // here it also means a manager can't stack two sessions on the same instant.
+  // Translate the constraint rather than leaking a P2002.
+  try {
+    const created = await prisma.activity.create({
+      data: {
+        arenaId,
+        title: cleanTitle || null,
+        startsAt: start,
+        endsAt: end,
+        timezone: arena.timezone,
+        status: 'SCHEDULED',
+        source: 'MANUAL',
+        capacity: cap ?? arena.defaultActivityCapacity ?? null,
+        notes: cleanNotes || null,
+      },
+      select: { id: true },
+    });
+    return { activityId: created.id };
+  } catch (err) {
+    if (err?.code === 'P2002') {
+      return { error: 'A session already starts at that time.' };
+    }
+    throw err;
+  }
+}
+
+/**
  * Edit one activity's details. Manager-gated.
  *
  * Only touches the fields a manager owns — the schedule-derived window is left

@@ -50,6 +50,7 @@ import { CourtEditModal } from './court-edit-modal';
 import { SkipPickerModal } from './skip-picker-modal';
 import { ArenaThisWeek } from './arena-this-week';
 import { ArenaActivityBanner } from './arena-activity-banner';
+import { ArenaActivitiesPanel } from './arena-activities-panel';
 import { ArenaPrepRosterModal } from './arena-prep-roster-modal';
 import { PaddleRackStack } from './paddle-rack-stack';
 
@@ -156,6 +157,14 @@ export default function Arena({
   // attendance changes far less often than the board, so paying for it on every
   // SSE frame would be waste. The prep roster refreshes after a bulk check-in.
   activityAttendees = [],
+  // Digests for the Activities tab. Read-only here — RSVP, capacity, and
+  // one-off creation live on /arena/[id]/activities so the board doesn't grow a
+  // second place to manage the same thing.
+  upcomingActivities = [],
+  recentActivities = [],
+  // One server-rendered instant for the tab's badges, so they can't be derived
+  // from a different clock read after hydration.
+  activitiesNowIso = null,
   canManage,
   viewerRole,
   viewerUserId,
@@ -1148,6 +1157,11 @@ export default function Arena({
           // out of `result.state`, so the banner and the activity-scoped
           // overlays re-render against the row the server actually opened.
           setRosterModalOpen(true);
+          // The Activities tab and the banner's `nextActivity` are
+          // server-rendered props, not board state — without this they'd keep
+          // showing the calendar as it stood before the boundary until the next
+          // navigation. Same reason `arena-requests-list` refreshes.
+          router.refresh();
         }
       } catch {
         setErrorMsg('Something went wrong preparing the session. Please try again.');
@@ -1184,6 +1198,7 @@ export default function Arena({
   const navTabs = [
     { id: 'courts', label: 'Active Courts' },
     { id: 'thisweek', label: 'This Week' },
+    { id: 'activities', label: 'Activities' },
     // Partnership Matrix is an opt-in, arena-wide view (Settings → Match
     // Defaults); hidden by default. When absent, the guard below sends a viewer
     // sitting on `stats` back to the courts tab.
@@ -1603,6 +1618,15 @@ export default function Arena({
                 onEditSchedule={() => setScheduleModalOpen(true)}
               />
             </div>
+          )}
+
+          {activeTab === 'activities' && (
+            <ArenaActivitiesPanel
+              arenaId={arenaId}
+              upcoming={upcomingActivities}
+              past={recentActivities}
+              nowIso={activitiesNowIso}
+            />
           )}
 
           {activeTab === 'stats' && matchDefaults.showPartnershipMatrix && (
