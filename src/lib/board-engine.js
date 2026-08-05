@@ -417,6 +417,13 @@ function applyEndMatch(state, settings, event) {
     score1: s1,
     score2: s2,
     timestamp: event.occurredAt,
+    // Stamp the open activity, exactly as `applyEndMatchTx` does server-side.
+    // Without it every match played offline would be invisible to
+    // `computeActivityStats`, which matches on this id — a player could finish
+    // three games during an outage and still see "0 games" on the rack tile.
+    // The server re-resolves it from `occurredAt` at sync time, so this value
+    // only has to be right for the local board.
+    activityId: state.currentActivity?.id ?? null,
   };
 
   const patches = {};

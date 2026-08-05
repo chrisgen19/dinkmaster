@@ -564,3 +564,54 @@ describe('replay determinism and purity', () => {
     expect(state).toEqual(frozen);
   });
 });
+
+describe('endMatch — activity attribution offline', () => {
+  const filledWithActivity = (currentActivity) => {
+    const base = { ...makeState(), currentActivity };
+    return resolveCommand(base, SETTINGS, { type: 'fillCourt', courtId: 'c1' }, opts()).state;
+  };
+
+  it('stamps the open activity onto a match finished offline', () => {
+    // Without this the match is invisible to `computeActivityStats`, which
+    // matches on the id — a player could finish three games during an outage
+    // and still read "0 games" on the rack tile.
+    const state = filledWithActivity({ id: 'activity-1' });
+    const result = resolveCommand(
+      state,
+      SETTINGS,
+      { type: 'endMatch', courtId: 'c1', score1: '11', score2: '7', autoMix: false },
+      opts(7),
+    );
+
+    expect(result.state.matchHistory[0].activityId).toBe('activity-1');
+  });
+
+  it('carries the open activity through the whole event chain', () => {
+    // The engine spreads `...state`, so the field has to survive fill → end
+    // rather than being dropped by an intermediate applier.
+    const state = filledWithActivity({ id: 'activity-1' });
+    expect(state.currentActivity.id).toBe('activity-1');
+
+    const result = resolveCommand(
+      state,
+      SETTINGS,
+      { type: 'endMatch', courtId: 'c1', score1: '11', score2: '7', autoMix: false },
+      opts(7),
+    );
+    expect(result.state.currentActivity.id).toBe('activity-1');
+  });
+
+  it('records null rather than throwing when no activity is open', () => {
+    // An arena that has never had a board write has no LIVE row yet; the server
+    // opens one on sync, so the local board just carries null.
+    const state = filledWithActivity(null);
+    const result = resolveCommand(
+      state,
+      SETTINGS,
+      { type: 'endMatch', courtId: 'c1', score1: '11', score2: '7', autoMix: false },
+      opts(7),
+    );
+
+    expect(result.state.matchHistory[0].activityId).toBeNull();
+  });
+});

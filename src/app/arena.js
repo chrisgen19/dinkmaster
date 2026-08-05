@@ -219,6 +219,10 @@ export default function Arena({
       matchHistory: initialState.matchHistory,
       history: initialState.history,
       lastSessionResetAt: initialState.lastSessionResetAt,
+      // Carried into the offline engine so a match finished during an outage
+      // gets stamped with the open activity, and so a cold offline boot knows
+      // which activity to scope its tallies to.
+      currentActivity: initialState.currentActivity ?? null,
     };
   }
   // Stamp of the last applied server snapshot: recorded as the offline
@@ -246,8 +250,8 @@ export default function Arena({
   // sets board state (including the render-time prop resync, which may not
   // touch refs itself under react-hooks/refs).
   useEffect(() => {
-    boardStateRef.current = { players, queue, courts, matchHistory, history, lastSessionResetAt };
-  }, [players, queue, courts, matchHistory, history, lastSessionResetAt]);
+    boardStateRef.current = { players, queue, courts, matchHistory, history, lastSessionResetAt, currentActivity };
+  }, [players, queue, courts, matchHistory, history, lastSessionResetAt, currentActivity]);
 
   // Write a board produced by the LOCAL engine (offline mode) into state.
   // Bypasses the freshness guard on purpose: local states carry no fetchedAt
@@ -262,6 +266,12 @@ export default function Arena({
       matchHistory: state.matchHistory,
       history: state.history,
       lastSessionResetAt: state.lastSessionResetAt ?? null,
+      // The engine spreads `...state`, so it round-trips its own value. The
+      // fallback reads the ref (not the `currentActivity` state) because this
+      // callback is memoized with an empty dep array — closing over the state
+      // would capture a stale value. It only matters for a snapshot saved
+      // before this field existed.
+      currentActivity: state.currentActivity ?? boardStateRef.current?.currentActivity ?? null,
     };
     setPlayers(state.players);
     setQueue(state.queue);
