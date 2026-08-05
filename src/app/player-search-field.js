@@ -36,6 +36,10 @@ export function PlayerSearchField({
         aria-hidden="true"
         className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
       />
+      {/* text-base (16px) unless the pointer is fine: iOS Safari zooms the page
+          in when you focus an input under 16px and never zooms back out. Keyed
+          off pointer, not a width breakpoint — a phone in landscape is wider
+          than `sm` but still needs 16px. */}
       <input
         type="text"
         value={value}
@@ -49,7 +53,7 @@ export function PlayerSearchField({
         disabled={disabled}
         placeholder={placeholder}
         aria-label="Search players by name"
-        className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-9 text-sm font-medium text-slate-800 placeholder:text-slate-400 transition focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-50"
+        className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-9 text-base pointer-fine:text-sm font-medium text-slate-800 placeholder:text-slate-400 transition focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-50"
       />
       {value && (
         <button
