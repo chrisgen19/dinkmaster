@@ -437,6 +437,8 @@ export function ArenaPrepRosterModal({
         {/* Thumb-zone bar: search by default, the walk-in name form while
             adding. One row either way, so the list keeps the height. */}
         <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4 border-t border-slate-100 bg-slate-50/40 rounded-b-none sm:rounded-b-2xl space-y-3">
+          {/* Inputs are text-base (16px) below sm: iOS Safari zooms the page in
+              when you focus anything smaller, and never zooms back out. */}
           {addOpen ? (
             <form onSubmit={handleAddWalkIn} className="flex gap-2">
               <input
@@ -446,7 +448,7 @@ export function ArenaPrepRosterModal({
                 value={newFirst}
                 autoFocus
                 onChange={(e) => setNewFirst(e.target.value)}
-                className="flex-1 min-w-0 bg-white border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-lg px-3 py-2 text-sm outline-none transition text-slate-800 placeholder-slate-400"
+                className="flex-1 min-w-0 bg-white border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-lg px-3 py-2 text-base sm:text-sm outline-none transition text-slate-800 placeholder-slate-400"
               />
               <input
                 type="text"
@@ -454,7 +456,7 @@ export function ArenaPrepRosterModal({
                 aria-label="Walk-in last name"
                 value={newLast}
                 onChange={(e) => setNewLast(e.target.value)}
-                className="flex-1 min-w-0 bg-white border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-lg px-3 py-2 text-sm outline-none transition text-slate-800 placeholder-slate-400"
+                className="flex-1 min-w-0 bg-white border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 rounded-lg px-3 py-2 text-base sm:text-sm outline-none transition text-slate-800 placeholder-slate-400"
               />
               <button
                 type="submit"
