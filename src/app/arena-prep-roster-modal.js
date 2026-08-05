@@ -11,7 +11,7 @@ import {
   approveLinkRequest,
   rejectLinkRequest,
 } from './actions';
-import { matchesNameQuery } from '@/lib/player-display';
+import { matchesNameQuery, byDisplayName } from '@/lib/player-display';
 import { PlayerSearchField } from './player-search-field';
 import { ArenaRequestsList } from './arena-requests-list';
 
@@ -28,15 +28,39 @@ const FILTERS = [
   { id: 'out', label: 'Not in' },
 ];
 
-/** First name primary, last name secondary, both case-insensitive. */
-function byPlayerName(a, b) {
-  const af = (a.firstName ?? a.name ?? '').trim();
-  const bf = (b.firstName ?? b.name ?? '').trim();
-  const first = af.localeCompare(bf, undefined, { sensitivity: 'base' });
-  if (first !== 0) return first;
-  const al = (a.lastName ?? '').trim();
-  const bl = (b.lastName ?? '').trim();
-  return al.localeCompare(bl, undefined, { sensitivity: 'base' });
+// Below this the visual viewport shrink is browser chrome (a collapsing URL
+// bar), not a keyboard, and shifting the sheet for it would just look like jitter.
+const KEYBOARD_INSET_MIN = 60;
+
+/**
+ * Pixels of the layout viewport hidden behind the on-screen keyboard.
+ *
+ * `interactive-widget=resizes-content` (layout.js) already handles this where
+ * it is honoured: Chrome/Android shrinks the LAYOUT viewport, so `innerHeight`
+ * drops with it and this returns 0 — the hook costs nothing and needs no
+ * browser sniffing to stand down. Safari/iOS ignores the token and shrinks only
+ * the VISUAL viewport, which would strand the footer bar (search, walk-in form)
+ * behind the keyboard with no scroll path to it, since the footer deliberately
+ * sits outside the modal's scroll container.
+ */
+function useKeyboardInset() {
+  const [inset, setInset] = useState(0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return undefined;
+    const update = () => {
+      const hidden = window.innerHeight - vv.height - vv.offsetTop;
+      setInset(hidden > KEYBOARD_INSET_MIN ? Math.round(hidden) : 0);
+    };
+    update();
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
+  }, []);
+  return inset;
 }
 
 /**
@@ -50,9 +74,9 @@ function byPlayerName(a, b) {
  * Both inputs live in the footer bar, in the thumb zone: search is the
  * high-frequency action during a session, and adding a walk-in swaps that
  * same bar into the name form rather than claiming permanent height. On
- * phones the panel is a bottom sheet, which — together with the app-wide
- * `interactiveWidget: 'resizes-content'` in layout.js — keeps that bar above
- * the on-screen keyboard instead of behind it.
+ * phones the panel is a bottom sheet kept clear of the on-screen keyboard by
+ * the app-wide `interactiveWidget: 'resizes-content'` in layout.js, with
+ * `useKeyboardInset` covering the browsers that ignore that token.
  *
  * Closing the modal does NOT undo any toggles — each toggle hits a server
  * action immediately so the rack reflects state as soon as it changes.
@@ -96,6 +120,7 @@ export function ArenaPrepRosterModal({
   // The footer bar is either the search row or the add-walk-in form, never
   // both — one row of thumb-zone height, whichever the manager needs.
   const [addOpen, setAddOpen] = useState(false);
+  const keyboardInset = useKeyboardInset();
 
   // The form stays open across adds — a session usually starts with a queue of
   // people at the door — so closing it is explicit, and drops any half-typed name.
@@ -140,7 +165,6 @@ export function ArenaPrepRosterModal({
         key: `member:${m.userId}`,
         playerId: player?.id ?? null,
         displayName: m.name,
-        name: m.name,
         kind: 'member',
         label: m.role.toLowerCase(),
         checkedIn: rackNumber > 0,
@@ -157,8 +181,6 @@ export function ArenaPrepRosterModal({
           key: `walkIn:${p.id}`,
           playerId: p.id,
           displayName: p.lastName ? `${p.firstName} ${p.lastName}` : p.firstName,
-          firstName: p.firstName,
-          lastName: p.lastName,
           kind: 'walkIn',
           label: 'walk-in',
           checkedIn: rackNumber > 0,
@@ -184,7 +206,7 @@ export function ArenaPrepRosterModal({
       counts: { all: rosterRows.length, in: inAll.length, out: outAll.length },
       inRack:
         filter === 'out' ? [] : inAll.filter(matches).sort((a, b) => a.rackNumber - b.rackNumber),
-      notIn: filter === 'in' ? [] : outAll.filter(matches).sort(byPlayerName),
+      notIn: filter === 'in' ? [] : outAll.filter(matches).sort(byDisplayName),
     };
   }, [rosterRows, query, filter, showControls]);
 
@@ -296,6 +318,10 @@ export function ArenaPrepRosterModal({
   return (
     <div
       onClick={onClose}
+      // Padding lifts the sheet off the keyboard; the panel's own max-height
+      // gives back the same pixels so it can't grow past the top of the screen.
+      // Both no-op at 0, which is every case except iOS with a keyboard up.
+      style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}
       className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
     >
       <div
@@ -303,6 +329,7 @@ export function ArenaPrepRosterModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="prep-roster-title"
+        style={keyboardInset ? { maxHeight: `calc(100dvh - ${keyboardInset}px)` } : undefined}
         className="bg-white rounded-t-2xl sm:rounded-2xl border border-slate-200 max-w-lg w-full max-h-[92dvh] sm:max-h-[85vh] flex flex-col shadow-2xl animate-scale-up"
       >
         {/* Header sits outside the scroll container, so the chips are pinned by

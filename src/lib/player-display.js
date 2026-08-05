@@ -67,6 +67,27 @@ export function matchesNameQuery(name, query) {
 }
 
 /**
+ * Alphabetical comparator on the name a row actually displays, case-insensitive.
+ *
+ * For lists that MIX row shapes — the prep roster shows arena members, which
+ * carry one full-name string, alongside walk-ins, which carry separate
+ * first/last fields — every row must be compared on the same key. A
+ * first-name-then-last-name comparator reads the member's whole name on one
+ * side and only the walk-in's first name on the other, which sorts walk-in
+ * "Alex Brown" above member "Alex Adams". Normalizing to `displayName` first
+ * and comparing that is the fix.
+ *
+ * @param {{displayName?: string}} a
+ * @param {{displayName?: string}} b
+ * @returns {number} standard Array#sort comparator result
+ */
+export function byDisplayName(a, b) {
+  const an = (a?.displayName ?? '').trim();
+  const bn = (b?.displayName ?? '').trim();
+  return an.localeCompare(bn, undefined, { sensitivity: 'base' });
+}
+
+/**
  * Case-insensitive name filter for the player pick lists (the skip-pick
  * replacement modal and the court-edit substitute picker), keyed off the
  * `firstName`/`lastName` shape those lists use. Returns the SAME array when

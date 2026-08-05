@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { formatShortName, profileHref, filterPlayersByName, matchesNameQuery } from './player-display';
+import {
+  formatShortName,
+  profileHref,
+  filterPlayersByName,
+  matchesNameQuery,
+  byDisplayName,
+} from './player-display';
 
 describe('formatShortName', () => {
   it('returns Unknown for null / undefined', () => {
@@ -140,5 +146,36 @@ describe('matchesNameQuery', () => {
     expect(matchesNameQuery(null, 'a')).toBe(false);
     expect(matchesNameQuery('', 'a')).toBe(false);
     expect(matchesNameQuery(null, '')).toBe(true);
+  });
+});
+
+describe('byDisplayName', () => {
+  const sorted = (rows) => [...rows].sort(byDisplayName).map((r) => r.displayName);
+
+  it('sorts alphabetically, case-insensitively', () => {
+    const rows = [{ displayName: 'carl' }, { displayName: 'Ana' }, { displayName: 'ben' }];
+    expect(sorted(rows)).toEqual(['Ana', 'ben', 'carl']);
+  });
+
+  // Regression: the prep roster mixes members (one full-name string) with
+  // walk-ins (first/last fields). Keyed off first-name-then-last-name, the
+  // member fell back to its WHOLE name while the walk-in contributed only its
+  // first, putting "Alex Brown" above "Alex Adams".
+  it('orders a member and a walk-in sharing a first name by last name', () => {
+    const member = { displayName: 'Alex Adams', kind: 'member' };
+    const walkIn = { displayName: 'Alex Brown', kind: 'walkIn' };
+    expect(sorted([walkIn, member])).toEqual(['Alex Adams', 'Alex Brown']);
+    expect(sorted([member, walkIn])).toEqual(['Alex Adams', 'Alex Brown']);
+  });
+
+  it('puts a bare first name before the same name with a surname', () => {
+    const rows = [{ displayName: 'Cher Lloyd' }, { displayName: 'Cher' }];
+    expect(sorted(rows)).toEqual(['Cher', 'Cher Lloyd']);
+  });
+
+  it('handles missing / blank display names without throwing', () => {
+    const rows = [{ displayName: 'Ana' }, {}, { displayName: '  ' }, null];
+    expect(() => [...rows].sort(byDisplayName)).not.toThrow();
+    expect(sorted([{ displayName: 'Ana' }, {}])).toEqual([undefined, 'Ana']);
   });
 });
