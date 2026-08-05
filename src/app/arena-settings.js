@@ -74,8 +74,11 @@ const IconChevronRight = ({ className }) => (
   <svg className={className} {...ICON_PROPS}><path d="m9 18 6-6-6-6" /></svg>
 );
 
+// text-base (16px) unless the pointer is fine: iOS Safari zooms the page in when
+// you focus an input under 16px and never zooms back out. Keyed off pointer, not
+// a width breakpoint — a phone in landscape is wider than `sm` but still needs 16px.
 const inputClass =
-  'w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 text-sm font-bold text-slate-800 focus:bg-white focus:border-emerald-500 outline-none transition';
+  'w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 text-base pointer-fine:text-sm font-bold text-slate-800 focus:bg-white focus:border-emerald-500 outline-none transition';
 const labelClass = 'block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5';
 
 /**
