@@ -43,11 +43,28 @@ export function ArenaHero({
       </div>
 
       <div className="w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8 pt-5 md:pt-7 pb-5 md:pb-6">
-        {/* Top row: back chip + manage CTA */}
+        {/* Top row: back chip + activities/manage CTAs */}
         <div className="flex items-center justify-between gap-3 mb-3 md:mb-4">
           <BackPill fallbackHref="/arenas" label="All arenas" />
 
-          {canManage && (
+          <div className="flex items-center gap-2">
+            {/* Not manager-gated: the club calendar is the thing a prospective
+                member most wants to see, so spectators get it too. */}
+            <Link
+              href={`/arena/${arenaId}/activities`}
+              className="inline-flex items-center gap-1.5 rounded-xl
+                bg-white hover:bg-slate-50 text-slate-700 ring-1 ring-slate-200
+                text-xs md:text-sm font-extrabold px-3 py-2 md:px-4 md:py-2.5 shadow-sm transition"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="18" rx="2" />
+                <path d="M16 2v4M8 2v4M3 10h18" />
+                <path d="m9 16 2 2 4-4" />
+              </svg>
+              Activities
+            </Link>
+
+            {canManage && (
             <Link
               href={`/arena/${arenaId}/settings`}
               className="inline-flex items-center gap-1.5 rounded-xl
@@ -61,7 +78,8 @@ export function ArenaHero({
               <span className="hidden sm:inline">Manage</span>
               <span className="sm:hidden">Settings</span>
             </Link>
-          )}
+            )}
+          </div>
         </div>
 
         {/* Identity row */}
