@@ -34,13 +34,21 @@ async function createArena(page, arenaName) {
 /** Add walk-ins through the prep roster modal, then close it. */
 async function addWalkIns(page, names) {
   await page.getByRole('button', { name: 'Add', exact: true }).first().click();
+  // The footer bar shows search by default; "+ Walk-in" swaps it to the form,
+  // which then stays open across consecutive adds.
+  await page.getByRole('button', { name: '+ Walk-in' }).click();
   const firstNameInput = page.getByPlaceholder('First name');
   for (const name of names) {
     await firstNameInput.fill(name);
     await page.getByRole('button', { name: 'Add', exact: true }).last().click();
     await expect(page.getByText(name, { exact: true }).first()).toBeVisible();
   }
+  // Escape backs out of the add-walk-in bar first, then closes the modal —
+  // hence two presses. Assert it actually went: a modal left open swallows
+  // every later click on the board behind it, which fails far from here.
   await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Prep roster' })).toBeHidden();
 }
 
 /** Resolve when the service worker controls the page (prod build only). */
@@ -200,10 +208,14 @@ test.describe('offline session mode (production build)', () => {
     // A, still offline-mode: adds a walk-in (survives replay) and fills a
     // court whose recorded top-4 includes Ana (will no longer apply).
     await page.getByRole('button', { name: 'Add', exact: true }).first().click();
+    await page.getByRole('button', { name: '+ Walk-in' }).click();
     await page.getByPlaceholder('First name').fill('Zed');
     await page.getByRole('button', { name: 'Add', exact: true }).last().click();
     await expect(page.getByText('Zed', { exact: true }).first()).toBeVisible();
+    // Two presses: the first backs out of the add bar, the second closes.
     await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'Prep roster' })).toBeHidden();
     await page.getByRole('button', { name: /Stack Next 4 Paddles/ }).first().click();
     await expect(page.getByText(/2 saved/)).toBeVisible();
 
@@ -255,10 +267,14 @@ test.describe('offline session mode (production build)', () => {
 
     // One local change: add a walk-in.
     await page.getByRole('button', { name: 'Add', exact: true }).first().click();
+    await page.getByRole('button', { name: '+ Walk-in' }).click();
     await page.getByPlaceholder('First name').fill('Rex');
     await page.getByRole('button', { name: 'Add', exact: true }).last().click();
     await expect(page.getByText('Rex', { exact: true }).first()).toBeVisible();
+    // Two presses: the first backs out of the add bar, the second closes.
     await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'Prep roster' })).toBeHidden();
     await expect(page.getByText(/1 saved/)).toBeVisible();
 
     // Reload with the network actually up: the live page loads, the pending

@@ -19,10 +19,19 @@ import { Search, X } from 'lucide-react';
  * @param {(next: string) => void} props.onChange
  * @param {string} [props.placeholder]
  * @param {boolean} [props.disabled]
+ * @param {string} [props.className] - layout classes for the wrapper. Defaults
+ *   to the stacked `mt-3` the pick lists use; the prep roster passes `flex-1`
+ *   to sit the field inline in its footer bar.
  */
-export function PlayerSearchField({ value, onChange, placeholder = 'Search name…', disabled = false }) {
+export function PlayerSearchField({
+  value,
+  onChange,
+  placeholder = 'Search name…',
+  disabled = false,
+  className = 'mt-3',
+}) {
   return (
-    <div className="relative mt-3">
+    <div className={`relative ${className}`}>
       <Search
         aria-hidden="true"
         className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
