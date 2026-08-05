@@ -39,6 +39,7 @@ vi.mock('@/lib/prisma', () => ({
     },
     arenaInvite: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
     user: { findUnique: vi.fn() },
+    activity: { findFirst: vi.fn(), findMany: vi.fn(), createMany: vi.fn(), upsert: vi.fn() },
   },
 }));
 
@@ -52,6 +53,23 @@ import * as actions from '@/app/actions';
 
 const ARENA = 'arena_test';
 const ERR = 'denied';
+
+// Matches and partnerships are activity-scoped, so every board applier resolves
+// the arena's open activity inside its transaction. Each tx stub therefore needs
+// an `activity` delegate; returning a row from `findFirst` keeps
+// `currentActivity` off its auto-open path, which is what the online happy path
+// does in practice.
+const ACTIVITY = { id: 'activity-1', arenaId: ARENA, status: 'LIVE', openedAt: new Date('2026-05-19T18:00:00Z') };
+const activityStub = (overrides = {}) => ({
+  findFirst: vi.fn().mockResolvedValue(ACTIVITY),
+  findUnique: vi.fn().mockResolvedValue(ACTIVITY),
+  create: vi.fn().mockResolvedValue(ACTIVITY),
+  update: vi.fn().mockResolvedValue(ACTIVITY),
+  updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+  upsert: vi.fn().mockResolvedValue(ACTIVITY),
+  deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+  ...overrides,
+});
 
 // Owner-or-organizer gated (requireArenaManager).
 const PLAY = [
@@ -429,6 +447,7 @@ describe('arena server actions — authorization', () => {
       const makeTx = (overrides = {}) => ({
         $executeRaw: vi.fn(),
         offlineSyncBatch: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn() },
+        activity: activityStub(),
         arena: { findUnique: vi.fn().mockResolvedValue({ ...ARENA_SETTINGS }), updateMany: vi.fn() },
         player: {
           findMany: vi.fn().mockResolvedValue(PLAYER_ROWS),
@@ -753,63 +772,114 @@ describe('arena server actions — authorization', () => {
       });
     });
 
-    describe('prepareNextSession()', () => {
+    describe('startActivity() / prepareNextSession()', () => {
+      // A tx stub for the session boundary. `resolveActivityToOpen` reads the
+      // arena's schedule and upserts the window it resolves; the assertions
+      // below care about what the boundary DOES, not which window it picked.
+      const NEXT = { id: 'activity-2', arenaId: ARENA, status: 'SCHEDULED', openedAt: null };
+      const boundaryTx = ({ arenaCount = 1, ...overrides } = {}) => ({
+        $executeRaw: vi.fn(),
+        activity: activityStub({ upsert: vi.fn().mockResolvedValue(NEXT) }),
+        player: { updateMany: vi.fn() },
+        arena: {
+          updateMany: vi.fn().mockResolvedValue({ count: arenaCount }),
+          findUnique: vi.fn().mockResolvedValue({
+            scheduleDays: [2, 4],
+            scheduleStart: '18:00',
+            scheduleEnd: '22:00',
+            timezone: 'UTC',
+          }),
+        },
+        ...overrides,
+      });
+
       it('enters the transaction once when the caller is authorized', async () => {
+        prisma.$transaction.mockImplementation(async (cb) => cb(boundaryTx()));
         await actions.prepareNextSession(ARENA);
         expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       });
 
-      it('wipes partnerships, empties the rack, and stamps lastSessionResetAt', async () => {
-        const tx = {
-          $executeRaw: vi.fn(),
-          partnership: { deleteMany: vi.fn() },
-          player: { updateMany: vi.fn() },
-          arena: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
-        };
+      it('closes the open activity, opens the next, and empties the rack', async () => {
+        const tx = boundaryTx();
         prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
-        const result = await actions.prepareNextSession(ARENA);
+        const result = await actions.startActivity(ARENA);
         expect(result.error).toBeUndefined();
 
-        // Partnership matrix wiped for this arena only.
-        expect(tx.partnership.deleteMany).toHaveBeenCalledWith({ where: { arenaId: ARENA } });
+        // The previous night is frozen as history, not deleted.
+        expect(tx.activity.updateMany).toHaveBeenCalledWith({
+          where: { arenaId: ARENA, status: 'LIVE', id: { not: NEXT.id } },
+          data: { status: 'COMPLETED', closedAt: expect.any(Date) },
+        });
+        // The resolved activity becomes the open one.
+        expect(tx.activity.update).toHaveBeenCalledWith({
+          where: { id: NEXT.id },
+          data: { status: 'LIVE', openedAt: expect.any(Date), closedAt: null },
+        });
         // Every active player pulled off the rack with waitRounds reset
         // and any pending skip-boost cleared.
         expect(tx.player.updateMany).toHaveBeenCalledWith({
           where: { arenaId: ARENA, leftAt: null },
           data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
         });
-        // Reset stamped via updateMany (count-guarded) so a concurrent delete
-        // is a clean error, not an uncaught P2025.
+        // Still stamped (count-guarded) — board-fingerprint.js hashes this
+        // column and the offline sync guard compares it.
         expect(tx.arena.updateMany).toHaveBeenCalledWith({
           where: { id: ARENA },
           data: { lastSessionResetAt: expect.any(Date) },
         });
       });
 
-      it('reports a clean error when the arena was deleted mid-transaction', async () => {
-        const tx = {
-          $executeRaw: vi.fn(),
-          partnership: { deleteMany: vi.fn() },
-          player: { updateMany: vi.fn() },
-          arena: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
-        };
+      it('no longer deletes partnerships — the new activity id gives a clean matrix', async () => {
+        // Presence of the delegate asserts the action never reaches for it.
+        const tx = boundaryTx({ partnership: { deleteMany: vi.fn() } });
         prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
+        await actions.startActivity(ARENA);
+
+        expect(tx.partnership.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it('opens a specific activity when one is named', async () => {
+        const CHOSEN = { id: 'activity-9', arenaId: ARENA, status: 'SCHEDULED', openedAt: null };
+        const tx = boundaryTx({
+          activity: activityStub({ findFirst: vi.fn().mockResolvedValue(CHOSEN) }),
+        });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.startActivity(ARENA, { activityId: CHOSEN.id });
+
+        expect(tx.activity.update).toHaveBeenCalledWith({
+          where: { id: CHOSEN.id },
+          data: { status: 'LIVE', openedAt: expect.any(Date), closedAt: null },
+        });
+      });
+
+      it('refuses to open a cancelled activity', async () => {
+        const tx = boundaryTx({
+          activity: activityStub({
+            findFirst: vi.fn().mockResolvedValue({ id: 'a-x', arenaId: ARENA, status: 'CANCELLED' }),
+          }),
+        });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.startActivity(ARENA, { activityId: 'a-x' });
+        expect(result.error).toMatch(/cancelled/i);
+        expect(tx.player.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('reports a clean error when the arena was deleted mid-transaction', async () => {
+        prisma.$transaction.mockImplementation(async (cb) => cb(boundaryTx({ arenaCount: 0 })));
         const result = await actions.prepareNextSession(ARENA);
         expect(result.error).toMatch(/no longer exists/i);
       });
 
       it('does not touch lifetime stats, ratings, or match history', async () => {
-        const tx = {
-          $executeRaw: vi.fn(),
-          partnership: { deleteMany: vi.fn() },
-          player: { updateMany: vi.fn() },
-          arena: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+        const tx = boundaryTx({
           // Presence asserts the action never reaches for these.
           match: { deleteMany: vi.fn() },
           courtSlot: { deleteMany: vi.fn() },
-        };
+        });
         prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
         await actions.prepareNextSession(ARENA);
@@ -1168,6 +1238,9 @@ describe('arena server actions — authorization', () => {
         $executeRaw: vi.fn(),
         match: { deleteMany: vi.fn() },
         courtSlot: { deleteMany: vi.fn() },
+        // Partnerships and attendees cascade from Activity, so the reset drops
+        // activities rather than deleting partnerships directly.
+        activity: activityStub(),
         partnership: { deleteMany: vi.fn() },
         court: { updateMany: vi.fn() },
         player: {
@@ -1179,6 +1252,11 @@ describe('arena server actions — authorization', () => {
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
       await actions.resetArena(ARENA);
+
+      // Every past night goes too — leaving them would strand each one as an
+      // empty shell now that the matches giving them meaning are deleted.
+      expect(tx.activity.deleteMany).toHaveBeenCalledWith({ where: { arenaId: ARENA } });
+      expect(tx.partnership.deleteMany).not.toHaveBeenCalled();
       // The reset must scope its player scan to active rows so a departed
       // player can't be silently re-queued (invisible to getState).
       expect(tx.player.findMany).toHaveBeenCalledWith(
@@ -1203,6 +1281,7 @@ describe('arena server actions — authorization', () => {
       });
       const tx = {
         $executeRaw: vi.fn(),
+        activity: activityStub(),
         court: {
           updateMany: vi.fn().mockResolvedValue({ count: 1 }), // claim the finish
           findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
@@ -1247,6 +1326,7 @@ describe('arena server actions — authorization', () => {
       // Match-finish tx (first $transaction call) — full happy path.
       const finishTx = {
         $executeRaw: vi.fn(),
+        activity: activityStub(),
         court: {
           updateMany: vi.fn().mockResolvedValue({ count: 1 }),
           findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
@@ -2046,6 +2126,7 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
   function makeTx() {
     return {
       $executeRaw: vi.fn(),
+      activity: activityStub(),
       court: {
         updateMany: vi.fn().mockResolvedValue({ count: 1 }), // atomic claim succeeds
         update: vi.fn(),
@@ -2119,6 +2200,7 @@ describe('cancelFill() — return four players to the rack without recording a m
   function makeTx({ slots, bumpedIds = [], others = [], courtClaimCount = 1 } = {}) {
     return {
       $executeRaw: vi.fn(),
+      activity: activityStub(),
       court: {
         findFirst: vi.fn().mockResolvedValue({ fillBumpedPlayerIds: bumpedIds }),
         updateMany: vi.fn().mockResolvedValue({ count: courtClaimCount }),
@@ -2230,13 +2312,14 @@ describe('cancelFill() — return four players to the rack without recording a m
     await actions.cancelFill(ARENA, COURT);
 
     // unbumpPartnership floors at 0 via `count: { gt: 0 }`. Pair ids are
-    // canonical (sorted), so [p1,p2] and [p3,p4] in this fixture.
+    // canonical (sorted), so [p1,p2] and [p3,p4] in this fixture. Scoped to the
+    // open activity so the decrement can't reach into a previous night's matrix.
     expect(tx.partnership.updateMany).toHaveBeenCalledWith({
-      where: { playerA: 'p1', playerB: 'p2', count: { gt: 0 } },
+      where: { activityId: ACTIVITY.id, playerA: 'p1', playerB: 'p2', count: { gt: 0 } },
       data: { count: { decrement: 1 } },
     });
     expect(tx.partnership.updateMany).toHaveBeenCalledWith({
-      where: { playerA: 'p3', playerB: 'p4', count: { gt: 0 } },
+      where: { activityId: ACTIVITY.id, playerA: 'p3', playerB: 'p4', count: { gt: 0 } },
       data: { count: { decrement: 1 } },
     });
   });
@@ -2301,6 +2384,7 @@ describe('editCourtLineup() — manual partner swap / substitution', () => {
   } = {}) {
     return {
       $executeRaw: vi.fn(),
+      activity: activityStub(),
       arena: {
         findUnique: vi.fn().mockResolvedValue({ skipRestoresPriority }),
       },
@@ -2388,12 +2472,15 @@ describe('editCourtLineup() — manual partner swap / substitution', () => {
     expect(p5Slot).toMatchObject({ team: 2, prevQueueOrder: 7, prevWaitRounds: 0 });
 
     // Partnership delta: p3 was with p4, now with p5 — unbump old, bump new.
+    // Both scoped to the open activity.
     expect(tx.partnership.updateMany).toHaveBeenCalledWith({
-      where: { playerA: 'p3', playerB: 'p4', count: { gt: 0 } },
+      where: { activityId: ACTIVITY.id, playerA: 'p3', playerB: 'p4', count: { gt: 0 } },
       data: { count: { decrement: 1 } },
     });
     expect(tx.partnership.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { playerA_playerB: { playerA: 'p3', playerB: 'p5' } } }),
+      expect.objectContaining({
+        where: { activityId_playerA_playerB: { activityId: ACTIVITY.id, playerA: 'p3', playerB: 'p5' } },
+      }),
     );
   });
 

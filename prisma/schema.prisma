@@ -15,7 +15,7 @@ datasource db {
 model Arena {
   id          String   @id @default(cuid())
   name        String
-  description String?  // optional, manager-set blurb (surfacing on the arena view is tracked in #33)
+  description String? // optional, manager-set blurb (surfacing on the arena view is tracked in #33)
   ownerId     String
   createdAt   DateTime @default(now())
 
@@ -105,8 +105,115 @@ model Arena {
   joinRequests JoinRequest[]
   linkRequests LinkRequest[]
   invites      ArenaInvite[]
+  activities   Activity[]
 
   @@index([ownerId])
+}
+
+/// One concrete occurrence of the arena's recurring schedule — "Tuesday night,
+/// Jul 14". The schedule columns on `Arena` describe a *rule*; `src/lib/sessions.js`
+/// turns that rule into `{start, end}` windows; an Activity is one of those windows
+/// MATERIALIZED, so it can own records that a recomputed window never could:
+/// which matches were played, who showed up, and who partnered with whom.
+///
+/// Rows are created idempotently by `ensureUpcomingActivities`
+/// (`src/lib/activities-server.js`) — a lazy upsert on `@@unique([arenaId, startsAt])`
+/// called from page loads, so no cron is needed. Managers can also create one-off
+/// `MANUAL` activities that don't correspond to any scheduled day.
+///
+/// "Current" is `status = LIVE`, not a pointer on Arena: a denormalized pointer can
+/// drift, and every board write already serializes on the `lockQueue` advisory lock,
+/// so `startActivity` can't race another into a second LIVE row for the same arena.
+model Activity {
+  id       String   @id @default(cuid())
+  arenaId  String
+  /// null → derived for display from `startsAt` + `timezone` (see `activityTitle`).
+  title    String?
+  startsAt DateTime
+  endsAt   DateTime
+  /// Snapshot of the arena's timezone when the activity was created. Deliberately
+  /// NOT read through to `Arena.timezone`: a manager moving the club to a new zone
+  /// must not retroactively shift the local dates of finished activities.
+  timezone String
+
+  status ActivityStatus @default(SCHEDULED)
+  source ActivitySource @default(SCHEDULE)
+
+  /// null = uncapped. When set, RSVPs past this count land on the waitlist.
+  capacity Int?
+  notes    String?
+
+  /// Set when `startActivity` opens this one (rack prepped, matches start counting).
+  openedAt  DateTime?
+  /// Set when the next activity opens. A closed activity is frozen history.
+  closedAt  DateTime?
+  createdAt DateTime  @default(now())
+
+  arena        Arena              @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  attendees    ActivityAttendee[]
+  matches      Match[]
+  partnerships Partnership[]
+
+  /// Makes materialization idempotent — re-running `ensureUpcomingActivities`
+  /// for the same window upserts instead of duplicating.
+  @@unique([arenaId, startsAt])
+  @@index([arenaId, status])
+  @@index([arenaId, startsAt])
+}
+
+/// Who is coming to an activity. This is the first time attendance is recorded
+/// anywhere in the app: before Activities, `Player.queueOrder != null` was the only
+/// signal that someone showed up, and `startActivity` nulls it for everyone.
+///
+/// `playerId` is null for a member who RSVP'd but has no `Player` row in the arena
+/// yet; `userId` is null for a manager-added walk-in. `displayName` is snapshotted
+/// for the same reason `MatchPlayer` snapshots names — the list must survive the
+/// player row being removed.
+model ActivityAttendee {
+  id          String  @id @default(cuid())
+  activityId  String
+  playerId    String?
+  userId      String?
+  displayName String
+
+  status      AttendeeStatus @default(GOING)
+  /// Waitlist ordering — first-come-first-serve, so a drop promotes the lowest
+  /// position. Null for any status other than WAITLIST.
+  position    Int?
+  checkedInAt DateTime?
+  createdAt   DateTime       @default(now())
+
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@unique([activityId, playerId])
+  @@unique([activityId, userId])
+  @@index([activityId, status])
+}
+
+/// SCHEDULED → LIVE → COMPLETED is the happy path. CANCELLED is a manager calling
+/// off a night that was already materialized; it stays in the list, greyed out,
+/// rather than vanishing (players may already have RSVP'd).
+enum ActivityStatus {
+  SCHEDULED
+  LIVE
+  COMPLETED
+  CANCELLED
+}
+
+/// SCHEDULE rows are generated from the arena's recurring schedule and are
+/// re-derivable; MANUAL rows are one-offs a manager typed in and must never be
+/// garbage-collected by the materializer.
+enum ActivitySource {
+  SCHEDULE
+  MANUAL
+}
+
+enum AttendeeStatus {
+  GOING
+  WAITLIST
+  DECLINED
+  CHECKED_IN
+  NO_SHOW
 }
 
 /// A pending request to join an arena. A row's existence means the request is
@@ -138,8 +245,8 @@ model LinkRequest {
   playerId  String // the orphan walk-in Player they claim
   createdAt DateTime @default(now())
 
-  arena Arena @relation(fields: [arenaId], references: [id], onDelete: Cascade)
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  arena  Arena  @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   // Composite FK on (arenaId, playerId) so the DB rejects a request whose
   // player belongs to a different arena than the request itself. Target is
   // Player's `@@unique([arenaId, id])`, which exists solely to make this
@@ -182,11 +289,11 @@ model ArenaInvite {
   active    Boolean    @default(true)
   createdAt DateTime   @default(now())
 
-  arena Arena @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  arena   Arena @relation(fields: [arenaId], references: [id], onDelete: Cascade)
   // Cascade on creator deletion is intentional: if the manager who issued a
   // link loses their account, their live links die with them rather than
   // letting a removed person keep funnelling people in.
-  creator User @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  creator User  @relation(fields: [createdBy], references: [id], onDelete: Cascade)
 
   // `code` is already uniquely indexed by `@unique`; no separate @@index needed.
   @@index([arenaId])
@@ -215,26 +322,25 @@ model ArenaMembership {
 /// `userId` links the player to a registered account; it is null for
 /// temporary walk-in players who have no account.
 model Player {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   arenaId     String
   userId      String? // null = temporary walk-in player; set = a registered user
   firstName   String
   lastName    String? // optional: walk-ins often go by first name only
-  gamesPlayed Int      @default(0)
-  wins        Int      @default(0)
-  losses      Int      @default(0)
+  gamesPlayed Int       @default(0)
+  wins        Int       @default(0)
+  losses      Int       @default(0)
   queueOrder  Int? // null = not in queue; ascending = rack order
-  waitRounds  Int      @default(0) // consecutive rounds spent waiting (fairness)
-  gamesOffset Int      @default(0) // games credited at join (group avg) so latecomers slot in as peers, not catch-up
+  waitRounds  Int       @default(0) // consecutive rounds spent waiting (fairness)
+  gamesOffset Int       @default(0) // games credited at join (group avg) so latecomers slot in as peers, not catch-up
   // When true, a Skip moved this paddle off-deck while signaling "back soon —
   // top priority on return". The next auto-mix sorts them above the emergency
   // band, then clears the flag. See `Arena.skipRestoresPriority`.
-  skipBoosted Boolean  @default(false)
-  rating      Int      @default(1000) // Elo skill rating (Phase 6); displayed DUPR-style. Per-arena.
+  skipBoosted Boolean   @default(false)
+  rating      Int       @default(1000) // Elo skill rating (Phase 6); displayed DUPR-style. Per-arena.
   leftAt      DateTime? // null = active; set = the member left/was removed (row kept for history)
 
-
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 
   arena        Arena         @relation(fields: [arenaId], references: [id], onDelete: Cascade)
   user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -250,17 +356,17 @@ model Player {
 
 /// A physical court. `position` orders the courts in the UI.
 model Court {
-  id        String   @id @default(cuid())
-  arenaId   String
-  name      String
-  status    String   @default("vacant") // "vacant" | "playing"
-  position  Int
+  id                  String   @id @default(cuid())
+  arenaId             String
+  name                String
+  status              String   @default("vacant") // "vacant" | "playing"
+  position            Int
   // Player ids whose `waitRounds` were bumped (+1) by the fill currently on this
   // court — captured at fill time so `cancelFill` can reverse the bump for
   // exactly those players, not whoever is queued at cancel time. Empty when the
   // court is vacant / was filled before this feature.
   fillBumpedPlayerIds String[] @default([])
-  createdAt DateTime @default(now())
+  createdAt           DateTime @default(now())
 
   arena Arena       @relation(fields: [arenaId], references: [id], onDelete: Cascade)
   slots CourtSlot[]
@@ -301,11 +407,24 @@ model Match {
   score2    Int
   createdAt DateTime @default(now())
 
-  arena   Arena         @relation(fields: [arenaId], references: [id], onDelete: Cascade)
-  players MatchPlayer[]
+  /// The activity this match belongs to — the single source of truth for
+  /// per-activity records. Stamped by `applyEndMatchTx`. Nullable because a
+  /// match can be finished in an arena that has no activity open (an arena with
+  /// no schedule that never ran `startActivity`), and because the historical
+  /// backfill is best-effort. `SetNull` not `Cascade`: deleting an activity must
+  /// never destroy match history.
+  activityId String?
+
+  arena    Arena         @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  activity Activity?     @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  players  MatchPlayer[]
 
   @@index([arenaId])
   @@index([createdAt])
+  /// Every session/week/activity read is `where: { arenaId, createdAt: {gte, lt} }`;
+  /// the two single-column indexes above can't serve that as well as one composite.
+  @@index([arenaId, createdAt])
+  @@index([activityId])
 }
 
 /// A player's participation in a finished match (snapshot, no FK to Player).
@@ -344,19 +463,32 @@ model OfflineSyncBatch {
   @@index([arenaId])
 }
 
-/// Cumulative count of how often two players have been partnered.
+/// Count of how often two players have been partnered *within one activity*.
 /// Stored canonically with playerA < playerB to keep one row per pair.
+///
+/// Scoped to the activity, not the arena: a fresh activity simply has no rows, so
+/// tonight's mix starts unbiased with no destructive delete. Before Activities,
+/// `prepareNextSession` ran `partnership.deleteMany({ where: { arenaId } })` every
+/// session and the pairing history was gone for good; now it accumulates across
+/// activities and stays queryable ("you've partnered with Ana 14 times over 6 nights").
+///
+/// `activityId` is REQUIRED so the compound unique below has no NULLs — Postgres
+/// treats NULLs as distinct, which would let duplicate pair rows through, and
+/// Prisma can't target a null component in an `upsert` where-clause.
 model Partnership {
-  id      String @id @default(cuid())
-  arenaId String
-  playerA String
-  playerB String
-  count   Int    @default(0)
+  id         String @id @default(cuid())
+  arenaId    String
+  activityId String
+  playerA    String
+  playerB    String
+  count      Int    @default(0)
 
-  arena Arena @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  arena    Arena    @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
 
-  @@unique([playerA, playerB])
+  @@unique([activityId, playerA, playerB])
   @@index([arenaId])
+  @@index([activityId])
 }
 
 // --- Auth (Better Auth) -------------------------------------------------
@@ -367,19 +499,19 @@ model Partnership {
 /// An authenticated account. Owns arenas and is linked to a Player in each
 /// arena it plays in, so people see their own match history and scores.
 model User {
-  id            String   @id
+  id            String    @id
   name          String // Better Auth core field; stored as "First Last"
   firstName     String
   lastName      String
-  phone         String?   // optional: collected under "Add more details" at sign-up
-  address       String?   // optional: collected under "Add more details" at sign-up
+  phone         String? // optional: collected under "Add more details" at sign-up
+  address       String? // optional: collected under "Add more details" at sign-up
   birthday      DateTime? // optional: collected under "Add more details" at sign-up
-  gender        String?   // optional: collected under "Add more details" at sign-up
-  email         String   @unique
-  emailVerified Boolean  @default(false)
+  gender        String? // optional: collected under "Add more details" at sign-up
+  email         String    @unique
+  emailVerified Boolean   @default(false)
   image         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   sessions       Session[]
   accounts       Account[]

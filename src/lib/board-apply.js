@@ -30,21 +30,98 @@ export function canonicalPair(x, y) {
   return x < y ? [x, y] : [y, x];
 }
 
-/** Increment the partnership count for a pair, creating the row if absent. */
-export async function bumpPartnership(tx, arenaId, x, y) {
+/**
+ * The arena's open activity, opening one on demand when there isn't one.
+ *
+ * Partnerships and matches are activity-scoped, so every board write needs an
+ * activity to attach to and none of them may fail for the want of one. The
+ * auto-opened row is `MANUAL` — its bounds were not derived from the schedule
+ * rule, so the materializer must not treat it as one of its own.
+ *
+ * Safe to call unguarded: every caller already holds the `lockQueue` advisory
+ * lock for this arena, which is also what keeps a second LIVE row from ever
+ * being opened concurrently.
+ */
+export async function currentActivity(tx, arenaId) {
+  const open = await tx.activity.findFirst({
+    where: { arenaId, status: 'LIVE' },
+    orderBy: { startsAt: 'desc' },
+  });
+  if (open) return open;
+
+  const arena = await tx.arena.findUnique({
+    where: { id: arenaId },
+    select: { timezone: true },
+  });
+  if (!arena) throw new Error('ARENA_GONE');
+
+  const startsAt = new Date();
+  return tx.activity.create({
+    data: {
+      arenaId,
+      startsAt,
+      // Placeholder span, not a claim about when play ends — an activity opened
+      // reactively has no schedule window behind it.
+      endsAt: new Date(startsAt.getTime() + 12 * 60 * 60 * 1000),
+      timezone: arena.timezone,
+      status: 'LIVE',
+      source: 'MANUAL',
+      openedAt: startsAt,
+    },
+  });
+}
+
+/**
+ * Which activity a finished match belongs to.
+ *
+ * Online, that's simply whichever activity is open. Offline replay is the case
+ * that needs care: `syncOfflineEvents` passes `occurredAt` so `Match.createdAt`
+ * reflects court time rather than sync time, and a device that played through
+ * Tuesday's session but only synced on Thursday would otherwise have every one
+ * of Tuesday's matches stamped with Thursday's activity — silently moving a
+ * whole night's records onto the wrong night.
+ *
+ * So when `occurredAt` is present, prefer the activity whose window actually
+ * contains it. Falling back to the open activity keeps the offline path working
+ * for arenas that were never scheduled.
+ */
+export async function resolveMatchActivityId(tx, arenaId, occurredAt = null) {
+  if (occurredAt) {
+    const containing = await tx.activity.findFirst({
+      where: {
+        arenaId,
+        startsAt: { lte: occurredAt },
+        endsAt: { gt: occurredAt },
+        status: { not: 'CANCELLED' },
+      },
+      orderBy: { startsAt: 'desc' },
+      select: { id: true },
+    });
+    if (containing) return containing.id;
+  }
+  const open = await currentActivity(tx, arenaId);
+  return open.id;
+}
+
+/**
+ * Increment the partnership count for a pair, creating the row if absent.
+ * Scoped to `activityId`: a fresh activity has no rows, so tonight's mix starts
+ * unbiased without anything being deleted.
+ */
+export async function bumpPartnership(tx, arenaId, activityId, x, y) {
   const [playerA, playerB] = canonicalPair(x, y);
   await tx.partnership.upsert({
-    where: { playerA_playerB: { playerA, playerB } },
-    create: { arenaId, playerA, playerB, count: 1 },
+    where: { activityId_playerA_playerB: { activityId, playerA, playerB } },
+    create: { arenaId, activityId, playerA, playerB, count: 1 },
     update: { count: { increment: 1 } },
   });
 }
 
 /** Decrement a partnership count (floored at 0); no-op if the row is absent. Reverses {@link bumpPartnership}. */
-export async function unbumpPartnership(tx, x, y) {
+export async function unbumpPartnership(tx, activityId, x, y) {
   const [playerA, playerB] = canonicalPair(x, y);
   await tx.partnership.updateMany({
-    where: { playerA, playerB, count: { gt: 0 } },
+    where: { activityId, playerA, playerB, count: { gt: 0 } },
     data: { count: { decrement: 1 } },
   });
 }
@@ -231,9 +308,16 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome }) {
   });
 
   // Pick the matchup with the fewest prior partnerships (random tie-break),
-  // unless a replayed event already recorded the choice.
+  // unless a replayed event already recorded the choice. Scoped to the open
+  // activity: pairings from previous nights must not bias tonight's mix, which
+  // is the job the old `partnership.deleteMany` on every reset used to do.
+  const activity = await currentActivity(tx, arenaId);
   const rows = await tx.partnership.findMany({
-    where: { arenaId, playerA: { in: [p0, p1, p2, p3] }, playerB: { in: [p0, p1, p2, p3] } },
+    where: {
+      activityId: activity.id,
+      playerA: { in: [p0, p1, p2, p3] },
+      playerB: { in: [p0, p1, p2, p3] },
+    },
   });
   const countFor = (x, y) => {
     const [a, b] = canonicalPair(x, y);
@@ -255,8 +339,8 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome }) {
       ...best.team2.map((playerId) => ({ courtId, playerId, team: 2, ...snapshot.get(playerId) })),
     ],
   });
-  await bumpPartnership(tx, arenaId, best.team1[0], best.team1[1]);
-  await bumpPartnership(tx, arenaId, best.team2[0], best.team2[1]);
+  await bumpPartnership(tx, arenaId, activity.id, best.team1[0], best.team1[1]);
+  await bumpPartnership(tx, arenaId, activity.id, best.team2[0], best.team2[1]);
 }
 
 /**
@@ -345,10 +429,11 @@ export async function applyCancelFillTx(tx, arenaId, { courtId }) {
   }
 
   // Undo the two partnership bumps from the fill (one per team).
+  const activity = await currentActivity(tx, arenaId);
   const team1 = slots.filter((s) => s.team === 1).map((s) => s.playerId);
   const team2 = slots.filter((s) => s.team === 2).map((s) => s.playerId);
-  if (team1.length === 2) await unbumpPartnership(tx, team1[0], team1[1]);
-  if (team2.length === 2) await unbumpPartnership(tx, team2[0], team2[1]);
+  if (team1.length === 2) await unbumpPartnership(tx, activity.id, team1[0], team1[1]);
+  if (team2.length === 2) await unbumpPartnership(tx, activity.id, team2[0], team2[1]);
 
   // Slots last, so the player restores above still read the snapshot.
   await tx.courtSlot.deleteMany({ where: { courtId } });
@@ -512,8 +597,9 @@ export async function applyEditCourtLineupTx(tx, arenaId, { courtId, team1Ids, t
   });
 
   // Partnership delta: only pairs that actually changed.
-  for (const [x, y] of diff.pairsToUnbump) await unbumpPartnership(tx, x, y);
-  for (const [x, y] of diff.pairsToBump) await bumpPartnership(tx, arenaId, x, y);
+  const activity = await currentActivity(tx, arenaId);
+  for (const [x, y] of diff.pairsToUnbump) await unbumpPartnership(tx, activity.id, x, y);
+  for (const [x, y] of diff.pairsToBump) await bumpPartnership(tx, arenaId, activity.id, x, y);
 }
 
 /**
@@ -566,9 +652,12 @@ export async function applyEndMatchTx(tx, arenaId, { courtId, s1, s2, outcome, o
     ? outcome.recycleOrder.map((playerId) => slots.find((s) => s.playerId === playerId))
     : shuffle(slots);
 
+  const activityId = await resolveMatchActivityId(tx, arenaId, occurredAt);
+
   await tx.match.create({
     data: {
       arenaId,
+      activityId,
       courtName: court.name,
       score1: s1,
       score2: s2,
@@ -883,7 +972,11 @@ export async function readBoardStateTx(tx, arenaId) {
     where: { arenaId },
     include: { slots: { select: { playerId: true, team: true } } },
   });
-  const partnerships = await tx.partnership.findMany({ where: { arenaId } });
+  // Open activity only — must match the scoping in `getState`, or the offline
+  // board would boot with a different matrix than the online one shows.
+  const partnerships = await tx.partnership.findMany({
+    where: { arenaId, activity: { status: 'LIVE' } },
+  });
 
   const queue = players
     .filter((p) => p.queueOrder !== null)

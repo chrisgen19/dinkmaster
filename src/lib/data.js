@@ -32,7 +32,7 @@ export async function getState(arenaId) {
   // wins the client's monotonic guard and a stale late-finisher is discarded.
   const fetchedAt = nextStateStamp();
 
-  const [players, courts, matches, partnerships, arena] = await Promise.all([
+  const [players, courts, matches, partnerships, arena, activity] = await Promise.all([
     // Active players only: a departed member's row is kept (leftAt set) for
     // history but must not appear on the rack, matrix, or player count.
     prisma.player.findMany({ where: { arenaId, leftAt: null }, orderBy: { createdAt: 'asc' } }),
@@ -46,7 +46,11 @@ export async function getState(arenaId) {
       orderBy: { createdAt: 'desc' },
       include: { players: true },
     }),
-    prisma.partnership.findMany({ where: { arenaId } }),
+    // Scoped to the OPEN activity via a relation filter (one query, no need to
+    // resolve the activity first). Arena-wide would merge every past night's
+    // pairings into tonight's matrix and bias the matchmaker against pairs who
+    // last played together weeks ago.
+    prisma.partnership.findMany({ where: { arenaId, activity: { status: 'LIVE' } } }),
     // Session boundary lives on Arena. We surface it on every refresh so the
     // client can key session-scoped stats (rack tile, My Stats) off the
     // server-persisted timestamp instead of a client-stamped `new Date()`,
@@ -54,6 +58,13 @@ export async function getState(arenaId) {
     prisma.arena.findUnique({
       where: { id: arenaId },
       select: { lastSessionResetAt: true, offlineHolderLabel: true, offlineHeldAt: true },
+    }),
+    // The open activity. Everything session-scoped keys off its id rather than
+    // a timestamp cutoff, so a match can't land on the wrong side of a boundary.
+    prisma.activity.findFirst({
+      where: { arenaId, status: 'LIVE' },
+      orderBy: { startsAt: 'desc' },
+      select: { id: true, title: true, startsAt: true, endsAt: true, timezone: true },
     }),
   ]);
 
@@ -95,6 +106,9 @@ export async function getState(arenaId) {
     score2: m.score2,
     // ISO string; formatted in the client so it uses the viewer's locale/timezone.
     timestamp: new Date(m.createdAt).toISOString(),
+    // Lets the client tally per-activity records by id instead of by timestamp
+    // cutoff — see `computeActivityStats`.
+    activityId: m.activityId,
   }));
 
   // Expand canonical partnership rows into the symmetric matrix the UI reads.
@@ -129,6 +143,17 @@ export async function getState(arenaId) {
     matchHistory,
     history,
     lastSessionResetAt: arena?.lastSessionResetAt ? arena.lastSessionResetAt.toISOString() : null,
+    // The activity currently open. Null only for an arena that has never had a
+    // board write (nothing has auto-opened one yet).
+    currentActivity: activity
+      ? {
+          id: activity.id,
+          title: activity.title,
+          startsAt: activity.startsAt.toISOString(),
+          endsAt: activity.endsAt.toISOString(),
+          timezone: activity.timezone,
+        }
+      : null,
     // Advisory "a manager is running the board offline" flag. Both columns
     // are always written together; require both so a half-cleared row can't
     // render a nameless banner. Freshness is judged client-side (a dead

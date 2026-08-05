@@ -40,6 +40,7 @@ import {
   unbumpPartnership,
 } from '@/lib/board-apply';
 import { boardFingerprint } from '@/lib/board-fingerprint';
+import { ensureUpcomingActivities, resolveActivityToOpen } from '@/lib/activities-server';
 
 // Separate advisory-lock namespace for invite creation, keyed per arena, so two
 // managers minting a link for the same arena are serialized and can't both pass
@@ -314,6 +315,17 @@ export async function updateArenaSchedule(arenaId, { days, start, end, timezone 
     data: { scheduleDays: normalizedDays, scheduleStart: startTime, scheduleEnd: endTime, timezone: tz },
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
+
+  // Materialize the new schedule right away so the manager sees Upcoming
+  // activities the moment they save, rather than on the next page load. Only
+  // creates rows, so edits to already-materialized nights survive; a failure
+  // here must not fail the save, since the lazy call on page load will catch up.
+  try {
+    await ensureUpcomingActivities(arenaId);
+  } catch {
+    // Non-fatal by design — the schedule itself is saved.
+  }
+
   return { schedule: { days: normalizedDays, start: startTime, end: endTime, timezone: tz } };
 }
 
@@ -980,7 +992,11 @@ export async function resetArena(arenaId) {
     // Wipe history and live state for this arena only.
     await tx.match.deleteMany({ where: { arenaId } }); // cascades MatchPlayer
     await tx.courtSlot.deleteMany({ where: { court: { arenaId } } });
-    await tx.partnership.deleteMany({ where: { arenaId } });
+    // Activities go too, and cascade their partnerships + attendees. Leaving
+    // them would strand every past night as an empty shell — the matches whose
+    // records gave them meaning have just been deleted. A fresh LIVE activity
+    // is opened lazily by the next board write (`currentActivity`).
+    await tx.activity.deleteMany({ where: { arenaId } });
     await tx.court.updateMany({ where: { arenaId }, data: { status: 'vacant' } });
 
     // Clear stats for EVERY player in the arena, departed rows included: a
@@ -1015,45 +1031,95 @@ export async function resetArena(arenaId) {
 // --- Session prep (Phase 10a) ---------------------------------------------
 
 /**
- * Prepare the arena for an upcoming play session. Manager-gated. Empties
- * the rack (`queueOrder = null` for every active player), wipes
- * `Partnership` rows so the variety algorithm starts the new session
- * unbiased by last week's pairings, zeroes `waitRounds`, and stamps
- * `Arena.lastSessionResetAt`. The UI immediately opens the Prep Roster
- * modal after this so the manager fills the empty rack with tonight's
- * attendees in one flow — preventing the "checked-in but matrix still
- * polluted" failure mode.
+ * Close the arena's open activity and open the next one. Manager-gated.
+ *
+ * This is the session boundary. It closes the LIVE activity (freezing its
+ * standings, attendance, and partnership matrix as history), opens the next,
+ * and empties the rack — `queueOrder = null` for every active player, plus
+ * `waitRounds` and `skipBoosted` cleared. The UI opens the Prep Roster modal
+ * immediately afterwards so the manager fills the empty rack with tonight's
+ * attendees in one flow.
+ *
+ * Notably it no longer deletes anything. The old `prepareNextSession` ran
+ * `partnership.deleteMany({ where: { arenaId } })` to stop last week's pairings
+ * biasing tonight's mix, destroying the history in the process; now the matrix
+ * is keyed by `activityId`, so the new activity simply has no rows yet and the
+ * old ones stay queryable forever.
  *
  * Deliberately untouched: `gamesPlayed`, `wins`, `losses`, `rating`, all
- * `Match`/`MatchPlayer` rows, and `CourtSlot` (a live match keeps playing
- * across a reset; players come off into the empty rack via `endMatch`).
+ * `Match`/`MatchPlayer` rows, and `CourtSlot` (a live match keeps playing across
+ * a boundary; players come off into the empty rack via `endMatch`).
+ *
+ * @param {string} arenaId
+ * @param {{activityId?: string|null}} [opts] - open a specific activity instead
+ *   of the one the schedule implies (a manager tapping a night from the list).
  */
-export async function prepareNextSession(arenaId) {
+export async function startActivity(arenaId, { activityId = null } = {}) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
   // updateMany (not update) on the arena row so a delete that races in after
   // requireArenaManager passes is a clean count===0, not an uncaught P2025 —
-  // same pattern as the other manager-gated arena writes. The partnership /
+  // same pattern as the other manager-gated arena writes. The activity /
   // player writes already no-op on zero matched rows (a cascade-deleted arena
   // leaves nothing to match), so the whole transaction is a safe no-op then.
   let arenaGone = false;
-  await prisma.$transaction(async (tx) => {
-    await lockQueue(tx, arenaId);
-    await tx.partnership.deleteMany({ where: { arenaId } });
-    await tx.player.updateMany({
-      where: { arenaId, leftAt: null },
-      data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
+  let failure = null;
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockQueue(tx, arenaId);
+      const now = new Date();
+
+      // Resolve BEFORE closing: if no activity can be opened we want to leave
+      // the current one running rather than strand the arena with none.
+      const target = await resolveActivityToOpen(tx, arenaId, { activityId, now });
+
+      // Close whatever is open — except the target itself, which lets a
+      // double-tap be a harmless no-op instead of instantly ending the session
+      // it just started.
+      await tx.activity.updateMany({
+        where: { arenaId, status: 'LIVE', id: { not: target.id } },
+        data: { status: 'COMPLETED', closedAt: now },
+      });
+
+      await tx.activity.update({
+        where: { id: target.id },
+        data: { status: 'LIVE', openedAt: target.openedAt ?? now, closedAt: null },
+      });
+
+      await tx.player.updateMany({
+        where: { arenaId, leftAt: null },
+        data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
+      });
+
+      // Kept in lockstep with the open activity. `board-fingerprint.js` hashes
+      // this column and the offline sync guard compares it, so it has to keep
+      // moving even though the activity id is now the real boundary.
+      const updated = await tx.arena.updateMany({
+        where: { id: arenaId },
+        data: { lastSessionResetAt: now },
+      });
+      if (updated.count === 0) arenaGone = true;
     });
-    const updated = await tx.arena.updateMany({
-      where: { id: arenaId },
-      data: { lastSessionResetAt: new Date() },
-    });
-    if (updated.count === 0) arenaGone = true;
-  });
+  } catch (err) {
+    if (err?.message === 'ARENA_GONE') arenaGone = true;
+    else if (err?.message === 'ACTIVITY_NOT_FOUND') failure = 'That activity no longer exists.';
+    else if (err?.message === 'ACTIVITY_CANCELLED') failure = 'That activity was cancelled.';
+    else throw err;
+  }
 
   if (arenaGone) return { error: 'This arena no longer exists.', state: await getState(arenaId) };
+  if (failure) return { error: failure, state: await getState(arenaId) };
   return { state: await getState(arenaId) };
+}
+
+/**
+ * @deprecated Use {@link startActivity}. Retained as a thin alias so the
+ * Settings → Sessions button, the prep banner, and the existing offline event
+ * vocabulary keep working while callers migrate.
+ */
+export async function prepareNextSession(arenaId) {
+  return startActivity(arenaId);
 }
 
 /**
