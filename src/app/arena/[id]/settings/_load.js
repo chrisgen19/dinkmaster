@@ -56,6 +56,11 @@ export async function loadArenaForSettings(arenaId) {
         autoResetOnSession: arena.autoResetOnSession,
         lastSessionResetAt: arena.lastSessionResetAt ? arena.lastSessionResetAt.toISOString() : null,
       },
+      activities: {
+        rsvpEnabled: arena.rsvpEnabled,
+        defaultActivityCapacity: arena.defaultActivityCapacity,
+        activityHorizonDays: arena.activityHorizonDays,
+      },
       isOwner: viewerRole === 'OWNER',
       viewerUserId: user?.id ?? null,
       members,

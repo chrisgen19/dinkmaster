@@ -39,7 +39,8 @@ vi.mock('@/lib/prisma', () => ({
     },
     arenaInvite: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
     user: { findUnique: vi.fn() },
-    activity: { findFirst: vi.fn(), findMany: vi.fn(), createMany: vi.fn(), upsert: vi.fn() },
+    activity: { findFirst: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), createMany: vi.fn(), upsert: vi.fn() },
+    activityAttendee: { findFirst: vi.fn(), findMany: vi.fn(), count: vi.fn(), aggregate: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   },
 }));
 
@@ -89,6 +90,11 @@ const PLAY = [
   ['updateArenaMatchDefaults', () => actions.updateArenaMatchDefaults(ARENA, { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false })],
   ['updateArenaSessions', () => actions.updateArenaSessions(ARENA, { autoResetOnSession: true })],
   ['prepareNextSession', () => actions.prepareNextSession(ARENA)],
+  ['startActivity', () => actions.startActivity(ARENA)],
+  ['updateArenaActivities', () => actions.updateArenaActivities(ARENA, { rsvpEnabled: true, defaultActivityCapacity: null, activityHorizonDays: 28 })],
+  ['updateActivity', () => actions.updateActivity(ARENA, 'act1', { capacity: 16 })],
+  ['setAttendeeStatus', () => actions.setAttendeeStatus(ARENA, 'act1', 'p1', 'GOING')],
+  ['checkInFromRsvp', () => actions.checkInFromRsvp(ARENA, 'act1')],
   ['createArenaInvite', () => actions.createArenaInvite(ARENA, 'APPROVAL')],
   ['revokeArenaInvite', () => actions.revokeArenaInvite(ARENA, 'inv1')],
   ['checkInPlayer', () => actions.checkInPlayer(ARENA, 'p1')],
@@ -117,6 +123,10 @@ const USER_GATED = [
   ['requestLinkPlayer', () => actions.requestLinkPlayer(ARENA, 'p1')],
   ['cancelLinkRequest', () => actions.cancelLinkRequest(ARENA)],
   ['redeemArenaInvite', () => actions.redeemArenaInvite('code123')],
+  // Self-service on purpose: the whole point of an RSVP is that the player
+  // answers for themselves, so this is the one activity action that is not
+  // manager-gated.
+  ['rsvpToActivity', () => actions.rsvpToActivity('act1', 'GOING')],
 ];
 
 describe('arena server actions — authorization', () => {
@@ -2822,6 +2832,337 @@ describe('invite links', () => {
       const result = await actions.redeemArenaInvite('code123');
       expect(result.error).toBeTruthy();
       expect(tx.arenaMembership.upsert).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('activity attendance — RSVP, capacity, and the waitlist', () => {
+  const ACT = 'act1';
+  const ACTIVITY = { id: ACT, arenaId: ARENA, capacity: null, status: 'SCHEDULED' };
+
+  /**
+   * A tx stub for the attendance path. `confirmed` is how many GOING/CHECKED_IN
+   * rows already exist (what the capacity check counts); `existing` is the
+   * caller's own row, if any.
+   */
+  const attendeeTx = ({
+    activity = ACTIVITY,
+    confirmed = 0,
+    existing = null,
+    member = { arenaId: ARENA, userId: 'u1' },
+    player = { id: 'p1', firstName: 'Ana', lastName: 'Reyes' },
+    rsvpEnabled = true,
+    maxPosition = null,
+    allAttendees = [],
+  } = {}) => ({
+    $executeRaw: vi.fn(),
+    activity: {
+      findUnique: vi.fn().mockResolvedValue(activity),
+      findFirst: vi.fn().mockResolvedValue(activity),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    arena: { findUnique: vi.fn().mockResolvedValue({ rsvpEnabled }) },
+    arenaMembership: { findUnique: vi.fn().mockResolvedValue(member) },
+    player: { findFirst: vi.fn().mockResolvedValue(player) },
+    activityAttendee: {
+      findFirst: vi.fn().mockResolvedValue(existing),
+      findMany: vi.fn().mockResolvedValue(allAttendees),
+      count: vi.fn().mockResolvedValue(confirmed),
+      aggregate: vi.fn().mockResolvedValue({ _max: { position: maxPosition } }),
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireUser.mockResolvedValue({ user: { id: 'u1', name: 'Ana Reyes' } });
+    requireArenaManager.mockResolvedValue({ user: { id: 'u1' }, arena: { id: ARENA }, role: ROLES.OWNER });
+    prisma.activity.findUnique.mockResolvedValue(ACTIVITY);
+  });
+
+  describe('rsvpToActivity()', () => {
+    it('confirms a player when the activity is uncapped', async () => {
+      const tx = attendeeTx();
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.rsvpToActivity(ACT, 'GOING');
+
+      expect(result.status).toBe('GOING');
+      expect(tx.activityAttendee.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            activityId: ACT,
+            playerId: 'p1',
+            userId: 'u1',
+            status: 'GOING',
+            displayName: 'Ana Reyes',
+          }),
+        }),
+      );
+    });
+
+    it('waitlists a player once capacity is reached, numbering from the end', async () => {
+      const tx = attendeeTx({
+        activity: { ...ACTIVITY, capacity: 4 },
+        confirmed: 4,
+        maxPosition: 2, // two already waiting
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.rsvpToActivity(ACT, 'GOING');
+
+      expect(result.status).toBe('WAITLIST');
+      expect(tx.activityAttendee.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'WAITLIST', position: 3 }),
+        }),
+      );
+    });
+
+    it('does not demote someone already confirmed when the cap is full', async () => {
+      // Re-confirming must not bump you out of your own slot.
+      const tx = attendeeTx({
+        activity: { ...ACTIVITY, capacity: 4 },
+        confirmed: 4,
+        existing: { id: 'att1', status: 'GOING' },
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.rsvpToActivity(ACT, 'GOING');
+
+      expect(result.status).toBe('GOING');
+      expect(tx.activityAttendee.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'att1' }, data: expect.objectContaining({ status: 'GOING' }) }),
+      );
+    });
+
+    it('promotes the top of the waitlist when someone withdraws', async () => {
+      const tx = attendeeTx({
+        activity: { ...ACTIVITY, capacity: 2 },
+        existing: { id: 'att1', status: 'GOING' },
+        // Post-write view: one confirmed, two waiting → one slot free.
+        allAttendees: [
+          { id: 'att1', status: 'DECLINED', position: null },
+          { id: 'att2', status: 'GOING', position: null },
+          { id: 'att3', status: 'WAITLIST', position: 2 },
+          { id: 'att4', status: 'WAITLIST', position: 1 },
+        ],
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.rsvpToActivity(ACT, 'DECLINED');
+
+      // First-come-first-serve: position 1 goes up, position 2 stays waiting.
+      expect(tx.activityAttendee.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['att4'] } },
+        data: { status: 'GOING', position: null },
+      });
+    });
+
+    it.each([
+      ['a non-member', { member: null }, /join the arena/i],
+      ['a cancelled activity', { activity: { ...ACTIVITY, status: 'CANCELLED' } }, /cancelled/i],
+      ['a finished activity', { activity: { ...ACTIVITY, status: 'COMPLETED' } }, /already finished/i],
+      ['an arena with RSVPs off', { rsvpEnabled: false }, /turned off/i],
+    ])('refuses %s', async (_label, overrides, pattern) => {
+      const tx = attendeeTx(overrides);
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.rsvpToActivity(ACT, 'GOING');
+
+      expect(result.error).toMatch(pattern);
+      expect(tx.activityAttendee.create).not.toHaveBeenCalled();
+      expect(tx.activityAttendee.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a status a player may not set for themselves', async () => {
+      const result = await actions.rsvpToActivity(ACT, 'CHECKED_IN');
+      expect(result.error).toMatch(/unrecognized/i);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the account name for a member with no player row', async () => {
+      const tx = attendeeTx({ player: null });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.rsvpToActivity(ACT, 'GOING');
+
+      expect(tx.activityAttendee.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ playerId: null, userId: 'u1', displayName: 'Ana Reyes' }),
+        }),
+      );
+    });
+  });
+
+  describe('setAttendeeStatus()', () => {
+    it('lets a manager override capacity deliberately', async () => {
+      // A manager saying someone is coming should not be silently waitlisted.
+      const tx = attendeeTx({ activity: { ...ACTIVITY, capacity: 2 }, confirmed: 5 });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.setAttendeeStatus(ARENA, ACT, 'p1', 'GOING');
+
+      expect(tx.activityAttendee.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'GOING' }) }),
+      );
+    });
+
+    it('rejects an unknown status', async () => {
+      const result = await actions.setAttendeeStatus(ARENA, ACT, 'p1', 'BOGUS');
+      expect(result.error).toMatch(/unrecognized/i);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('checkInFromRsvp()', () => {
+    it('racks every GOING attendee and marks them checked in', async () => {
+      const going = [
+        { id: 'att1', playerId: 'p1' },
+        { id: 'att2', playerId: 'p2' },
+      ];
+      const tx = {
+        $executeRaw: vi.fn(),
+        activity: { findFirst: vi.fn().mockResolvedValue({ id: ACT }) },
+        activityAttendee: {
+          findMany: vi.fn().mockResolvedValue(going),
+          updateMany: vi.fn(),
+        },
+        // applyCheckInTx internals
+        player: {
+          findFirst: vi.fn(async ({ where }) => ({ id: where.id, queueOrder: null, gamesPlayed: 0 })),
+          findMany: vi.fn().mockResolvedValue([]),
+          aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 3 } }),
+          update: vi.fn(),
+        },
+        courtSlot: { findFirst: vi.fn().mockResolvedValue(null) },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.checkInFromRsvp(ARENA, ACT);
+
+      expect(result.checkedIn).toBe(2);
+      expect(tx.player.update).toHaveBeenCalledTimes(2);
+      expect(tx.activityAttendee.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['att1', 'att2'] } },
+        data: expect.objectContaining({ status: 'CHECKED_IN', position: null }),
+      });
+    });
+
+    it('is a clean no-op when nobody has RSVP’d', async () => {
+      const tx = {
+        $executeRaw: vi.fn(),
+        activity: { findFirst: vi.fn().mockResolvedValue({ id: ACT }) },
+        activityAttendee: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() },
+        player: { update: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.checkInFromRsvp(ARENA, ACT);
+
+      expect(result.checkedIn).toBe(0);
+      expect(tx.activityAttendee.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateActivity()', () => {
+    beforeEach(() => {
+      prisma.$transaction.mockImplementation(async (cb) => cb(attendeeTx()));
+    });
+
+    it.each([
+      ['a capacity below 1', { capacity: 0 }],
+      ['a fractional capacity', { capacity: 2.5 }],
+      ['a capacity past the rail', { capacity: 9999 }],
+      ['an over-long title', { title: 'x'.repeat(81) }],
+      ['an over-long note', { notes: 'x'.repeat(501) }],
+      ['a status the manager does not own', { status: 'LIVE' }],
+    ])('rejects %s', async (_label, patch) => {
+      const result = await actions.updateActivity(ARENA, ACT, patch);
+      expect(result.error).toBeTruthy();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('clears capacity when passed null', async () => {
+      const tx = attendeeTx();
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.updateActivity(ARENA, ACT, { capacity: null });
+
+      expect(tx.activity.updateMany).toHaveBeenCalledWith({
+        where: { id: ACT, arenaId: ARENA },
+        data: { capacity: null },
+      });
+    });
+
+    it('scopes the write by arenaId so a foreign id edits nothing', async () => {
+      const tx = attendeeTx();
+      tx.activity.updateMany.mockResolvedValue({ count: 0 });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.updateActivity(ARENA, 'someone-elses', { capacity: 8 });
+
+      expect(result.error).toMatch(/not found/i);
+    });
+
+    it('refuses an empty patch rather than issuing a no-op write', async () => {
+      const result = await actions.updateActivity(ARENA, ACT, {});
+      expect(result.error).toMatch(/nothing to update/i);
+    });
+  });
+
+  describe('updateArenaActivities()', () => {
+    beforeEach(() => {
+      prisma.arena.updateMany.mockResolvedValue({ count: 1 });
+    });
+
+    it('saves the three settings together', async () => {
+      const result = await actions.updateArenaActivities(ARENA, {
+        rsvpEnabled: false,
+        defaultActivityCapacity: 16,
+        activityHorizonDays: 56,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(prisma.arena.updateMany).toHaveBeenCalledWith({
+        where: { id: ARENA },
+        data: { rsvpEnabled: false, defaultActivityCapacity: 16, activityHorizonDays: 56 },
+      });
+    });
+
+    it('treats a blank capacity as uncapped', async () => {
+      await actions.updateArenaActivities(ARENA, {
+        rsvpEnabled: true,
+        defaultActivityCapacity: '',
+        activityHorizonDays: 28,
+      });
+
+      expect(prisma.arena.updateMany).toHaveBeenCalledWith({
+        where: { id: ARENA },
+        data: expect.objectContaining({ defaultActivityCapacity: null }),
+      });
+    });
+
+    it.each([
+      ['a non-boolean rsvpEnabled', { rsvpEnabled: 'yes', activityHorizonDays: 28 }],
+      ['a zero horizon', { rsvpEnabled: true, activityHorizonDays: 0 }],
+      ['a horizon past the rail', { rsvpEnabled: true, activityHorizonDays: 999 }],
+      ['a fractional capacity', { rsvpEnabled: true, defaultActivityCapacity: 1.5, activityHorizonDays: 28 }],
+    ])('rejects %s', async (_label, patch) => {
+      const result = await actions.updateArenaActivities(ARENA, patch);
+      expect(result.error).toBeTruthy();
+      expect(prisma.arena.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('reports a clean error when the arena was deleted mid-write', async () => {
+      prisma.arena.updateMany.mockResolvedValue({ count: 0 });
+      const result = await actions.updateArenaActivities(ARENA, {
+        rsvpEnabled: true,
+        activityHorizonDays: 28,
+      });
+      expect(result.error).toMatch(/no longer exists/i);
     });
   });
 });

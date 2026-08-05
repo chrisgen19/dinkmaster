@@ -19,7 +19,7 @@ export default async function ArenaActivitiesPage({ params, searchParams }) {
   const { scope: rawScope } = (await searchParams) ?? {};
   const scope = rawScope === 'past' ? 'past' : 'upcoming';
 
-  const { arena, canManage } = await loadArenaForActivities(id);
+  const { arena, canManage, viewerRole, viewerUserId } = await loadArenaForActivities(id);
 
   // Materialize before reading. Idempotent, so calling it on every load is
   // safe and makes the page self-healing: a club that goes quiet for two
@@ -30,7 +30,11 @@ export default async function ArenaActivitiesPage({ params, searchParams }) {
   // near its boundary can't be classified one way here and another after
   // hydration.
   const now = new Date();
-  const activities = await listActivities(id, { scope, now });
+  const activities = await listActivities(id, { scope, now, viewerUserId });
+
+  // RSVP is for members answering for themselves — spectators and non-members
+  // see the calendar but no buttons.
+  const canRsvp = arena.rsvpEnabled && !!viewerRole;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
@@ -46,6 +50,7 @@ export default async function ArenaActivitiesPage({ params, searchParams }) {
           canManage={canManage}
           hasSchedule={arena.scheduleDays.length > 0}
           nowIso={now.toISOString()}
+          canRsvp={canRsvp}
         />
       </main>
     </div>

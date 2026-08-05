@@ -13,6 +13,8 @@ const SCHEDULE_SELECT = {
   scheduleStart: true,
   scheduleEnd: true,
   timezone: true,
+  defaultActivityCapacity: true,
+  activityHorizonDays: true,
 };
 
 /** Shape an Arena row into the `{days, start, end, timezone}` view-model sessions.js expects. */
@@ -39,17 +41,19 @@ function toSchedule(arena) {
  * (title, capacity, notes, a cancellation) survive every subsequent call.
  *
  * @param {string} arenaId
- * @param {{now?: Date, horizonDays?: number}} [opts]
+ * @param {{now?: Date, horizonDays?: number}} [opts] - `horizonDays` overrides
+ *   the arena's own setting; omit it so the manager's choice wins.
  * @returns {Promise<number>} how many rows were created
  */
-export async function ensureUpcomingActivities(arenaId, { now, horizonDays = DEFAULT_HORIZON_DAYS } = {}) {
+export async function ensureUpcomingActivities(arenaId, { now, horizonDays } = {}) {
   if (!arenaId) throw new Error('ensureUpcomingActivities requires an arenaId');
 
   const arena = await prisma.arena.findUnique({ where: { id: arenaId }, select: SCHEDULE_SELECT });
   if (!arena) return 0;
 
+  const horizon = horizonDays ?? arena.activityHorizonDays ?? DEFAULT_HORIZON_DAYS;
   const schedule = toSchedule(arena);
-  const windows = upcomingWindows(schedule, now ? new Date(now) : new Date(), horizonDays);
+  const windows = upcomingWindows(schedule, now ? new Date(now) : new Date(), horizon);
   if (windows.length === 0) return 0;
 
   // One round trip to find what's already there, so the common case (nothing to
@@ -70,6 +74,9 @@ export async function ensureUpcomingActivities(arenaId, { now, horizonDays = DEF
       timezone: schedule.timezone,
       status: 'SCHEDULED',
       source: 'SCHEDULE',
+      // Seeded at creation only. Changing the arena default later never
+      // rewrites an existing night, so a manager's per-activity override sticks.
+      capacity: arena.defaultActivityCapacity ?? null,
     })),
     // Belt and braces: two page loads racing on the same empty arena would
     // otherwise have one of them fail the unique constraint.
@@ -96,9 +103,9 @@ export async function ensureUpcomingActivities(arenaId, { now, horizonDays = DEF
  *     visible (greyed) rather than vanishing, since players may have RSVP'd.
  *
  * @param {string} arenaId
- * @param {{scope?: 'upcoming'|'past', now?: Date, take?: number}} [opts]
+ * @param {{scope?: 'upcoming'|'past', now?: Date, take?: number, viewerUserId?: string|null}} [opts]
  */
-export async function listActivities(arenaId, { scope = 'upcoming', now, take = 20 } = {}) {
+export async function listActivities(arenaId, { scope = 'upcoming', now, take = 20, viewerUserId = null } = {}) {
   if (!arenaId) throw new Error('listActivities requires an arenaId');
   const nowDate = now ? new Date(now) : new Date();
   const where = { arenaId, ...activityScopeFilter(scope, nowDate) };
@@ -109,11 +116,13 @@ export async function listActivities(arenaId, { scope = 'upcoming', now, take = 
     take,
     include: {
       _count: { select: { matches: true, attendees: true } },
-      attendees: { select: { status: true } },
+      // The full status list serves the counts; `userId` rides along so the
+      // viewer's own row can be picked out without a second query per activity.
+      attendees: { select: { status: true, userId: true, position: true } },
     },
   });
 
-  return rows.map(shapeSummary);
+  return rows.map((row) => shapeSummary(row, viewerUserId));
 }
 
 /**
@@ -133,16 +142,23 @@ export function activityScopeFilter(scope, now) {
 }
 
 /** Count attendees by status without a second query — the lists are small (tens, not thousands). */
-function shapeSummary(row) {
+function shapeSummary(row, viewerUserId = null) {
   const counts = { going: 0, waitlist: 0, declined: 0, checkedIn: 0, noShow: 0 };
+  let viewer = null;
   for (const a of row.attendees ?? []) {
     if (a.status === 'GOING') counts.going += 1;
     else if (a.status === 'WAITLIST') counts.waitlist += 1;
     else if (a.status === 'DECLINED') counts.declined += 1;
     else if (a.status === 'CHECKED_IN') counts.checkedIn += 1;
     else if (a.status === 'NO_SHOW') counts.noShow += 1;
+    if (viewerUserId && a.userId === viewerUserId) {
+      viewer = { status: a.status, position: a.position ?? null };
+    }
   }
   return {
+    // The viewer's own RSVP, so the buttons render in the right state on first
+    // paint rather than flashing "not answered" and correcting after hydration.
+    viewerRsvp: viewer,
     id: row.id,
     title: row.title,
     startsAt: row.startsAt.toISOString(),
@@ -168,7 +184,7 @@ function shapeSummary(row) {
  * Returns null when the activity doesn't exist. `arenaId` is checked by the
  * caller against the route's arena so an id from another club can't be read.
  */
-export async function getActivityDetail(activityId) {
+export async function getActivityDetail(activityId, { viewerUserId = null } = {}) {
   if (!activityId) throw new Error('getActivityDetail requires an activityId');
 
   const row = await prisma.activity.findUnique({
@@ -182,7 +198,7 @@ export async function getActivityDetail(activityId) {
   if (!row) return null;
 
   return {
-    ...shapeSummary(row),
+    ...shapeSummary(row, viewerUserId),
     arenaId: row.arenaId,
     attendees: row.attendees.map((a) => ({
       id: a.id,
@@ -210,6 +226,24 @@ export async function getActivityDetail(activityId) {
         .map((p) => ({ id: p.playerId, firstName: p.playerFirstName, lastName: p.playerLastName })),
     })),
   };
+}
+
+/**
+ * Just the attendee rows for one activity.
+ *
+ * Split out from `getActivityDetail` because the arena board needs attendance
+ * for the prep roster but none of the matches or standings that detail carries.
+ *
+ * @param {string} activityId
+ */
+export async function getActivityAttendees(activityId) {
+  if (!activityId) return [];
+  const rows = await prisma.activityAttendee.findMany({
+    where: { activityId },
+    select: { id: true, playerId: true, userId: true, displayName: true, status: true, position: true },
+    orderBy: [{ status: 'asc' }, { position: 'asc' }, { createdAt: 'asc' }],
+  });
+  return rows;
 }
 
 /**

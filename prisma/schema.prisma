@@ -85,6 +85,16 @@ model Arena {
   lastSessionResetAt DateTime?
   autoResetOnSession Boolean   @default(true)
 
+  // Per-arena Activity settings. `rsvpEnabled` off hides every RSVP affordance
+  // for clubs that run pure walk-in — activities still record standings and
+  // match logs, they just don't ask who's coming. `defaultActivityCapacity`
+  // seeds new SCHEDULE activities as they materialize (null = uncapped) and is
+  // only a default: editing one activity's capacity never touches the others.
+  // `activityHorizonDays` is how far ahead `ensureUpcomingActivities` fills.
+  rsvpEnabled             Boolean @default(true)
+  defaultActivityCapacity Int?
+  activityHorizonDays     Int     @default(28)
+
   // Advisory offline hold (Phase 4 of offline session mode). Set by
   // `declareOfflineHold` when a manager starts running the board offline
   // while still reachable; cleared by `releaseOfflineHold` and inside the

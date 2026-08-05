@@ -41,6 +41,10 @@ import {
 } from '@/lib/board-apply';
 import { boardFingerprint } from '@/lib/board-fingerprint';
 import { ensureUpcomingActivities, resolveActivityToOpen } from '@/lib/activities-server';
+import { promoteFromWaitlist } from '@/lib/activities';
+
+/** Upper bound on an activity's capacity — a sanity rail, not a real-world limit. */
+const MAX_ACTIVITY_CAPACITY = 500;
 
 // Separate advisory-lock namespace for invite creation, keyed per arena, so two
 // managers minting a link for the same arena are serialized and can't both pass
@@ -1122,6 +1126,370 @@ export async function prepareNextSession(arenaId) {
   return startActivity(arenaId);
 }
 
+// --- Activity attendance / RSVP -------------------------------------------
+
+/** RSVP states a player may set for themselves. Manager-only states are excluded. */
+const SELF_RSVP_STATUSES = ['GOING', 'DECLINED'];
+/** Every state a manager may assign. */
+const MANAGER_RSVP_STATUSES = ['GOING', 'WAITLIST', 'DECLINED', 'CHECKED_IN', 'NO_SHOW'];
+
+/**
+ * Apply one attendee's status inside an open transaction, enforcing capacity
+ * and settling the waitlist afterwards.
+ *
+ * Capacity is enforced here rather than at the call site so every path that can
+ * add an attendee — self-RSVP and a manager adding someone by hand — obeys the
+ * same rule. `promoteFromWaitlist` (pure, tested in activities.test.js) decides
+ * who moves up; this function only applies the decision.
+ *
+ * @param {import('@/generated/prisma').Prisma.TransactionClient} tx
+ * @param {{id:string, capacity:number|null}} activity
+ * @param {{playerId?:string|null, userId?:string|null, displayName:string}} who
+ * @param {'GOING'|'WAITLIST'|'DECLINED'|'CHECKED_IN'|'NO_SHOW'} desired
+ * @param {boolean} enforceCapacity - false when a manager is deliberately overriding
+ */
+async function applyAttendeeStatusTx(tx, activity, who, desired, { enforceCapacity = true } = {}) {
+  const existing = await tx.activityAttendee.findFirst({
+    where: {
+      activityId: activity.id,
+      ...(who.playerId ? { playerId: who.playerId } : { userId: who.userId }),
+    },
+  });
+
+  let status = desired;
+  let position = null;
+
+  // Only a fresh GOING can be bumped to the waitlist. Someone already confirmed
+  // keeps their slot — a capacity cut must not silently evict people who were
+  // already in, and re-confirming shouldn't demote you.
+  const alreadyConfirmed = existing?.status === 'GOING' || existing?.status === 'CHECKED_IN';
+  if (desired === 'GOING' && enforceCapacity && activity.capacity != null && !alreadyConfirmed) {
+    const confirmed = await tx.activityAttendee.count({
+      where: { activityId: activity.id, status: { in: ['GOING', 'CHECKED_IN'] } },
+    });
+    if (confirmed >= activity.capacity) {
+      status = 'WAITLIST';
+      const last = await tx.activityAttendee.aggregate({
+        where: { activityId: activity.id, status: 'WAITLIST' },
+        _max: { position: true },
+      });
+      position = (last._max.position ?? 0) + 1;
+    }
+  }
+
+  const data = {
+    status,
+    position,
+    displayName: who.displayName,
+    ...(status === 'CHECKED_IN' ? { checkedInAt: new Date() } : {}),
+  };
+
+  if (existing) {
+    await tx.activityAttendee.update({ where: { id: existing.id }, data });
+  } else {
+    await tx.activityAttendee.create({
+      data: {
+        activityId: activity.id,
+        playerId: who.playerId ?? null,
+        userId: who.userId ?? null,
+        ...data,
+      },
+    });
+  }
+
+  await settleWaitlistTx(tx, activity);
+  return status;
+}
+
+/**
+ * Promote waitlisted attendees into any slots that have opened up.
+ *
+ * Called after every attendance write, which is what makes a drop
+ * self-healing: someone declining at 5pm pulls the top of the waitlist in
+ * without anyone having to notice.
+ */
+async function settleWaitlistTx(tx, activity) {
+  const attendees = await tx.activityAttendee.findMany({
+    where: { activityId: activity.id },
+    select: { id: true, status: true, position: true },
+  });
+  const toPromote = promoteFromWaitlist(attendees, activity.capacity);
+  if (toPromote.length === 0) return;
+  await tx.activityAttendee.updateMany({
+    where: { id: { in: toPromote } },
+    data: { status: 'GOING', position: null },
+  });
+}
+
+/**
+ * RSVP yourself to an activity. Signed-in members only — this is the one
+ * activity action that is NOT manager-gated, since the whole point is that
+ * players answer for themselves.
+ *
+ * Going past a set capacity lands you on the waitlist rather than failing, and
+ * withdrawing promotes whoever is next. Returns the resulting status so the
+ * caller can tell "you're in" from "you're #3 in line".
+ *
+ * @param {string} activityId
+ * @param {'GOING'|'DECLINED'} status
+ */
+export async function rsvpToActivity(activityId, status) {
+  const guard = await requireUser();
+  if (guard.error) return { error: guard.error };
+  if (!activityId) return { error: 'Activity not found.' };
+  if (!SELF_RSVP_STATUSES.includes(status)) return { error: 'Unrecognized RSVP.' };
+
+  let errorMessage = '';
+  let resulting = null;
+
+  const activityRow = await prisma.activity.findUnique({
+    where: { id: activityId },
+    select: { id: true, arenaId: true, capacity: true, status: true },
+  });
+  if (!activityRow) return { error: 'Activity not found.' };
+
+  // Every check AND the write run inside `lockQueue` so a concurrent RSVP can't
+  // slip past a capacity check that has already been made.
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, activityRow.arenaId);
+
+    const activity = await tx.activity.findUnique({
+      where: { id: activityId },
+      select: { id: true, arenaId: true, capacity: true, status: true },
+    });
+    if (!activity) {
+      errorMessage = 'Activity not found.';
+      return;
+    }
+    if (activity.status === 'CANCELLED') {
+      errorMessage = 'That session was cancelled.';
+      return;
+    }
+    if (activity.status === 'COMPLETED') {
+      errorMessage = 'That session has already finished.';
+      return;
+    }
+
+    const arena = await tx.arena.findUnique({
+      where: { id: activity.arenaId },
+      select: { rsvpEnabled: true },
+    });
+    if (!arena?.rsvpEnabled) {
+      errorMessage = 'RSVPs are turned off for this arena.';
+      return;
+    }
+
+    // Members only. Owners have a membership row too (created on arena creation
+    // and kept in sync on transfer), so one check covers everyone.
+    const membership = await tx.arenaMembership.findUnique({
+      where: { arenaId_userId: { arenaId: activity.arenaId, userId: guard.user.id } },
+    });
+    if (!membership) {
+      errorMessage = 'Join the arena before RSVPing.';
+      return;
+    }
+
+    // Their Player row, when they have one. Attendance is keyed by player where
+    // possible so check-in can rack them, and falls back to userId for a member
+    // who has never played.
+    const player = await tx.player.findFirst({
+      where: { arenaId: activity.arenaId, userId: guard.user.id, leftAt: null },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    const displayName = player
+      ? [player.firstName, player.lastName].filter(Boolean).join(' ')
+      : (guard.user.name ?? 'Member');
+
+    resulting = await applyAttendeeStatusTx(
+      tx,
+      activity,
+      { playerId: player?.id ?? null, userId: guard.user.id, displayName },
+      status,
+    );
+  });
+
+  if (errorMessage) return { error: errorMessage };
+  return { status: resulting };
+}
+
+/**
+ * Set someone else's attendance status. Manager-gated — the roster-management
+ * counterpart to `rsvpToActivity`, used to add a walk-in who phoned ahead or
+ * mark a no-show.
+ *
+ * Capacity is NOT enforced here: a manager saying someone is coming is a
+ * deliberate override, and silently waitlisting them would be surprising.
+ */
+export async function setAttendeeStatus(arenaId, activityId, playerId, status) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+  if (!activityId || !playerId) return { error: 'Player not found.' };
+  if (!MANAGER_RSVP_STATUSES.includes(status)) return { error: 'Unrecognized status.' };
+
+  let errorMessage = '';
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+
+    const activity = await tx.activity.findFirst({
+      where: { id: activityId, arenaId },
+      select: { id: true, arenaId: true, capacity: true, status: true },
+    });
+    if (!activity) {
+      errorMessage = 'Activity not found.';
+      return;
+    }
+
+    const player = await tx.player.findFirst({
+      where: { id: playerId, arenaId, leftAt: null },
+      select: { id: true, userId: true, firstName: true, lastName: true },
+    });
+    if (!player) {
+      errorMessage = 'Player not found.';
+      return;
+    }
+
+    await applyAttendeeStatusTx(
+      tx,
+      activity,
+      {
+        playerId: player.id,
+        userId: player.userId,
+        displayName: [player.firstName, player.lastName].filter(Boolean).join(' '),
+      },
+      status,
+      { enforceCapacity: false },
+    );
+  });
+
+  if (errorMessage) return { error: errorMessage };
+  return { ok: true };
+}
+
+/**
+ * Rack everyone who said they're coming. Manager-gated.
+ *
+ * The payoff of collecting RSVPs: instead of ticking fourteen names by hand,
+ * the manager taps once and the rack is tonight's roster. Uses the same
+ * `applyCheckInTx` as the roster modal, so ordering, `gamesOffset` re-anchoring,
+ * and the already-on-court guard all behave identically. Idempotent.
+ */
+export async function checkInFromRsvp(arenaId, activityId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+  if (!activityId) return { error: 'Activity not found.', state: await getState(arenaId) };
+
+  let errorMessage = '';
+  let checkedIn = 0;
+
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+
+    const activity = await tx.activity.findFirst({
+      where: { id: activityId, arenaId },
+      select: { id: true },
+    });
+    if (!activity) {
+      errorMessage = 'Activity not found.';
+      return;
+    }
+
+    const going = await tx.activityAttendee.findMany({
+      where: { activityId, status: 'GOING', playerId: { not: null } },
+      select: { id: true, playerId: true },
+    });
+
+    for (const attendee of going) {
+      await applyCheckInTx(tx, arenaId, { playerId: attendee.playerId });
+    }
+    if (going.length > 0) {
+      await tx.activityAttendee.updateMany({
+        where: { id: { in: going.map((a) => a.id) } },
+        data: { status: 'CHECKED_IN', position: null, checkedInAt: new Date() },
+      });
+    }
+    checkedIn = going.length;
+  });
+
+  if (errorMessage) return { error: errorMessage, state: await getState(arenaId) };
+  return { state: await getState(arenaId), checkedIn };
+}
+
+/**
+ * Edit one activity's details. Manager-gated.
+ *
+ * Only touches the fields a manager owns — the schedule-derived window is left
+ * alone, since moving it would orphan the matches already stamped to it.
+ * Lowering `capacity` never evicts anyone already confirmed; it just stops new
+ * confirmations, and raising it settles the waitlist immediately.
+ *
+ * @param {string} arenaId
+ * @param {string} activityId
+ * @param {{title?:string|null, notes?:string|null, capacity?:number|null, status?:'SCHEDULED'|'CANCELLED'}} patch
+ */
+export async function updateActivity(arenaId, activityId, patch = {}) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+  if (!activityId) return { error: 'Activity not found.' };
+
+  const data = {};
+  if ('title' in patch) {
+    const title = (patch.title ?? '').trim();
+    if (title.length > 80) return { error: 'Title must be 80 characters or fewer.' };
+    data.title = title || null;
+  }
+  if ('notes' in patch) {
+    const notes = (patch.notes ?? '').trim();
+    if (notes.length > 500) return { error: 'Notes must be 500 characters or fewer.' };
+    data.notes = notes || null;
+  }
+  if ('capacity' in patch) {
+    if (patch.capacity === null || patch.capacity === '') {
+      data.capacity = null;
+    } else {
+      const capacity = Number(patch.capacity);
+      if (!Number.isInteger(capacity) || capacity < 1 || capacity > MAX_ACTIVITY_CAPACITY) {
+        return { error: `Capacity must be a whole number between 1 and ${MAX_ACTIVITY_CAPACITY}.` };
+      }
+      data.capacity = capacity;
+    }
+  }
+  if ('status' in patch) {
+    // Only the cancel/uncancel transition is a manager's to make. LIVE and
+    // COMPLETED are owned by `startActivity`, which has the rack and the
+    // partnership matrix to keep consistent with them.
+    if (!['SCHEDULED', 'CANCELLED'].includes(patch.status)) {
+      return { error: 'Unrecognized activity status.' };
+    }
+    data.status = patch.status;
+  }
+  if (Object.keys(data).length === 0) return { error: 'Nothing to update.' };
+
+  let errorMessage = '';
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+
+    // updateMany, scoped by arenaId, so an id from another club matches nothing
+    // rather than editing someone else's night.
+    const updated = await tx.activity.updateMany({ where: { id: activityId, arenaId }, data });
+    if (updated.count === 0) {
+      errorMessage = 'Activity not found.';
+      return;
+    }
+
+    // A raised cap may have freed slots for people already waiting.
+    if ('capacity' in data) {
+      const activity = await tx.activity.findUnique({
+        where: { id: activityId },
+        select: { id: true, capacity: true },
+      });
+      if (activity) await settleWaitlistTx(tx, activity);
+    }
+  });
+
+  if (errorMessage) return { error: errorMessage };
+  return { ok: true };
+}
+
 /**
  * Check a player into the rack — bottom-of-queue placement. Works for both
  * registered members and walk-ins; the Prep Roster modal uses this for
@@ -1518,6 +1886,69 @@ export async function updateArenaSessions(arenaId, { autoResetOnSession } = {}) 
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
   return { sessions: { autoResetOnSession } };
+}
+
+/** Widest materialization horizon a manager can set, in days. */
+const MAX_ACTIVITY_HORIZON_DAYS = 120;
+
+/**
+ * Update the arena's Activity settings — whether RSVPs are collected, the
+ * capacity new activities start with, and how far ahead the schedule
+ * materializes. Manager-gated.
+ *
+ * `defaultActivityCapacity` seeds activities as they are created; it never
+ * rewrites the capacity of one that already exists, so a manager's per-night
+ * override survives a change to the default.
+ */
+export async function updateArenaActivities(
+  arenaId,
+  { rsvpEnabled, defaultActivityCapacity, activityHorizonDays } = {},
+) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error };
+
+  if (typeof rsvpEnabled !== 'boolean') {
+    return { error: 'rsvpEnabled must be true or false.' };
+  }
+
+  let capacity = null;
+  if (defaultActivityCapacity !== null && defaultActivityCapacity !== undefined && defaultActivityCapacity !== '') {
+    capacity = Number(defaultActivityCapacity);
+    if (!Number.isInteger(capacity) || capacity < 1 || capacity > MAX_ACTIVITY_CAPACITY) {
+      return { error: `Default capacity must be a whole number between 1 and ${MAX_ACTIVITY_CAPACITY}.` };
+    }
+  }
+
+  const horizon = Number(activityHorizonDays);
+  if (!Number.isInteger(horizon) || horizon < 1 || horizon > MAX_ACTIVITY_HORIZON_DAYS) {
+    return { error: `Horizon must be a whole number between 1 and ${MAX_ACTIVITY_HORIZON_DAYS} days.` };
+  }
+
+  const updated = await prisma.arena.updateMany({
+    where: { id: arenaId },
+    data: {
+      rsvpEnabled,
+      defaultActivityCapacity: capacity,
+      activityHorizonDays: horizon,
+    },
+  });
+  if (updated.count === 0) return { error: 'This arena no longer exists.' };
+
+  // Widening the horizon should show new nights immediately rather than on the
+  // next page load. Non-fatal: the lazy call on read catches up regardless.
+  try {
+    await ensureUpcomingActivities(arenaId);
+  } catch {
+    // The settings themselves are saved.
+  }
+
+  return {
+    activities: {
+      rsvpEnabled,
+      defaultActivityCapacity: capacity,
+      activityHorizonDays: horizon,
+    },
+  };
 }
 
 // --- Membership (Phase 3) -------------------------------------------------

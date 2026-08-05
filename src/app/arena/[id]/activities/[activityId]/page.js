@@ -19,8 +19,8 @@ export const dynamic = 'force-dynamic';
 export default async function ArenaActivityPage({ params }) {
   const { id, activityId } = await params;
 
-  const { arena, canManage } = await loadArenaForActivities(id);
-  const activity = await getActivityDetail(activityId);
+  const { arena, canManage, viewerRole, viewerUserId } = await loadArenaForActivities(id);
+  const activity = await getActivityDetail(activityId, { viewerUserId });
 
   // Check ownership explicitly: without it, an activity id from another club
   // would render here under this arena's name.
@@ -44,6 +44,8 @@ export default async function ArenaActivityPage({ params }) {
           gameCount={gameCount}
           playerCount={playerCount}
           canManage={canManage}
+          // Members answer for themselves; spectators see the record only.
+          canRsvp={arena.rsvpEnabled && !!viewerRole}
         />
       </main>
     </div>

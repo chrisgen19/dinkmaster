@@ -67,6 +67,9 @@ export async function getArena(id) {
       showPartnershipMatrix: true,
       lastSessionResetAt: true,
       autoResetOnSession: true,
+      rsvpEnabled: true,
+      defaultActivityCapacity: true,
+      activityHorizonDays: true,
     },
   });
 }

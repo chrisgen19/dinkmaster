@@ -11,7 +11,7 @@ import {
 } from '@/lib/arenas';
 import { getCurrentUser } from '@/lib/session';
 import { canManageArena, ROLES } from '@/lib/roles';
-import { ensureUpcomingActivities, listActivities } from '@/lib/activities-server';
+import { ensureUpcomingActivities, getActivityAttendees, listActivities } from '@/lib/activities-server';
 import Arena from '../../arena';
 
 // Always read fresh arena state from the database on each request.
@@ -58,6 +58,14 @@ export default async function ArenaPage({ params }) {
         (arena.ownerId === user.id ? ROLES.OWNER : null))
     : null;
   const canManage = canManageArena(viewerRole);
+
+  // RSVPs for the open activity, for the prep roster's "going" chips and bulk
+  // check-in. Managers only — nobody else can act on them, so nobody else pays
+  // for the query.
+  const activityAttendees =
+    canManage && initialState.currentActivity
+      ? await getActivityAttendees(initialState.currentActivity.id)
+      : [];
 
   // Managers see the pending-request queue; a signed-in non-member sees whether
   // their own request is pending. Managers also see pending link requests, and
@@ -108,6 +116,7 @@ export default async function ArenaPage({ params }) {
         lastSessionResetAt: arena.lastSessionResetAt ? arena.lastSessionResetAt.toISOString() : null,
       }}
       nextActivity={nextActivity}
+      activityAttendees={activityAttendees}
       canManage={canManage}
       viewerRole={viewerRole}
       viewerUserId={user?.id ?? null}

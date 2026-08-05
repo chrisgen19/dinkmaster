@@ -3,7 +3,7 @@
 import { useState, useTransition, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { updateArenaGeneral, updateArenaSchedule, updateArenaMatchmaking, updateArenaMatchDefaults, updateArenaSessions, prepareNextSession, resetArena, transferOwnership, deleteArena } from './actions';
+import { updateArenaGeneral, updateArenaSchedule, updateArenaMatchmaking, updateArenaMatchDefaults, updateArenaSessions, updateArenaActivities, prepareNextSession, resetArena, transferOwnership, deleteArena } from './actions';
 import { ScheduleFields } from './schedule-fields';
 import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
 import {
@@ -112,6 +112,7 @@ function useSavedFlag(ms = 2500) {
 const SECTIONS = [
   { id: 'general', label: 'General', hint: 'Name and description', Icon: IconSettings },
   { id: 'schedule', label: 'Schedule', hint: 'Play days, times, timezone', Icon: IconCalendar },
+  { id: 'activities', label: 'Activities', hint: 'RSVPs, capacity, how far ahead', Icon: IconCalendar },
   { id: 'sessions', label: 'Sessions', hint: 'Auto-reset rack on play day', Icon: IconRefresh },
   { id: 'matchmaking', label: 'Matchmaking', hint: 'Wait thresholds for promotion', Icon: IconShuffle },
   { id: 'matchDefaults', label: 'Match Defaults', hint: 'Target score, mix, leaderboard', Icon: IconTarget },
@@ -122,12 +123,14 @@ const SECTIONS = [
  * Render the body for a given section id. Centralised so the desktop shell
  * and the mobile section page can call the same render path.
  */
-function SectionBody({ id, arenaId, arenaName, description, schedule, matchmaking, matchDefaults, sessions, isOwner, viewerUserId, members }) {
+function SectionBody({ id, arenaId, arenaName, description, schedule, matchmaking, matchDefaults, sessions, activities, isOwner, viewerUserId, members }) {
   switch (id) {
     case 'general':
       return <GeneralSection arenaId={arenaId} initialName={arenaName} initialDescription={description} />;
     case 'schedule':
       return <ScheduleSection arenaId={arenaId} schedule={schedule} />;
+    case 'activities':
+      return <ActivitiesSection arenaId={arenaId} activities={activities} />;
     case 'sessions':
       return <SessionsSection arenaId={arenaId} sessions={sessions} />;
     case 'matchmaking':
@@ -153,7 +156,7 @@ function SectionBody({ id, arenaId, arenaName, description, schedule, matchmakin
  * Just Work. The desktop tablist arrow-key handler still moves focus across
  * the links, matching the arena tab bar pattern.
  */
-export function ArenaSettings({ section = null, arenaId, arenaName, description, schedule, matchmaking, matchDefaults, sessions, isOwner, viewerUserId, members }) {
+export function ArenaSettings({ section = null, arenaId, arenaName, description, schedule, matchmaking, matchDefaults, sessions, activities, isOwner, viewerUserId, members }) {
   // Defensive: an unknown section id (legacy bookmark, typo) falls back to
   // 'general' on desktop and to the index on mobile.
   const validSection = section && SECTIONS.some((s) => s.id === section) ? section : null;
@@ -298,6 +301,7 @@ export function ArenaSettings({ section = null, arenaId, arenaName, description,
               matchmaking={matchmaking}
               matchDefaults={matchDefaults}
               sessions={sessions}
+              activities={activities}
               isOwner={isOwner}
               viewerUserId={viewerUserId}
               members={members}
@@ -435,6 +439,139 @@ function ScheduleSection({ arenaId, schedule }) {
         >
           {isPending ? 'Saving…' : 'Save schedule'}
         </button>
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Settings → Activities. Governs how the club's calendar behaves: whether
+ * players are asked to RSVP, the capacity new nights start with, and how far
+ * ahead the schedule materializes into activity rows.
+ */
+function ActivitiesSection({ arenaId, activities }) {
+  const router = useRouter();
+  const [rsvpEnabled, setRsvpEnabled] = useState(activities?.rsvpEnabled ?? true);
+  const [capacity, setCapacity] = useState(
+    activities?.defaultActivityCapacity == null ? '' : String(activities.defaultActivityCapacity),
+  );
+  const [horizon, setHorizon] = useState(String(activities?.activityHorizonDays ?? 28));
+  const [error, setError] = useState('');
+  const [isPending, startTransition] = useTransition();
+  const [saved, flashSaved] = useSavedFlag();
+
+  const save = (overrides = {}) => {
+    setError('');
+    startTransition(async () => {
+      const result = await updateArenaActivities(arenaId, {
+        rsvpEnabled,
+        defaultActivityCapacity: capacity === '' ? null : Number(capacity),
+        activityHorizonDays: Number(horizon),
+        ...overrides,
+      });
+      if (result?.error) {
+        setError(result.error);
+        return;
+      }
+      flashSaved();
+      router.refresh();
+    });
+  };
+
+  // Optimistic flip with rollback, matching SessionsSection's toggle: the
+  // checkbox is the control people expect to respond instantly.
+  const toggleRsvp = (next) => {
+    setRsvpEnabled(next);
+    setError('');
+    startTransition(async () => {
+      const result = await updateArenaActivities(arenaId, {
+        rsvpEnabled: next,
+        defaultActivityCapacity: capacity === '' ? null : Number(capacity),
+        activityHorizonDays: Number(horizon),
+      });
+      if (result?.error) {
+        setRsvpEnabled(!next);
+        setError(result.error);
+        return;
+      }
+      flashSaved();
+      router.refresh();
+    });
+  };
+
+  return (
+    <Card
+      title="Activities"
+      hint="Each play day on your schedule becomes an activity with its own standings, match log, and attendance. These settings control how they're created."
+    >
+      <label className="flex items-start gap-3">
+        <input
+          type="checkbox"
+          checked={rsvpEnabled}
+          onChange={(e) => toggleRsvp(e.target.checked)}
+          disabled={isPending}
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500/30"
+        />
+        <span className="text-sm text-slate-700">
+          <span className="font-semibold">Collect RSVPs</span>
+          <span className="mt-1 block text-xs text-slate-500">
+            Members can mark themselves going or not for upcoming sessions, and the prep roster
+            floats them to the top so you can check everyone in with one tap. Turn this off for a
+            pure walk-in club — activities still record standings and match logs either way.
+          </span>
+        </span>
+      </label>
+
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        <label className="block">
+          <span className="block text-[11px] font-extrabold uppercase tracking-widest text-slate-400">
+            Default capacity
+          </span>
+          <input
+            type="number"
+            min="1"
+            max="500"
+            inputMode="numeric"
+            value={capacity}
+            onChange={(e) => setCapacity(e.target.value)}
+            placeholder="Uncapped"
+            className={inputClass}
+          />
+          <span className="mt-1 block text-xs text-slate-500">
+            Applied to new sessions as they&rsquo;re created. Changing it never rewrites a session
+            that already exists, so per-night overrides stick.
+          </span>
+        </label>
+
+        <label className="block">
+          <span className="block text-[11px] font-extrabold uppercase tracking-widest text-slate-400">
+            Create sessions ahead (days)
+          </span>
+          <input
+            type="number"
+            min="1"
+            max="120"
+            inputMode="numeric"
+            value={horizon}
+            onChange={(e) => setHorizon(e.target.value)}
+            className={inputClass}
+          />
+          <span className="mt-1 block text-xs text-slate-500">
+            How far into the future the calendar is filled in. Longer lets people RSVP earlier.
+          </span>
+        </label>
+      </div>
+
+      <div className="mt-5 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => save()}
+          disabled={isPending}
+          className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-50"
+        >
+          Save
+        </button>
+        <Status saved={saved} error={error} />
       </div>
     </Card>
   );

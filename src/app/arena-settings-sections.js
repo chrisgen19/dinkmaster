@@ -9,6 +9,7 @@
 export const SETTINGS_SECTION_SLUGS = [
   'general',
   'schedule',
+  'activities',
   'sessions',
   'matchmaking',
   'match-defaults',
@@ -19,6 +20,7 @@ export const SETTINGS_SECTION_SLUGS = [
 const SLUG_TO_ID = {
   general: 'general',
   schedule: 'schedule',
+  activities: 'activities',
   sessions: 'sessions',
   matchmaking: 'matchmaking',
   'match-defaults': 'matchDefaults',

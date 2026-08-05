@@ -4,6 +4,8 @@ import { useMemo } from 'react';
 import Link from 'next/link';
 import { BackPill } from './back-pill';
 import { MatchHistory } from './match-history';
+import { ArenaActivityRsvp } from './arena-activity-rsvp';
+import { ArenaActivityCapacity } from './arena-activity-capacity';
 import { toMatch } from '@/lib/match-history';
 import { activityTimeRange, activityTitle } from '@/lib/activities';
 
@@ -42,6 +44,7 @@ export function ArenaActivityDetail({
   gameCount,
   playerCount,
   canManage,
+  canRsvp = false,
 }) {
   const title = activityTitle(activity);
   const timeRange = activityTimeRange(activity);
@@ -88,9 +91,30 @@ export function ArenaActivityDetail({
         <div className="mt-5 grid grid-cols-3 gap-2 md:gap-3">
           <StatTile label="Games" value={gameCount} tone="slate" />
           <StatTile label="Players" value={playerCount} tone="emerald" />
-          <StatTile label="Attending" value={activity.counts.going + activity.counts.checkedIn} tone="sky" />
+          <StatTile
+            label={activity.capacity != null ? `Going / ${activity.capacity}` : 'Going'}
+            value={activity.counts.going + activity.counts.checkedIn}
+            tone="sky"
+          />
         </div>
+
+        {canRsvp && activity.status !== 'COMPLETED' && activity.status !== 'CANCELLED' && (
+          <div className="mt-5 border-t border-slate-100 pt-4">
+            <ArenaActivityRsvp
+              activityId={activity.id}
+              viewerRsvp={activity.viewerRsvp}
+              canRsvp
+            />
+            {activity.counts.waitlist > 0 && (
+              <p className="mt-2 text-xs text-slate-500 tabular-nums">
+                {activity.counts.waitlist} on the waitlist
+              </p>
+            )}
+          </div>
+        )}
       </div>
+
+      {canManage && <ArenaActivityCapacity arenaId={arenaId} activity={activity} />}
 
       <Standings standings={standings} />
 

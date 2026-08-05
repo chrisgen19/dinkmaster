@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import Link from 'next/link';
 import { BackPill } from './back-pill';
+import { ArenaActivityRsvp } from './arena-activity-rsvp';
 import { activityTimeRange, activityTitle, deriveActivityState } from '@/lib/activities';
 
 /** Badge styling per derived state. */
@@ -45,6 +46,7 @@ export function ArenaActivitiesList({
   canManage,
   hasSchedule,
   nowIso,
+  canRsvp = false,
 }) {
   // `now` comes from the server rather than `new Date()` here: the badge is
   // derived by comparing against `endsAt`, and a clock read on the client would
@@ -93,7 +95,7 @@ export function ArenaActivitiesList({
       ) : (
         <ul className="space-y-3">
           {activities.map((a) => (
-            <ActivityCard key={a.id} arenaId={arenaId} activity={a} now={now} />
+            <ActivityCard key={a.id} arenaId={arenaId} activity={a} now={now} canRsvp={canRsvp} />
           ))}
         </ul>
       )}
@@ -118,18 +120,21 @@ function ScopePill({ arenaId, target, active, children }) {
   );
 }
 
-function ActivityCard({ arenaId, activity, now }) {
+function ActivityCard({ arenaId, activity, now, canRsvp }) {
   const state = deriveActivityState(activity, now);
   const title = activityTitle(activity);
   const timeRange = activityTimeRange(activity);
   const { going, waitlist, checkedIn } = activity.counts;
   const confirmed = going + checkedIn;
+  // Only a night that hasn't happened can be answered. The buttons live OUTSIDE
+  // the card's <Link> — nested inside it, a tap would navigate instead of RSVP.
+  const showRsvp = canRsvp && (state === 'upcoming' || state === 'live');
 
   return (
-    <li>
+    <li className="rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-slate-300 hover:shadow-md">
       <Link
         href={`/arena/${arenaId}/activities/${activity.id}`}
-        className="block rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+        className="block rounded-2xl p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -168,6 +173,17 @@ function ActivityCard({ arenaId, activity, now }) {
           <p className="mt-2 line-clamp-2 text-xs text-slate-500">{activity.notes}</p>
         )}
       </Link>
+
+      {showRsvp && (
+        <div className="border-t border-slate-100 px-4 py-3">
+          <ArenaActivityRsvp
+            activityId={activity.id}
+            viewerRsvp={activity.viewerRsvp}
+            canRsvp
+            size="compact"
+          />
+        </div>
+      )}
     </li>
   );
 }

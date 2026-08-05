@@ -152,6 +152,10 @@ export default function Arena({
   // CTA so it opens exactly the night it displays. Null when the arena has
   // nothing scheduled ahead, which renders no banner.
   nextActivity = null,
+  // RSVPs for the open activity. Server-rendered rather than part of getState:
+  // attendance changes far less often than the board, so paying for it on every
+  // SSE frame would be waste. The prep roster refreshes after a bulk check-in.
+  activityAttendees = [],
   canManage,
   viewerRole,
   viewerUserId,
@@ -1762,6 +1766,8 @@ export default function Arena({
           queue={queue}
           pendingRequests={pendingRequests}
           pendingLinkRequests={pendingLinkRequests}
+          attendees={activityAttendees}
+          activityId={currentActivityId}
           onApplyResult={applyResult}
           offlineRunLocal={offline.offlineActive ? offline.runLocal : null}
           onClose={() => setRosterModalOpen(false)}

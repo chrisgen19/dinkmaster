@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   addPlayer,
   checkInPlayer,
+  checkInFromRsvp,
   checkOutPlayer,
   approveJoinRequest,
   rejectJoinRequest,
@@ -99,6 +100,10 @@ function useKeyboardInset() {
  * @param {string[]} props.queue - ordered list of playerIds currently on the rack
  * @param {Array<{requestId:string,userId:string,name:string}>} props.pendingRequests
  * @param {Array<{requestId:string,memberName:string,playerName:string}>} props.pendingLinkRequests
+ * @param {Array<{playerId:string|null,userId:string|null,status:string}>} [props.attendees] -
+ *   RSVPs for the arena's open activity. Drives the "going" chip, the sort that
+ *   floats them to the top, and the bulk check-in count.
+ * @param {string|null} [props.activityId] - the open activity, needed by the bulk check-in action
  * @param {(state: object) => void} props.onApplyResult - parent's state-reconcile callback (same shape as run())
  * @param {(command: object) => Promise<{error?: string, noop?: boolean}>} [props.offlineRunLocal] -
  *   when set, the arena is in offline session mode: check-in/out and walk-in
@@ -113,6 +118,8 @@ export function ArenaPrepRosterModal({
   queue,
   pendingRequests = [],
   pendingLinkRequests = [],
+  attendees = [],
+  activityId = null,
   onApplyResult,
   offlineRunLocal = null,
   onClose,
@@ -167,6 +174,18 @@ export function ArenaPrepRosterModal({
     }
     const rackNumberOf = new Map(queue.map((id, i) => [id, i + 1]));
 
+    // Who said they're coming tonight. Indexed by both keys because an attendee
+    // row carries a playerId when the member has played before and only a
+    // userId when they haven't.
+    const rsvpByPlayer = new Map();
+    const rsvpByUser = new Map();
+    for (const a of attendees) {
+      if (a.playerId) rsvpByPlayer.set(a.playerId, a.status);
+      if (a.userId) rsvpByUser.set(a.userId, a.status);
+    }
+    const rsvpFor = (playerId, userId) =>
+      (playerId && rsvpByPlayer.get(playerId)) || (userId && rsvpByUser.get(userId)) || null;
+
     const memberRows = members.map((m) => {
       const player = playerByUser.get(m.userId) ?? null;
       const rackNumber = player ? (rackNumberOf.get(player.id) ?? 0) : 0;
@@ -178,6 +197,7 @@ export function ArenaPrepRosterModal({
         label: m.role.toLowerCase(),
         checkedIn: rackNumber > 0,
         rackNumber,
+        rsvp: rsvpFor(player?.id, m.userId),
       };
     });
 
@@ -194,11 +214,18 @@ export function ArenaPrepRosterModal({
           label: 'walk-in',
           checkedIn: rackNumber > 0,
           rackNumber,
+          rsvp: rsvpFor(p.id, null),
         };
       });
 
     return [...memberRows, ...walkInRows];
-  }, [members, players, queue]);
+  }, [members, players, queue, attendees]);
+
+  /** Members who said they're coming but aren't racked yet — what the bulk action would add. */
+  const pendingGoing = useMemo(
+    () => rosterRows.filter((r) => r.rsvp === 'GOING' && !r.checkedIn && r.playerId).length,
+    [rosterRows],
+  );
 
   // Search + chips appear once the roster is long enough to need them, gated
   // on the RAW total so the controls can't vanish mid-filter as results narrow.
@@ -215,7 +242,15 @@ export function ArenaPrepRosterModal({
       counts: { all: rosterRows.length, in: inAll.length, out: outAll.length },
       inRack:
         filter === 'out' ? [] : inAll.filter(matches).sort((a, b) => a.rackNumber - b.rackNumber),
-      notIn: filter === 'in' ? [] : outAll.filter(matches).sort(byDisplayName),
+      // Anyone who said they're coming sorts above everyone else, so the names
+      // the manager is about to tick are the ones already under their thumb.
+      // Alphabetical within each band keeps it predictable.
+      notIn:
+        filter === 'in'
+          ? []
+          : outAll
+              .filter(matches)
+              .sort((a, b) => rsvpRank(a) - rsvpRank(b) || byDisplayName(a, b)),
     };
   }, [rosterRows, query, filter, showControls]);
 
@@ -268,6 +303,19 @@ export function ArenaPrepRosterModal({
         ? checkOutPlayer(arenaId, row.playerId)
         : checkInPlayer(arenaId, row.playerId),
     );
+  };
+
+  /**
+   * Rack everyone who RSVP'd going, in one tap.
+   *
+   * Returns a state envelope like the other rack actions (so the parent
+   * reconciles without a refetch) AND needs a `router.refresh()`, because it
+   * also flips those attendees to CHECKED_IN — and attendance arrives through
+   * the server-rendered props, not the board state.
+   */
+  const handleCheckInAllGoing = () => {
+    if (!activityId) return;
+    run(() => checkInFromRsvp(arenaId, activityId), { refresh: true });
   };
 
   // Request actions don't return a fresh state envelope — they create or
@@ -414,6 +462,23 @@ export function ArenaPrepRosterModal({
             </section>
           )}
 
+          {/* The payoff for collecting RSVPs: one tap instead of ticking
+              fourteen names. Only shown when it would actually do something,
+              and hidden offline since it needs the server action. */}
+          {pendingGoing > 0 && activityId && !offlineRunLocal && (
+            <button
+              type="button"
+              onClick={handleCheckInAllGoing}
+              disabled={isPending}
+              className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 active:scale-[0.99] disabled:opacity-50 disabled:active:scale-100"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              Check in all going ({pendingGoing})
+            </button>
+          )}
+
           {counts.all === 0 ? (
             <p className="text-xs text-slate-400 italic">No members or walk-ins yet.</p>
           ) : (
@@ -558,7 +623,27 @@ function RosterGroup({ title, rows, isPending, onToggle }) {
  * the meta line under the name: members show their role, walk-ins get an
  * amber chip so they stay scannable in a long mixed list.
  */
+/**
+ * Sort weight for the "not in the rack" band: confirmed first, then waitlisted,
+ * then anyone who hasn't answered, and finally the people who already said no —
+ * least likely to be ticked, so least deserving of thumb space.
+ */
+function rsvpRank(row) {
+  if (row.rsvp === 'GOING' || row.rsvp === 'CHECKED_IN') return 0;
+  if (row.rsvp === 'WAITLIST') return 1;
+  if (row.rsvp === 'DECLINED') return 3;
+  return 2;
+}
+
+const RSVP_CHIPS = {
+  GOING: { label: 'going', className: 'text-emerald-700 bg-emerald-50 ring-emerald-100' },
+  CHECKED_IN: { label: 'going', className: 'text-emerald-700 bg-emerald-50 ring-emerald-100' },
+  WAITLIST: { label: 'waitlist', className: 'text-amber-700 bg-amber-50 ring-amber-100' },
+  DECLINED: { label: 'can’t make it', className: 'text-slate-400 bg-slate-50 ring-slate-100' },
+};
+
 function RosterRow({ row, isPending, onToggle }) {
+  const chip = RSVP_CHIPS[row.rsvp] ?? null;
   return (
     <li
       className={`flex items-center justify-between gap-3 p-3 rounded-xl border transition ${
@@ -576,6 +661,13 @@ function RosterRow({ row, isPending, onToggle }) {
             </span>
           ) : (
             <span className="font-semibold text-slate-500">{row.label}</span>
+          )}
+          {chip && (
+            <span
+              className={`font-extrabold uppercase tracking-wider rounded px-1.5 py-0.5 ring-1 ${chip.className}`}
+            >
+              {chip.label}
+            </span>
           )}
           {row.checkedIn && (
             <span className="text-slate-400">· #{row.rackNumber} on rack</span>
