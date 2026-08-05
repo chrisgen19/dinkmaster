@@ -137,7 +137,9 @@ export function ArenaPrepRosterModal({
     setAddOpen(false);
   };
 
-  // Escape closes the modal — partner to the backdrop click and the ✕ button.
+  // Escape closes the modal — partner to the explicit Done/✕ button. The
+  // backdrop is deliberately inert so a stray tap can't dismiss this
+  // management workflow.
   // It backs out of the add-walk-in bar first, so a manager who opened it by
   // mistake doesn't lose the whole roster. PlayerSearchField likewise swallows
   // Escape while it holds text, clearing the query instead of closing.
@@ -324,7 +326,7 @@ export function ArenaPrepRosterModal({
 
   return (
     <div
-      onClick={onClose}
+      data-testid="prep-roster-backdrop"
       // Padding lifts the sheet off the keyboard; the panel's own max-height
       // gives back the same pixels so it can't grow past the top of the screen.
       // Both no-op at 0, which is every case except iOS with a keyboard up.
@@ -332,7 +334,6 @@ export function ArenaPrepRosterModal({
       className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
     >
       <div
-        onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="prep-roster-title"
@@ -355,10 +356,11 @@ export function ArenaPrepRosterModal({
             <button
               type="button"
               onClick={onClose}
-              aria-label="Close roster"
-              className="shrink-0 grid place-items-center h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100 transition"
+              aria-label="Done, close roster"
+              className="shrink-0 grid min-h-11 place-items-center rounded-lg px-3 -my-1 -mr-2 text-sm font-bold text-slate-900 hover:bg-slate-100 transition pointer-fine:h-8 pointer-fine:min-h-0 pointer-fine:w-8 pointer-fine:px-0 pointer-fine:my-0 pointer-fine:mr-0 pointer-fine:text-slate-500"
             >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <span className="pointer-fine:hidden">Done</span>
+              <svg className="hidden w-4 h-4 pointer-fine:block" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M18 6 6 18" />
                 <path d="m6 6 12 12" />
               </svg>
@@ -443,7 +445,7 @@ export function ArenaPrepRosterModal({
 
         {/* Thumb-zone bar: search by default, the walk-in name form while
             adding. One row either way, so the list keeps the height. */}
-        <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4 border-t border-slate-100 bg-slate-50/40 rounded-b-none sm:rounded-b-2xl space-y-3">
+        <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4 border-t border-slate-100 bg-slate-50/40 rounded-b-none sm:rounded-b-2xl">
           {addOpen ? (
             <form onSubmit={handleAddWalkIn} className="flex gap-2">
               <input
@@ -504,9 +506,16 @@ export function ArenaPrepRosterModal({
               </button>
             </div>
           )}
-          {/* The delete hint rides along with the add bar, where it's actually
-              relevant — a permanent line costs a row of list height on a phone. */}
-          <div className={`flex items-center gap-3 ${addOpen ? 'justify-between' : 'justify-end'}`}>
+          {/* Touch devices keep this footer to one action row. Fine pointers
+              retain the familiar footer Done affordance, where the extra
+              vertical space is not scarce. */}
+          <div
+            className={`items-center gap-3 ${
+              addOpen
+                ? 'mt-2 flex'
+                : 'hidden pointer-fine:mt-3 pointer-fine:flex pointer-fine:justify-end'
+            }`}
+          >
             {addOpen && (
               <p className="text-[10px] text-slate-400 leading-snug">
                 Delete a walk-in for good in Members → Walk-ins.
@@ -515,7 +524,8 @@ export function ArenaPrepRosterModal({
             <button
               type="button"
               onClick={onClose}
-              className="shrink-0 text-sm bg-slate-900 hover:bg-slate-800 text-white font-bold px-5 py-2 rounded-lg transition"
+              data-testid="prep-roster-footer-done"
+              className="ml-auto hidden shrink-0 rounded-lg bg-slate-900 px-5 py-2 text-sm font-bold text-white transition hover:bg-slate-800 pointer-fine:block"
             >
               Done
             </button>
