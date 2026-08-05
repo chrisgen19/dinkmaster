@@ -506,14 +506,30 @@ export function ArenaPrepRosterModal({
               </button>
             </div>
           )}
-          {/* Only show this secondary line while it is relevant. The sheet's
-              dismiss action lives in the header, so the normal footer stays
-              one row tall and leaves more room for the roster on phones. */}
-          {addOpen && (
-            <p className="mt-2 text-[10px] text-slate-400 leading-snug">
-              Delete a walk-in for good in Members → Walk-ins.
-            </p>
-          )}
+          {/* Touch devices keep this footer to one action row. Fine pointers
+              retain the familiar footer Done affordance, where the extra
+              vertical space is not scarce. */}
+          <div
+            className={`items-center gap-3 ${
+              addOpen
+                ? 'mt-2 flex'
+                : 'hidden pointer-fine:mt-3 pointer-fine:flex pointer-fine:justify-end'
+            }`}
+          >
+            {addOpen && (
+              <p className="text-[10px] text-slate-400 leading-snug">
+                Delete a walk-in for good in Members → Walk-ins.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              data-testid="prep-roster-footer-done"
+              className="ml-auto hidden shrink-0 rounded-lg bg-slate-900 px-5 py-2 text-sm font-bold text-white transition hover:bg-slate-800 pointer-fine:block"
+            >
+              Done
+            </button>
+          </div>
         </div>
       </div>
     </div>
