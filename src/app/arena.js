@@ -16,7 +16,7 @@ import {
   removeCourt,
   requestToJoin,
   updateArenaSchedule,
-  prepareNextSession,
+  startActivity,
 } from './actions';
 import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT, ON_DECK_SIZE } from '@/lib/matchmaking';
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE, DEFAULT_SHOW_PARTNERSHIP_MATRIX } from '@/lib/match-defaults';
@@ -32,7 +32,7 @@ import {
   OfflinePromptBanner,
 } from './arena-offline-banner';
 import { OFFLINE_UNAVAILABLE_MESSAGE, holdExpiryDelay, isHoldActive } from './arena-offline-state';
-import { computeSessionStats } from '@/lib/session-stats';
+import { computeActivityStats } from '@/lib/activities';
 import { stepScore, validateMatchScore } from '@/lib/scoring';
 import { formatShortName, profileHref } from '@/lib/player-display';
 import { hasConfiguredSchedule, describeSchedule } from '@/lib/schedule-format';
@@ -49,7 +49,7 @@ import { ArenaCourtsPanel } from './arena-courts-panel';
 import { CourtEditModal } from './court-edit-modal';
 import { SkipPickerModal } from './skip-picker-modal';
 import { ArenaThisWeek } from './arena-this-week';
-import { ArenaSessionPrepBanner } from './arena-session-prep-banner';
+import { ArenaActivityBanner } from './arena-activity-banner';
 import { ArenaPrepRosterModal } from './arena-prep-roster-modal';
 import { PaddleRackStack } from './paddle-rack-stack';
 
@@ -148,6 +148,10 @@ export default function Arena({
     showPartnershipMatrix: DEFAULT_SHOW_PARTNERSHIP_MATRIX,
   },
   sessionPrep = { autoResetOnSession: true, lastSessionResetAt: null },
+  // Soonest upcoming activity, resolved server-side. Drives the prep banner's
+  // CTA so it opens exactly the night it displays. Null when the arena has
+  // nothing scheduled ahead, which renders no banner.
+  nextActivity = null,
   canManage,
   viewerRole,
   viewerUserId,
@@ -176,6 +180,11 @@ export default function Arena({
   // because the prop-refresh resync block right after this needs to call
   // `setLastSessionResetAt` — declaring it later would TDZ-throw on render.
   const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
+  // The open activity, from getState. Every session-scoped surface (the rack
+  // tile, My Stats, the prep banner) keys off its id, so it must resync
+  // alongside `lastSessionResetAt` on every server payload — and for the same
+  // TDZ reason, it's declared up here rather than with the UI state below.
+  const [currentActivity, setCurrentActivity] = useState(initialState.currentActivity ?? null);
   // Arena schedule (powers the "This Week" leaderboard window). Declared up
   // here, before `persistSnapshot`, so the offline snapshot captures the LIVE
   // schedule: `handleSaveSchedule` updates this state without a
@@ -256,6 +265,10 @@ export default function Arena({
     setMatchHistory(state.matchHistory);
     setHistory(state.history);
     if ('lastSessionResetAt' in state) setLastSessionResetAt(state.lastSessionResetAt);
+    // Same guard as above: the offline engine's local states carry no
+    // `currentActivity` key, so a locally-applied board can't blank out the
+    // open activity and silently reset every session-scoped tally to zero.
+    if ('currentActivity' in state) setCurrentActivity(state.currentActivity ?? null);
     // Sync responses arrive through this path too (applySyncedState); they
     // carry `offlineHold: null` after the server cleared it. Engine states
     // never have the key, so a live hold can't be wiped by local play.
@@ -386,6 +399,7 @@ export default function Arena({
       // child component refreshing after a link approval) still surfaces a
       // concurrent reset that happened on the server.
       setLastSessionResetAt(initialState.lastSessionResetAt);
+      setCurrentActivity(initialState.currentActivity ?? null);
       setOfflineHold(initialState.offlineHold ?? null);
     }
   }
@@ -542,19 +556,24 @@ export default function Arena({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [courtToCancel, isPending]);
 
-  // Session-scoped overlay of games / wins / losses. The DB `Player` row holds
+  // Activity-scoped overlay of games / wins / losses. The DB `Player` row holds
   // lifetime counters (incremented on every `endMatch` and surfaced on
   // /profile), but inside the arena view those numbers stop matching what the
-  // This Week leaderboard shows after a manager hits "Reset session now". We
-  // recompute games/W/L from `matchHistory` since `lastSessionResetAt` and
-  // overlay them onto the players array so the Paddle Rack tile and the My
-  // Stats tab (both derived from `players` / `myPlayer`) read off the same
-  // truth the leaderboard does. A null reset timestamp means "no reset yet"
-  // and the tally falls through to lifetime equivalence (every recorded
-  // match counts), so a never-reset arena looks identical to before.
+  // This Week leaderboard shows once a new session opens. We recompute
+  // games/W/L from the matches stamped with the open activity and overlay them
+  // onto the players array so the Paddle Rack tile and the My Stats tab (both
+  // derived from `players` / `myPlayer`) read off the same truth the
+  // leaderboard does.
+  //
+  // Keyed on the activity id rather than the old `>= lastSessionResetAt`
+  // timestamp cutoff: a match finishing either side of a boundary now lands
+  // where it actually belongs instead of wherever the clock put it. A null
+  // activity id means nothing is open yet and the tally counts everything,
+  // preserving the old null-boundary behaviour.
+  const currentActivityId = currentActivity?.id ?? null;
   const sessionStats = useMemo(
-    () => computeSessionStats(matchHistory, lastSessionResetAt),
-    [matchHistory, lastSessionResetAt],
+    () => computeActivityStats(matchHistory, currentActivityId),
+    [matchHistory, currentActivityId],
   );
   // Preserve the lifetime `gamesPlayed` under `lifetimeGamesPlayed` so the My
   // Stats tab's "show rating" / "play a few matches" gates can keep asking
@@ -664,6 +683,11 @@ export default function Arena({
     // match finishing right around a reset.
     if ('lastSessionResetAt' in state) {
       setLastSessionResetAt(state.lastSessionResetAt);
+    }
+    // The open activity is the real boundary the tallies key off. Same guard,
+    // same reason: a local engine state must not blank it.
+    if ('currentActivity' in state) {
+      setCurrentActivity(state.currentActivity ?? null);
     }
     // Advisory hold rides every server payload; guarded so a local engine
     // state (which never carries the key) can't clear a live hold.
@@ -1081,24 +1105,34 @@ export default function Arena({
     run(() => removeCourt(arenaId, id));
   };
 
-  const handlePrepareAndOpen = () => {
+  /**
+   * Cross the session boundary: close the open activity, open `activityId`,
+   * then drop the manager straight into the roster modal so they fill the empty
+   * rack in one flow.
+   *
+   * Takes an explicit id so the banner opens exactly the night it displayed —
+   * previously the server re-derived "next session" from the schedule at tap
+   * time, which could resolve to a different window than the one on screen.
+   * Omitting it falls back to that server-side resolution, which is what the
+   * Settings → Sessions button still wants.
+   */
+  const handleStartActivity = (activityId = null) => {
     if (!canManage) return;
     if (offline.offlineActive) {
       setErrorMsg(OFFLINE_UNAVAILABLE_MESSAGE);
       return;
     }
     if (!window.confirm(
-      'Start a new session? This empties the rack and resets the partnership matrix so tonight\'s mix is unbiased. Lifetime stats and match history are not touched.',
+      'Start a new session? This empties the rack and starts a fresh partnership matrix so tonight\'s mix is unbiased. Lifetime stats, match history, and the previous session\'s standings are not touched.',
     )) return;
     startTransition(async () => {
       try {
-        const result = await prepareNextSession(arenaId);
+        const result = await startActivity(arenaId, activityId ? { activityId } : {});
         applyResult(result);
         if (!result?.error) {
-          // `applyResult` already pulled the server-persisted
-          // `lastSessionResetAt` out of `result.state`, so the banner and the
-          // session-scoped overlays re-render against the same timestamp the
-          // server stored — no client clock involved.
+          // `applyResult` already pulled the server-persisted `currentActivity`
+          // out of `result.state`, so the banner and the activity-scoped
+          // overlays re-render against the row the server actually opened.
           setRosterModalOpen(true);
         }
       } catch {
@@ -1321,15 +1355,15 @@ export default function Arena({
         />
       )}
 
-      <ArenaSessionPrepBanner
+      <ArenaActivityBanner
         arenaId={arenaId}
         canManage={canManage}
-        schedule={schedule}
-        lastSessionResetAt={lastSessionResetAt}
+        currentActivity={currentActivity}
+        nextActivity={nextActivity}
         autoResetOnSession={sessionPrep.autoResetOnSession}
         checkedInCount={queue.length}
         isPending={isPending}
-        onPrepareAndOpen={handlePrepareAndOpen}
+        onStartActivity={handleStartActivity}
         onOpenRoster={() => setRosterModalOpen(true)}
       />
 
@@ -1667,7 +1701,7 @@ export default function Arena({
             <ArenaMyStats
               myPlayer={myPlayer}
               matchHistory={matchHistory}
-              sessionStart={lastSessionResetAt}
+              activityId={currentActivityId}
               queue={queue}
               courts={courts}
               formatTimestamp={formatTimestamp}

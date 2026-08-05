@@ -1,7 +1,7 @@
 // Pure rack-row derivation — no JSX, no React. Split out from
 // paddle-rack-stack.js so the per-row logic (on-deck boundary, wait-badge
 // severity, display name/initials) is unit-testable in node, mirroring the
-// arena-session-prep-state.js / sessions.js pure-module convention.
+// arena-activity-state.js / sessions.js pure-module convention.
 
 // Re-export the shared on-deck size so existing consumers keep importing it
 // from here, while the single source of truth lives in @/lib/matchmaking

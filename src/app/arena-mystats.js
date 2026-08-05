@@ -26,11 +26,10 @@ import { MatchHistory } from './match-history';
  * @param {object} props
  * @param {object} props.myPlayer - viewer's player record in this arena
  * @param {object[]} props.matchHistory - arena-shape match records
- * @param {string|Date|null} [props.sessionStart] - ISO timestamp / Date of the
- *   last `prepareNextSession` reset, or null if the arena has never been
- *   reset. Insight cards, the feed, and the ribbon all filter to matches
- *   at/after this so this tab never disagrees with the Paddle Rack and
- *   This Week leaderboard about how much play counted "this session".
+ * @param {string|null} [props.activityId] - id of the arena's open activity, or
+ *   null when none is open. Insight cards, the feed, and the ribbon all filter
+ *   to matches stamped with it, so this tab never disagrees with the Paddle
+ *   Rack and This Week leaderboard about how much play counted "this session".
  * @param {string[]} props.queue - player ids in rack order
  * @param {{team1: string[], team2: string[]}[]} props.courts - active courts
  * @param {(iso: string) => string} props.formatTimestamp - SSR-safe formatter
@@ -39,7 +38,7 @@ import { MatchHistory } from './match-history';
 export function ArenaMyStats({
   myPlayer,
   matchHistory,
-  sessionStart = null,
+  activityId = null,
   queue,
   courts,
   formatTimestamp,
@@ -49,23 +48,21 @@ export function ArenaMyStats({
     : myPlayer.firstName;
 
   // Convert arena matches to the matchPlayer-row shape used by user-insights
-  // helpers. Drops matches the viewer wasn't in AND matches that finished
-  // before the latest session reset — so the insight cards, the streak in
-  // the ribbon, and the match feed never disagree with the Paddle Rack tile
-  // (also session-scoped) about how much play counted "this session". A
-  // null `sessionStart` means the arena was never reset, and every match
-  // counts (same as before this change).
-  const sessionStartMs = useMemo(
-    () => (sessionStart ? new Date(sessionStart).getTime() : null),
-    [sessionStart],
-  );
+  // helpers. Drops matches the viewer wasn't in AND matches belonging to a
+  // different activity — so the insight cards, the streak in the ribbon, and
+  // the match feed never disagree with the Paddle Rack tile (also
+  // activity-scoped) about how much play counted "this session".
+  //
+  // Matching on the activity id rather than a `>= sessionStart` timestamp means
+  // a match finishing either side of a boundary lands where it belongs. A null
+  // `activityId` means nothing is open yet, and every match counts.
   const rows = useMemo(
     () =>
       matchHistory
-        .filter((m) => sessionStartMs === null || new Date(m.timestamp).getTime() >= sessionStartMs)
+        .filter((m) => activityId === null || m.activityId === activityId)
         .map((m) => arenaMatchToRow(m, myPlayer.id))
         .filter(Boolean),
-    [matchHistory, myPlayer.id, sessionStartMs],
+    [matchHistory, myPlayer.id, activityId],
   );
 
   const insights = useMemo(

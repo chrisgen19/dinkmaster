@@ -11,6 +11,7 @@ import {
 } from '@/lib/arenas';
 import { getCurrentUser } from '@/lib/session';
 import { canManageArena, ROLES } from '@/lib/roles';
+import { ensureUpcomingActivities, listActivities } from '@/lib/activities-server';
 import Arena from '../../arena';
 
 // Always read fresh arena state from the database on each request.
@@ -22,11 +23,30 @@ export default async function ArenaPage({ params }) {
   const arena = await getArena(id);
   if (!arena) notFound();
 
-  const [initialState, members, user] = await Promise.all([
+  // Materialize before reading state so the prep banner always has a concrete
+  // row to point its CTA at. Idempotent, so this is a single indexed read once
+  // the horizon is already populated.
+  await ensureUpcomingActivities(id);
+
+  const now = new Date();
+  const [initialState, members, user, upcoming] = await Promise.all([
     getState(id),
     getArenaMembers(id),
     getCurrentUser(),
+    listActivities(id, { scope: 'upcoming', now, take: 3 }),
   ]);
+
+  // The session the banner offers to prep: soonest by start, skipping any whose
+  // window has already closed.
+  //
+  // That last clause is the whole subtlety. The upcoming list always includes
+  // the LIVE activity, and a night the manager never closed sorts FIRST (its
+  // start is the earliest) while being pure history. Dropping ended windows
+  // leaves the genuine next session — and crucially does NOT drop the open
+  // activity when the manager has already prepped ahead, so the banner's
+  // `prepared` identity check (currentActivity.id === nextActivity.id) can
+  // still come back true.
+  const nextActivity = upcoming.find((a) => new Date(a.endsAt) > now) ?? null;
 
   // `Arena.ownerId` is the canonical owner record (the OWNER membership row only
   // mirrors it), so fall back to it when the viewer is the owner but has no
@@ -87,6 +107,7 @@ export default async function ArenaPage({ params }) {
         // ISO string so the client doesn't accidentally serialize a Date.
         lastSessionResetAt: arena.lastSessionResetAt ? arena.lastSessionResetAt.toISOString() : null,
       }}
+      nextActivity={nextActivity}
       canManage={canManage}
       viewerRole={viewerRole}
       viewerUserId={user?.id ?? null}
