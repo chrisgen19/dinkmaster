@@ -7,6 +7,7 @@ import {
   deriveActivityState,
   promoteFromWaitlist,
   upcomingWindows,
+  wallClockToUtc,
 } from './activities';
 
 // Tue/Thu 18:00–22:00 UTC, matching the sessions.js test fixture.
@@ -269,5 +270,39 @@ describe('promoteFromWaitlist', () => {
   it('promotes nobody when full or when the waitlist is empty', () => {
     expect(promoteFromWaitlist([a('g1', 'GOING'), a('w1', 'WAITLIST', 1)], 1)).toEqual([]);
     expect(promoteFromWaitlist([a('g1', 'GOING')], 4)).toEqual([]);
+  });
+});
+
+describe('wallClockToUtc', () => {
+  it('interprets the wall time in the given zone, not the runtime’s', () => {
+    // 18:00 in Manila (UTC+8, no DST) is 10:00Z.
+    expect(wallClockToUtc('2026-03-15', '18:00', 'Asia/Manila').toISOString())
+      .toBe('2026-03-15T10:00:00.000Z');
+    // The same wall time in New York is a different instant entirely — which is
+    // the whole bug: a manager on a NY laptop creating a Manila session must
+    // still get 10:00Z, not 22:00Z.
+    expect(wallClockToUtc('2026-03-15', '18:00', 'America/New_York').toISOString())
+      .toBe('2026-03-15T22:00:00.000Z');
+  });
+
+  it('handles a DST transition without drifting an hour', () => {
+    // US DST springs forward 2026-03-08. 09:00 local is 14:00Z before and
+    // 13:00Z after.
+    expect(wallClockToUtc('2026-03-01', '09:00', 'America/New_York').toISOString())
+      .toBe('2026-03-01T14:00:00.000Z');
+    expect(wallClockToUtc('2026-03-15', '09:00', 'America/New_York').toISOString())
+      .toBe('2026-03-15T13:00:00.000Z');
+  });
+
+  it('returns null on malformed input rather than an Invalid Date', () => {
+    expect(wallClockToUtc('', '18:00', 'UTC')).toBeNull();
+    expect(wallClockToUtc('2026-03-15', '', 'UTC')).toBeNull();
+    expect(wallClockToUtc('15-03-2026', '18:00', 'UTC')).toBeNull();
+    expect(wallClockToUtc('2026-03-15', '25:00', 'UTC')).toBeNull();
+  });
+
+  it('falls back to the default zone rather than throwing on a bad timezone', () => {
+    expect(wallClockToUtc('2026-03-15', '18:00', 'Not/AZone').toISOString())
+      .toBe('2026-03-15T10:00:00.000Z'); // Asia/Manila default
   });
 });

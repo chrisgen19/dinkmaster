@@ -467,9 +467,11 @@ function applyEndMatch(state, settings, event) {
     // Mirrors the server: only claim the ladder once THIS activity has records
     // to sort on. Counting all of `matchHistory` would announce a ladder mix on
     // the first game of a new session purely because previous nights exist.
+    // The just-finished match counts (it's in `matchHistory` by now), so the
+    // first game of a night already produces a real ladder ordering.
     const activityId = state.currentActivity?.id ?? null;
     const hasRecords =
-      activityId !== null && state.matchHistory.some((m) => m.activityId === activityId);
+      activityId !== null && [match, ...state.matchHistory].some((m) => m.activityId === activityId);
     notification = settings.ladderMode && hasRecords ? LADDER_MIX_MESSAGE : MIX_MESSAGE;
   } else if (state.courts.some((c) => c.id !== courtId && c.status === 'playing')) {
     notification = '💡 Recommended: Wait for other courts to finish before stacking again, to allow a complete mix of player pools!';
@@ -695,9 +697,21 @@ export function resolveCommand(state, settings, command, opts = {}) {
         // Null activity id would make `computeActivityStats` count EVERY match
         // in history — ranking the rack by lifetime form, which is the opposite
         // of what a per-session ladder means. No open activity means no ladder.
+        // Include the result being entered. The online path runs
+        // `applyAutoMixTx` in a transaction AFTER the match commits, so this
+        // game already counts there; tallying pre-event here would leave the
+        // offline ladder one game behind and order the rack differently.
+        const activityId = state.currentActivity?.id ?? null;
+        const pending = {
+          score1: Number(command.score1),
+          score2: Number(command.score2),
+          activityId,
+          team1: (court.slots ?? []).filter((s) => s.team === 1).map((s) => ({ id: s.playerId })),
+          team2: (court.slots ?? []).filter((s) => s.team === 2).map((s) => ({ id: s.playerId })),
+        };
         const records =
-          settings.ladderMode && state.currentActivity?.id
-            ? computeActivityStats(state.matchHistory, state.currentActivity.id)
+          settings.ladderMode && activityId
+            ? computeActivityStats([pending, ...state.matchHistory], activityId)
             : null;
         mixedOrder = queueAfter
           .map((id) =>

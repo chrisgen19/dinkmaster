@@ -1072,7 +1072,7 @@ export async function resetArena(arenaId) {
  * @param {{activityId?: string|null}} [opts] - open a specific activity instead
  *   of the one the schedule implies (a manager tapping a night from the list).
  */
-export async function startActivity(arenaId, { activityId = null } = {}) {
+export async function startActivity(arenaId, { activityId = null, forceNew = false } = {}) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
@@ -1083,6 +1083,7 @@ export async function startActivity(arenaId, { activityId = null } = {}) {
   // leaves nothing to match), so the whole transaction is a safe no-op then.
   let arenaGone = false;
   let failure = null;
+  let alreadyOpen = false;
   try {
     await prisma.$transaction(async (tx) => {
       await lockQueue(tx, arenaId);
@@ -1090,13 +1091,23 @@ export async function startActivity(arenaId, { activityId = null } = {}) {
 
       // Resolve BEFORE closing: if no activity can be opened we want to leave
       // the current one running rather than strand the arena with none.
-      const target = await resolveActivityToOpen(tx, arenaId, { activityId, now });
+      const target = await resolveActivityToOpen(tx, arenaId, { activityId, now, forceNew });
 
-      // Close whatever is open — except the target itself, which lets a
-      // double-tap be a harmless no-op instead of instantly ending the session
-      // it just started.
+      // Already live? Then this is a repeat — a double-tap, a retried request
+      // whose response was lost, or a second manager pressing the same button.
+      // Bail out completely rather than falling through: the rack wipe below
+      // would otherwise clear a roster that was checked in AFTER the first
+      // call, and advance the reset stamp for a boundary that never happened.
+      //
+      // `forceNew` never lands here, because it always resolves a fresh row —
+      // that's how "Reset session now" still crosses a boundary mid-session.
+      if (target.status === 'LIVE') {
+        alreadyOpen = true;
+        return;
+      }
+
       await tx.activity.updateMany({
-        where: { arenaId, status: 'LIVE', id: { not: target.id } },
+        where: { arenaId, status: 'LIVE' },
         data: { status: 'COMPLETED', closedAt: now },
       });
 
@@ -1128,7 +1139,10 @@ export async function startActivity(arenaId, { activityId = null } = {}) {
 
   if (arenaGone) return { error: 'This arena no longer exists.', state: await getState(arenaId) };
   if (failure) return { error: failure, state: await getState(arenaId) };
-  return { state: await getState(arenaId) };
+  // Not an error: a repeat is a successful no-op. `alreadyOpen` is returned so
+  // a caller can tell "I opened it" from "it was already open" if it ever needs
+  // to; the UI treats both the same and opens the roster.
+  return { state: await getState(arenaId), alreadyOpen };
 }
 
 /**
@@ -1137,7 +1151,10 @@ export async function startActivity(arenaId, { activityId = null } = {}) {
  * vocabulary keep working while callers migrate.
  */
 export async function prepareNextSession(arenaId) {
-  return startActivity(arenaId);
+  // `forceNew`: this is Settings → "Reset session now", which promises a
+  // boundary. Without it, pressing it mid-session resolves the already-live
+  // window and nothing actually resets.
+  return startActivity(arenaId, { forceNew: true });
 }
 
 // --- Activity attendance / RSVP -------------------------------------------
@@ -1189,11 +1206,18 @@ async function applyAttendeeStatusTx(tx, activity, who, desired, { enforceCapaci
     });
     if (confirmed >= activity.capacity) {
       status = 'WAITLIST';
-      const last = await tx.activityAttendee.aggregate({
-        where: { activityId: activity.id, status: 'WAITLIST' },
-        _max: { position: true },
-      });
-      position = (last._max.position ?? 0) + 1;
+      if (existing?.status === 'WAITLIST' && existing.position != null) {
+        // Already waiting — keep the place in line. The "On the waitlist"
+        // button stays tappable, so re-tapping it (or a retried request) must
+        // not send someone to the back of a queue they were already in.
+        position = existing.position;
+      } else {
+        const last = await tx.activityAttendee.aggregate({
+          where: { activityId: activity.id, status: 'WAITLIST' },
+          _max: { position: true },
+        });
+        position = (last._max.position ?? 0) + 1;
+      }
     }
   }
 
@@ -1201,6 +1225,11 @@ async function applyAttendeeStatusTx(tx, activity, who, desired, { enforceCapaci
     status,
     position,
     displayName: who.displayName,
+    // Bind keys we now know. A member who RSVP'd before having a `Player` row
+    // has a userId-only row; without writing the id back, `checkInFromRsvp`
+    // (which selects `playerId: { not: null }`) keeps skipping them forever.
+    ...(who.playerId ? { playerId: who.playerId } : {}),
+    ...(who.userId ? { userId: who.userId } : {}),
     ...(status === 'CHECKED_IN' ? { checkedInAt: new Date() } : {}),
   };
 
@@ -1234,11 +1263,28 @@ async function settleWaitlistTx(tx, activity) {
     select: { id: true, status: true, position: true },
   });
   const toPromote = promoteFromWaitlist(attendees, activity.capacity);
-  if (toPromote.length === 0) return;
-  await tx.activityAttendee.updateMany({
-    where: { id: { in: toPromote } },
-    data: { status: 'GOING', position: null },
-  });
+  if (toPromote.length > 0) {
+    await tx.activityAttendee.updateMany({
+      where: { id: { in: toPromote } },
+      data: { status: 'GOING', position: null },
+    });
+  }
+
+  // Close the gaps. The UI renders `position` as "#N in line", so after a
+  // promotion or a decline the survivors must renumber from 1 — otherwise the
+  // second person in a queue of two reads "#3" and never moves.
+  const promoted = new Set(toPromote);
+  const stillWaiting = attendees
+    .filter((a) => a.status === 'WAITLIST' && !promoted.has(a.id))
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+  for (let i = 0; i < stillWaiting.length; i++) {
+    const want = i + 1;
+    if (stillWaiting[i].position === want) continue;
+    await tx.activityAttendee.update({
+      where: { id: stillWaiting[i].id },
+      data: { position: want },
+    });
+  }
 }
 
 /**
@@ -1275,7 +1321,7 @@ export async function rsvpToActivity(activityId, status) {
 
     const activity = await tx.activity.findUnique({
       where: { id: activityId },
-      select: { id: true, arenaId: true, capacity: true, status: true },
+      select: { id: true, arenaId: true, capacity: true, status: true, endsAt: true },
     });
     if (!activity) {
       errorMessage = 'Activity not found.';
@@ -1286,6 +1332,14 @@ export async function rsvpToActivity(activityId, status) {
       return;
     }
     if (activity.status === 'COMPLETED') {
+      errorMessage = 'That session has already finished.';
+      return;
+    }
+    // A SCHEDULED night that nobody ever opened still ELAPSES. `listActivities`
+    // already files it under Past by window, so without this a member opening
+    // the detail URL could keep mutating capacity and the waitlist of a session
+    // that finished days ago.
+    if (activity.status !== 'LIVE' && activity.endsAt <= new Date()) {
       errorMessage = 'That session has already finished.';
       return;
     }
@@ -1319,6 +1373,26 @@ export async function rsvpToActivity(activityId, status) {
     const displayName = player
       ? [player.firstName, player.lastName].filter(Boolean).join(' ')
       : (guard.user.name ?? 'Member');
+
+    // Once checked in you're on the board — racked or on a court. Letting a
+    // self-decline through would free a capacity slot and promote someone off
+    // the waitlist while the decliner keeps playing, so the roll and the board
+    // would contradict each other. A manager can still correct it via
+    // `setAttendeeStatus`, which is coupled to an actual checkout.
+    const existingRow = await tx.activityAttendee.findFirst({
+      where: {
+        activityId: activity.id,
+        OR: [
+          ...(player?.id ? [{ playerId: player.id }] : []),
+          { userId: guard.user.id },
+        ],
+      },
+      select: { status: true },
+    });
+    if (existingRow?.status === 'CHECKED_IN' && status === 'DECLINED') {
+      errorMessage = 'You’re already checked in — ask a manager to take you off the rack.';
+      return;
+    }
 
     resulting = await applyAttendeeStatusTx(
       tx,

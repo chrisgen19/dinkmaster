@@ -50,6 +50,7 @@ export default async function ArenaActivitiesPage({ params, searchParams }) {
           canManage={canManage}
           hasSchedule={arena.scheduleDays.length > 0}
           nowIso={now.toISOString()}
+          timezone={arena.timezone}
           canRsvp={canRsvp}
         />
       </main>

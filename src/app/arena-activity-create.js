@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { createActivity } from './actions';
+import { wallClockToUtc } from '@/lib/activities';
 
 /**
  * Manager form for a one-off session — a tournament, a holiday game, a make-up
@@ -12,7 +13,7 @@ import { createActivity } from './actions';
  * Collapsed to a button until opened, so the common case (just reading the
  * calendar) isn't buried under a form.
  */
-export function ArenaActivityCreate({ arenaId }) {
+export function ArenaActivityCreate({ arenaId, timezone }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -42,14 +43,21 @@ export function ArenaActivityCreate({ arenaId }) {
     }
     startTransition(async () => {
       try {
-        // Local date + time inputs are wall-clock in the viewer's zone; `new
-        // Date('YYYY-MM-DDTHH:MM')` interprets them there, which is what a
-        // manager scheduling their own club's session means. The server
-        // snapshots the arena's timezone onto the row for display.
+        // The typed wall time belongs to the ARENA's zone, not the browser's.
+        // `new Date('YYYY-MM-DDTHH:MM')` resolves in the runtime's zone, so a
+        // manager in a different timezone — travelling, or a remote organizer —
+        // would store the wrong instant and then see it rendered back (via the
+        // activity's timezone snapshot) hours away from what they entered.
+        const startsAt = wallClockToUtc(date, start, timezone);
+        const endsAt = wallClockToUtc(date, end, timezone);
+        if (!startsAt || !endsAt) {
+          setError('Enter a valid date and time.');
+          return;
+        }
         const result = await createActivity(arenaId, {
           title,
-          startsAt: new Date(`${date}T${start}`).toISOString(),
-          endsAt: new Date(`${date}T${end}`).toISOString(),
+          startsAt: startsAt.toISOString(),
+          endsAt: endsAt.toISOString(),
           capacity: capacity === '' ? null : Number(capacity),
           notes,
         });

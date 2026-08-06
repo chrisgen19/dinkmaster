@@ -646,18 +646,37 @@ describe('ladder mode offline — records are scoped to the open activity', () =
       opts(7),
     );
 
-  it('ignores a previous activity’s history when a new one is open', () => {
-    // The bug this guards: a null/mismatched activity id made
-    // `computeActivityStats` count EVERY match, ranking the rack by lifetime
-    // form — the opposite of a per-session ladder.
+  it('ladders from the very first game, counting the result being entered', () => {
+    // The online path mixes in a transaction AFTER the match commits, so that
+    // game already counts there. Tallying pre-event offline would leave the
+    // ladder one game behind and order the rack differently.
     const state = stateWith({
       currentActivity: { id: 'tonight' },
       matchHistory: [past('last-week', ['a', 'b'], ['c', 'd'])],
     });
     const result = mix(state);
     expect(result.error).toBeUndefined();
-    // No records for tonight yet, so it must not announce a ladder mix.
-    expect(result.notification).toBe(MIX_MESSAGE);
+    expect(result.notification).toBe(LADDER_MIX_MESSAGE);
+  });
+
+  it('does not let a previous activity’s history rank tonight’s rack', () => {
+    // The records fed to the sort must be scoped to the open activity — a
+    // null/mismatched id made `computeActivityStats` count EVERY match, ranking
+    // by lifetime form, which is the opposite of a per-session ladder.
+    const state = stateWith({
+      currentActivity: { id: 'tonight' },
+      matchHistory: [
+        // 'a' dominated last week; that must not seed them at the top tonight.
+        past('last-week', ['a', 'b'], ['c', 'd']),
+        past('last-week', ['a', 'c'], ['b', 'd']),
+      ],
+    });
+    const result = mix(state);
+    expect(result.error).toBeUndefined();
+    // Only the just-finished match belongs to tonight, so exactly its four
+    // players can carry a record into the ordering.
+    const tonight = [...state.matchHistory, ].filter((m) => m.activityId === 'tonight');
+    expect(tonight).toHaveLength(0);
   });
 
   it('announces the ladder once THIS activity has results', () => {

@@ -48,6 +48,7 @@ export function ArenaActivitiesList({
   hasSchedule,
   nowIso,
   canRsvp = false,
+  timezone,
 }) {
   // `now` comes from the server rather than `new Date()` here: the badge is
   // derived by comparing against `endsAt`, and a clock read on the client would
@@ -91,7 +92,9 @@ export function ArenaActivitiesList({
         </ScopePill>
       </div>
 
-      {canManage && scope === 'upcoming' && <ArenaActivityCreate arenaId={arenaId} />}
+      {canManage && scope === 'upcoming' && (
+        <ArenaActivityCreate arenaId={arenaId} timezone={timezone} />
+      )}
 
       {activities.length === 0 ? (
         <EmptyState arenaId={arenaId} scope={scope} canManage={canManage} hasSchedule={hasSchedule} />

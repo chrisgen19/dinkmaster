@@ -1,0 +1,15 @@
+-- Remember which activity a court was filled under.
+--
+-- `startActivity` deliberately does NOT clear `CourtSlot` — a live match keeps
+-- playing across a session boundary and its players come off into the fresh
+-- rack. But that means `cancelFill`, `editCourtLineup` and `endMatch` could run
+-- against a DIFFERENT activity than the fill did, decrementing partnerships in
+-- the new night while the bumps sat in the old one.
+--
+-- Nullable: vacant courts carry no activity, and fills that predate this column
+-- fall back to whatever is open (the previous behaviour).
+--
+-- No FK. The column is bookkeeping for an in-flight fill, not a relation worth
+-- cascading, and a deleted activity should leave the court finishable rather
+-- than failing a constraint.
+ALTER TABLE "Court" ADD COLUMN IF NOT EXISTS "activityId" TEXT;

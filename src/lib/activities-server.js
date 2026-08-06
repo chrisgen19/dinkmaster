@@ -302,7 +302,11 @@ export async function getActivityAttendees(activityId) {
  * @param {string} arenaId
  * @param {{activityId?: string|null, now?: Date}} [opts]
  */
-export async function resolveActivityToOpen(tx, arenaId, { activityId = null, now = new Date() } = {}) {
+export async function resolveActivityToOpen(
+  tx,
+  arenaId,
+  { activityId = null, now = new Date(), forceNew = false } = {},
+) {
   if (activityId) {
     const chosen = await tx.activity.findFirst({ where: { id: activityId, arenaId } });
     if (!chosen) throw new Error('ACTIVITY_NOT_FOUND');
@@ -316,7 +320,13 @@ export async function resolveActivityToOpen(tx, arenaId, { activityId = null, no
 
   // The window covering `now`, or the next one — `upcomingWindows` already
   // puts a live session first, which is exactly the priority we want here.
-  const [window] = upcomingWindows(schedule, now, 14);
+  //
+  // `forceNew` is the manual "Reset session now" path. Without it that button
+  // resolves the ALREADY-LIVE window and hands it straight back, so the caller
+  // reopens the same row: the rack empties and the UI reports a reset while the
+  // standings and partnership matrix quietly carry on in the old session.
+  // Falling through to the impromptu branch guarantees a genuine boundary.
+  const [window] = forceNew ? [] : upcomingWindows(schedule, now, 14);
   if (window) {
     return tx.activity.upsert({
       where: { arenaId_startsAt: { arenaId, startsAt: window.start } },
@@ -332,12 +342,20 @@ export async function resolveActivityToOpen(tx, arenaId, { activityId = null, no
     });
   }
 
+  // `startsAt` is the unique key, so a second manual reset inside the same
+  // millisecond would collide. Nudge past any row already at this instant.
+  const clash = await tx.activity.findUnique({
+    where: { arenaId_startsAt: { arenaId, startsAt: now } },
+    select: { id: true },
+  });
+  const startsAt = clash ? new Date(now.getTime() + 1) : now;
+
   return tx.activity.create({
     data: {
       arenaId,
-      startsAt: now,
+      startsAt,
       // Placeholder span — an impromptu session has no schedule window behind it.
-      endsAt: new Date(now.getTime() + 12 * 60 * 60 * 1000),
+      endsAt: new Date(startsAt.getTime() + 12 * 60 * 60 * 1000),
       timezone: schedule.timezone,
       status: 'SCHEDULED',
       source: 'MANUAL',

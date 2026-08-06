@@ -388,6 +388,14 @@ model Court {
   // exactly those players, not whoever is queued at cancel time. Empty when the
   // court is vacant / was filled before this feature.
   fillBumpedPlayerIds String[] @default([])
+
+  // The activity that was open when this court was filled. A live match is
+  // explicitly allowed to run across a session boundary, so by the time it is
+  // finished, cancelled, or edited, the arena's LIVE activity may be a
+  // different one — and using that would decrement partnerships in the new
+  // night while the bumps sit in the old. Null when the court is vacant, or for
+  // fills predating this column (those fall back to the open activity).
+  activityId          String?
   createdAt           DateTime @default(now())
 
   arena Arena       @relation(fields: [arenaId], references: [id], onDelete: Cascade)

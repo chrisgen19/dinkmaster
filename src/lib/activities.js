@@ -100,6 +100,47 @@ function safeZone(tz) {
 }
 
 /**
+ * Convert a local wall-clock date + time in `timeZone` to the matching UTC
+ * instant. Two passes correct for any offset change at the boundary (DST-safe).
+ *
+ * Exists because `new Date('2026-03-15T18:00')` resolves in the RUNTIME's zone.
+ * For a manager creating a one-off session that runtime is their browser, so a
+ * 6 PM session for a Manila club entered from a New York laptop would be stored
+ * as 6 PM Eastern and then rendered — using the arena's timezone snapshot — as
+ * 7 AM the next day. The wall time a manager types is a wall time in the
+ * ARENA's zone, always.
+ *
+ * @param {string} date - "YYYY-MM-DD"
+ * @param {string} time - "HH:MM"
+ * @param {string} timeZone - IANA zone
+ * @returns {Date|null} null when either field is malformed
+ */
+export function wallClockToUtc(date, time, timeZone) {
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date ?? '');
+  const t = /^(\d{1,2}):(\d{2})$/.exec(time ?? '');
+  if (!d || !t) return null;
+  const [year, month, day] = [+d[1], +d[2], +d[3]];
+  const [hour, minute] = [+t[1], +t[2]];
+  if (hour > 23 || minute > 59) return null;
+
+  const zone = safeZone(timeZone);
+  const guess = Date.UTC(year, month - 1, day, hour, minute, 0);
+  const offsetAt = (ms) => {
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+    const p = {};
+    for (const part of dtf.formatToParts(new Date(ms))) p[part.type] = part.value;
+    return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - ms;
+  };
+  const first = guess - offsetAt(guess);
+  return new Date(guess - offsetAt(first));
+}
+
+/**
  * Where an activity sits relative to `now`, for list grouping and badges.
  *
  * Driven by `status` first — a manager who explicitly opened or cancelled a

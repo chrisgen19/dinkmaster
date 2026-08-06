@@ -311,16 +311,34 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome }) {
     where: { arenaId, leftAt: null, queueOrder: { not: null } },
     data: { waitRounds: { increment: 1 } },
   });
+  const activity = await currentActivity(tx, arenaId);
+
+  // A fresh or unscheduled arena has no LIVE activity until the first fill
+  // opens one right here — by which point these four have already been
+  // dequeued, and every attendance hook (`applyCheckInTx`, `addArenaPlayer`)
+  // has already returned empty-handed. Record them now, plus anyone still on
+  // the rack, so the first session's roll isn't blank while its matches appear.
+  const racked = await tx.player.findMany({
+    where: { arenaId, leftAt: null, OR: [{ queueOrder: { not: null } }, { id: { in: [p0, p1, p2, p3] } }] },
+    select: { id: true, userId: true, firstName: true, lastName: true },
+  });
+  for (const p of racked) await recordAttendanceTx(tx, arenaId, p);
+
   await tx.court.update({
     where: { id: courtId },
-    data: { fillBumpedPlayerIds: bumped.map((p) => p.id) },
+    data: {
+      fillBumpedPlayerIds: bumped.map((p) => p.id),
+      // Remember which activity this fill belongs to. A live match may run
+      // across a session boundary, so finish/cancel/edit must operate on THIS
+      // activity rather than whatever happens to be open when they run.
+      activityId: activity.id,
+    },
   });
 
   // Pick the matchup with the fewest prior partnerships (random tie-break),
   // unless a replayed event already recorded the choice. Scoped to the open
   // activity: pairings from previous nights must not bias tonight's mix, which
   // is the job the old `partnership.deleteMany` on every reset used to do.
-  const activity = await currentActivity(tx, arenaId);
   const rows = await tx.partnership.findMany({
     where: {
       activityId: activity.id,
@@ -364,7 +382,7 @@ export async function applyCancelFillTx(tx, arenaId, { courtId }) {
   // claim clears it — we need the exact set of players the fill bumped.
   const courtRow = await tx.court.findFirst({
     where: { id: courtId, arenaId },
-    select: { fillBumpedPlayerIds: true },
+    select: { fillBumpedPlayerIds: true, activityId: true },
   });
   const bumpedIds = courtRow?.fillBumpedPlayerIds ?? [];
 
@@ -374,7 +392,7 @@ export async function applyCancelFillTx(tx, arenaId, { courtId }) {
   // previous fill's bookkeeping into a future debug session.
   const claimed = await tx.court.updateMany({
     where: { id: courtId, arenaId, status: 'playing' },
-    data: { status: 'vacant', fillBumpedPlayerIds: [] },
+    data: { status: 'vacant', fillBumpedPlayerIds: [], activityId: null },
   });
   if (claimed.count !== 1) throw new Error('NOT_PLAYING');
 
@@ -437,12 +455,13 @@ export async function applyCancelFillTx(tx, arenaId, { courtId }) {
     await tx.player.update({ where: { id: ordered[i] }, data: { queueOrder: i + 1 } });
   }
 
-  // Undo the two partnership bumps from the fill (one per team).
-  const activity = await currentActivity(tx, arenaId);
+  // Undo the two partnership bumps from the fill (one per team) — against the
+  // activity the FILL used, which may no longer be the open one.
+  const activityId = await fillActivityId(tx, arenaId, courtRow);
   const team1 = slots.filter((s) => s.team === 1).map((s) => s.playerId);
   const team2 = slots.filter((s) => s.team === 2).map((s) => s.playerId);
-  if (team1.length === 2) await unbumpPartnership(tx, activity.id, team1[0], team1[1]);
-  if (team2.length === 2) await unbumpPartnership(tx, activity.id, team2[0], team2[1]);
+  if (team1.length === 2) await unbumpPartnership(tx, activityId, team1[0], team1[1]);
+  if (team2.length === 2) await unbumpPartnership(tx, activityId, team2[0], team2[1]);
 
   // Slots last, so the player restores above still read the snapshot.
   await tx.courtSlot.deleteMany({ where: { courtId } });
@@ -465,7 +484,7 @@ export async function applyEditCourtLineupTx(tx, arenaId, { courtId, team1Ids, t
   // derive the lineup we're diffing against.
   const court = await tx.court.findFirst({
     where: { id: courtId, arenaId, status: 'playing' },
-    select: { id: true, fillBumpedPlayerIds: true },
+    select: { id: true, fillBumpedPlayerIds: true, activityId: true },
   });
   if (!court) throw new Error('NOT_PLAYING');
 
@@ -605,10 +624,12 @@ export async function applyEditCourtLineupTx(tx, arenaId, { courtId, team1Ids, t
     ],
   });
 
-  // Partnership delta: only pairs that actually changed.
-  const activity = await currentActivity(tx, arenaId);
-  for (const [x, y] of diff.pairsToUnbump) await unbumpPartnership(tx, activity.id, x, y);
-  for (const [x, y] of diff.pairsToBump) await bumpPartnership(tx, arenaId, activity.id, x, y);
+  // Partnership delta: only pairs that actually changed. Scoped to the fill's
+  // activity so an edit after a session boundary adjusts the same matrix the
+  // fill bumped, not the new night's empty one.
+  const activityId = await fillActivityId(tx, arenaId, court);
+  for (const [x, y] of diff.pairsToUnbump) await unbumpPartnership(tx, activityId, x, y);
+  for (const [x, y] of diff.pairsToBump) await bumpPartnership(tx, arenaId, activityId, x, y);
 }
 
 /**
@@ -631,13 +652,20 @@ export async function applyEndMatchTx(tx, arenaId, { courtId, s1, s2, outcome, o
   const team1Won = s1 > s2;
   const team2Won = s2 > s1;
 
+  // Read the fill's activity BEFORE the claim clears it — the claim below
+  // vacates the court, and a vacated court carries no activity.
+  const filled = await tx.court.findFirst({
+    where: { id: courtId, arenaId },
+    select: { activityId: true },
+  });
+
   // Atomically claim the finish: only one caller can flip playing -> vacant,
   // so concurrent endMatch calls for the same court can't double-record.
-  // Also clear the cancel-bookkeeping (`fillBumpedPlayerIds`) so a vacant
-  // court never carries the previous fill's metadata.
+  // Also clear the fill bookkeeping (`fillBumpedPlayerIds`, `activityId`) so a
+  // vacant court never carries the previous fill's metadata.
   const claimed = await tx.court.updateMany({
     where: { id: courtId, arenaId, status: 'playing' },
-    data: { status: 'vacant', fillBumpedPlayerIds: [] },
+    data: { status: 'vacant', fillBumpedPlayerIds: [], activityId: null },
   });
   if (claimed.count !== 1) throw new Error('ALREADY_FINISHED');
 
@@ -661,7 +689,19 @@ export async function applyEndMatchTx(tx, arenaId, { courtId, s1, s2, outcome, o
     ? outcome.recycleOrder.map((playerId) => slots.find((s) => s.playerId === playerId))
     : shuffle(slots);
 
-  const activityId = await resolveMatchActivityId(tx, arenaId, occurredAt);
+  // Which night does this match belong to?
+  //
+  // `occurredAt` present means offline replay, and there the court's stamp is
+  // useless — the fill was replayed at SYNC time, so it carries the sync-time
+  // activity, not the one the game was actually played in. Window matching on
+  // `occurredAt` is the whole point of that path, so it stays authoritative.
+  //
+  // Online, prefer the fill's own activity: a match that started before a
+  // session boundary belongs to the night it was played in, not the one that
+  // opened while it was still on court.
+  const activityId = occurredAt
+    ? await resolveMatchActivityId(tx, arenaId, occurredAt)
+    : (filled?.activityId ?? (await resolveMatchActivityId(tx, arenaId, null)));
 
   await tx.match.create({
     data: {
@@ -864,6 +904,23 @@ async function activityRecordsTx(tx, arenaId) {
     })),
     activity.id,
   );
+}
+
+/**
+ * The activity a court's in-flight fill belongs to.
+ *
+ * `startActivity` deliberately leaves live matches running across a session
+ * boundary, so by the time a court is finished, cancelled, or edited the
+ * arena's LIVE activity may be a different one. Using that would decrement
+ * partnerships in the new night while the fill's bumps sit in the old — the
+ * matrix and the matches would disagree.
+ *
+ * Falls back to the open activity for fills that predate `Court.activityId`.
+ */
+async function fillActivityId(tx, arenaId, court) {
+  if (court?.activityId) return court.activityId;
+  const open = await currentActivity(tx, arenaId);
+  return open.id;
 }
 
 /**

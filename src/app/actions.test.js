@@ -701,6 +701,7 @@ describe('arena server actions — authorization', () => {
             findMany: vi.fn().mockResolvedValue([]),
             updateMany: vi.fn().mockResolvedValue({ count: 1 }), // claim succeeds
             findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
+            findFirst: vi.fn().mockResolvedValue({ activityId: ACTIVITY.id }),
             update: vi.fn(),
           },
           courtSlot: { findMany: vi.fn().mockResolvedValue(slots), findFirst: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
@@ -791,7 +792,13 @@ describe('arena server actions — authorization', () => {
       const NEXT = { id: 'activity-2', arenaId: ARENA, status: 'SCHEDULED', openedAt: null };
       const boundaryTx = ({ arenaCount = 1, ...overrides } = {}) => ({
         $executeRaw: vi.fn(),
-        activity: activityStub({ upsert: vi.fn().mockResolvedValue(NEXT) }),
+        activity: activityStub({
+          upsert: vi.fn().mockResolvedValue(NEXT),
+          // `forceNew` (the manual reset) skips the window lookup and creates a
+          // brand-new row; the findUnique is the same-instant clash check.
+          create: vi.fn().mockResolvedValue(NEXT),
+          findUnique: vi.fn().mockResolvedValue(null),
+        }),
         player: { updateMany: vi.fn() },
         arena: {
           updateMany: vi.fn().mockResolvedValue({ count: arenaCount }),
@@ -820,7 +827,7 @@ describe('arena server actions — authorization', () => {
 
         // The previous night is frozen as history, not deleted.
         expect(tx.activity.updateMany).toHaveBeenCalledWith({
-          where: { arenaId: ARENA, status: 'LIVE', id: { not: NEXT.id } },
+          where: { arenaId: ARENA, status: 'LIVE' },
           data: { status: 'COMPLETED', closedAt: expect.any(Date) },
         });
         // The resolved activity becomes the open one.
@@ -840,6 +847,40 @@ describe('arena server actions — authorization', () => {
           where: { id: ARENA },
           data: { lastSessionResetAt: expect.any(Date) },
         });
+      });
+
+      it('is a true no-op when the resolved activity is already live', async () => {
+        // A double-tap, a retried request whose response was lost, or a second
+        // manager. The rack must survive: players may have been checked in
+        // after the first call, and wiping them would lose that roster.
+        const LIVE_ROW = { id: 'activity-9', arenaId: ARENA, status: 'LIVE', openedAt: new Date() };
+        const tx = boundaryTx({
+          activity: activityStub({ upsert: vi.fn().mockResolvedValue(LIVE_ROW) }),
+        });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.startActivity(ARENA);
+
+        expect(result.error).toBeUndefined();
+        expect(result.alreadyOpen).toBe(true);
+        expect(tx.player.updateMany).not.toHaveBeenCalled();
+        expect(tx.arena.updateMany).not.toHaveBeenCalled();
+        expect(tx.activity.update).not.toHaveBeenCalled();
+      });
+
+      it('forces a fresh activity for the manual reset, even mid-session', async () => {
+        // "Reset session now" promises a boundary. Resolving the already-live
+        // window would hand back the same row, so the rack would empty while
+        // standings and pairings quietly continued in the old session.
+        const tx = boundaryTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.prepareNextSession(ARENA);
+
+        // Created, not resolved from the schedule window.
+        expect(tx.activity.create).toHaveBeenCalled();
+        expect(tx.activity.upsert).not.toHaveBeenCalled();
+        expect(tx.player.updateMany).toHaveBeenCalled();
       });
 
       it('no longer deletes partnerships — the new activity id gives a clean matrix', async () => {
@@ -1309,6 +1350,8 @@ describe('arena server actions — authorization', () => {
         court: {
           updateMany: vi.fn().mockResolvedValue({ count: 1 }), // claim the finish
           findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
+          // Pre-claim read of the fill's activity.
+          findFirst: vi.fn().mockResolvedValue({ activityId: ACTIVITY.id }),
         },
         courtSlot: {
           findMany: vi
@@ -1354,6 +1397,7 @@ describe('arena server actions — authorization', () => {
         court: {
           updateMany: vi.fn().mockResolvedValue({ count: 1 }),
           findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
+          findFirst: vi.fn().mockResolvedValue({ activityId: ACTIVITY.id }),
         },
         courtSlot: {
           findMany: vi.fn().mockResolvedValue([slot('w1', 1), slot('w2', 1), slot('l1', 2), slot('l2', 2)]),
@@ -2163,11 +2207,13 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
         update: vi.fn(),
       },
       player: {
-        // Two findMany calls in fillCourt: first the top 4, then the rack
-        // behind them (the "bumped" set captured for cancelFill).
+        // Three findMany calls in fillCourt: the top 4, the rack behind them
+        // (the "bumped" set captured for cancelFill), then the roster to record
+        // attendance against the activity this fill may have just opened.
         findMany: vi.fn()
           .mockResolvedValueOnce(TOP_FOUR)
-          .mockResolvedValueOnce(BEHIND),
+          .mockResolvedValueOnce(BEHIND)
+          .mockResolvedValue([]),
         updateMany: vi.fn().mockResolvedValue({ count: 4 }), // dequeue succeeds
       },
       partnership: {
@@ -2217,7 +2263,9 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
     // recycled into the queue by a later finish must not be touched.
     expect(tx.court.update).toHaveBeenCalledWith({
       where: { id: COURT },
-      data: { fillBumpedPlayerIds: ['p5', 'p6'] },
+      // The fill's activity rides along so finish/cancel/edit operate on the
+      // night the match was played in, not whatever is open when they run.
+      data: { fillBumpedPlayerIds: ['p5', 'p6'], activityId: ACTIVITY.id },
     });
   });
 });
@@ -2233,7 +2281,7 @@ describe('cancelFill() — return four players to the rack without recording a m
       $executeRaw: vi.fn(),
       activity: activityStub(),
       court: {
-        findFirst: vi.fn().mockResolvedValue({ fillBumpedPlayerIds: bumpedIds }),
+        findFirst: vi.fn().mockResolvedValue({ fillBumpedPlayerIds: bumpedIds, activityId: ACTIVITY.id }),
         updateMany: vi.fn().mockResolvedValue({ count: courtClaimCount }),
       },
       courtSlot: {
@@ -2283,7 +2331,9 @@ describe('cancelFill() — return four players to the rack without recording a m
     // Court flipped vacant AND bookkeeping cleared on the same claim.
     expect(tx.court.updateMany).toHaveBeenCalledWith({
       where: { id: COURT, arenaId: ARENA, status: 'playing' },
-      data: { status: 'vacant', fillBumpedPlayerIds: [] },
+      // A vacated court carries no fill metadata — including the activity it
+      // was filled under.
+      data: { status: 'vacant', fillBumpedPlayerIds: [], activityId: null },
     });
 
     // waitRounds restored via plain update; gamesPlayed decremented via
