@@ -1187,6 +1187,9 @@ describe('arena server actions — authorization', () => {
 
     it('approveJoinRequest() creates membership, activates a player, consumes the request', async () => {
       const tx = {
+        // Racking a newly activated member records them for the open activity.
+        activity: activityStub(),
+        activityAttendee: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn(), update: vi.fn() },
         $executeRaw: vi.fn(),
         joinRequest: {
           findUnique: vi.fn().mockResolvedValue({ id: 'req1', arenaId: ARENA, userId: 'u2' }),
@@ -1405,6 +1408,13 @@ describe('arena server actions — authorization', () => {
         },
         user: { findUnique: vi.fn().mockResolvedValue({ id: 'u2', firstName: 'Bo', lastName: 'B' }) },
         arenaMembership: { upsert: vi.fn() },
+        // Racking someone records them present for the open activity.
+        activity: activityStub(),
+        activityAttendee: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          create: vi.fn(),
+          update: vi.fn(),
+        },
         player: {
           // active player, but off the rack (on a court): leftAt null, queueOrder null
           findUnique: vi.fn().mockResolvedValue({ id: 'p-court', gamesPlayed: 1, leftAt: null, queueOrder: null }),
@@ -3108,6 +3118,27 @@ describe('activity attendance — RSVP, capacity, and the waitlist', () => {
     });
   });
 
+  describe('attendee identity', () => {
+    it('matches an existing row on EITHER key so a member is never duplicated', async () => {
+      // A member who RSVPs before having a Player row gets {playerId: null,
+      // userId}. Once they're added as a player the next write carries a
+      // playerId — matching on that alone would miss the row and create a
+      // second, with both counting against capacity.
+      const tx = attendeeTx({ existing: { id: 'att-by-user', status: 'GOING' } });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.rsvpToActivity(ACT, 'GOING');
+
+      const [{ where }] = tx.activityAttendee.findFirst.mock.calls[0];
+      expect(where.OR).toEqual([{ playerId: 'p1' }, { userId: 'u1' }]);
+      // Updated in place, not duplicated.
+      expect(tx.activityAttendee.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'att-by-user' } }),
+      );
+      expect(tx.activityAttendee.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('setAttendeeStatus()', () => {
     it('lets a manager override capacity deliberately', async () => {
       // A manager saying someone is coming should not be silently waitlisted.
@@ -3253,6 +3284,34 @@ describe('activity attendance — RSVP, capacity, and the waitlist', () => {
     });
   });
 
+  describe('createActivity() — capacity intent', () => {
+    beforeEach(() => {
+      prisma.arena.findUnique.mockResolvedValue({ timezone: 'UTC', defaultActivityCapacity: 16 });
+      prisma.activity.create.mockResolvedValue({ id: 'new-act' });
+    });
+
+    const base = { startsAt: '2026-09-01T10:00:00Z', endsAt: '2026-09-01T14:00:00Z' };
+    const capacityOf = () => prisma.activity.create.mock.calls[0][0].data.capacity;
+
+    it('takes the arena default when capacity is omitted', async () => {
+      await actions.createActivity(ARENA, base);
+      expect(capacityOf()).toBe(16);
+    });
+
+    it('honours an explicit null as uncapped rather than reapplying the default', async () => {
+      // The form sends null when a manager clears the field. Falling back to the
+      // default there would silently cap a session they just uncapped — and
+      // would disagree with `updateActivity`, which treats null as "clear".
+      await actions.createActivity(ARENA, { ...base, capacity: null });
+      expect(capacityOf()).toBeNull();
+    });
+
+    it('honours an explicit number over the default', async () => {
+      await actions.createActivity(ARENA, { ...base, capacity: 8 });
+      expect(capacityOf()).toBe(8);
+    });
+  });
+
   describe('createActivity()', () => {
     beforeEach(() => {
       prisma.arena.findUnique.mockResolvedValue({ timezone: 'Asia/Manila', defaultActivityCapacity: null });
@@ -3361,6 +3420,41 @@ describe('activity attendance — RSVP, capacity, and the waitlist', () => {
       const result = await actions.updateActivity(ARENA, 'someone-elses', { capacity: 8 });
 
       expect(result.error).toMatch(/not found/i);
+    });
+
+    it('scopes a status change to rows that are SCHEDULED or CANCELLED', async () => {
+      // Without this a COMPLETED night could be flipped back to SCHEDULED and
+      // reappear as upcoming while still holding matches and standings.
+      const tx = attendeeTx();
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.updateActivity(ARENA, ACT, { status: 'CANCELLED' });
+
+      expect(tx.activity.updateMany).toHaveBeenCalledWith({
+        where: { id: ACT, arenaId: ARENA, status: { in: ['SCHEDULED', 'CANCELLED'] } },
+        data: { status: 'CANCELLED' },
+      });
+    });
+
+    it('reports a status-specific error when the row was not in a changeable state', async () => {
+      const tx = attendeeTx();
+      tx.activity.updateMany.mockResolvedValue({ count: 0 });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.updateActivity(ARENA, ACT, { status: 'SCHEDULED' });
+      expect(result.error).toMatch(/upcoming or cancelled/i);
+    });
+
+    it('leaves a non-status patch unscoped by status', async () => {
+      const tx = attendeeTx();
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.updateActivity(ARENA, ACT, { notes: 'Bring water' });
+
+      expect(tx.activity.updateMany).toHaveBeenCalledWith({
+        where: { id: ACT, arenaId: ARENA },
+        data: { notes: 'Bring water' },
+      });
     });
 
     it('refuses an empty patch rather than issuing a no-op write', async () => {

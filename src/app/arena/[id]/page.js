@@ -49,7 +49,13 @@ export default async function ArenaPage({ params }) {
   // activity when the manager has already prepped ahead, so the banner's
   // `prepared` identity check (currentActivity.id === nextActivity.id) can
   // still come back true.
-  const nextActivity = upcoming.find((a) => new Date(a.endsAt) > now) ?? null;
+  //
+  // Cancelled nights are excluded because `startActivity` refuses to open one:
+  // offering it in the banner would dead-end the prep flow until that window
+  // passed. They stay visible on the calendar (greyed) — just not as the CTA's
+  // target.
+  const nextActivity =
+    upcoming.find((a) => a.status !== 'CANCELLED' && new Date(a.endsAt) > now) ?? null;
 
   // `Arena.ownerId` is the canonical owner record (the OWNER membership row only
   // mirrors it), so fall back to it when the viewer is the owner but has no

@@ -464,10 +464,13 @@ function applyEndMatch(state, settings, event) {
     }
     queue = outcome.mixedOrder;
     players = players.map((p) => (queue.includes(p.id) && p.skipBoosted ? { ...p, skipBoosted: false } : p));
-    // Mirrors the server: only claim the ladder once there are records for it
-    // to sort on, otherwise the first mix of the night would be mislabelled.
-    notification =
-      settings.ladderMode && state.matchHistory.length > 0 ? LADDER_MIX_MESSAGE : MIX_MESSAGE;
+    // Mirrors the server: only claim the ladder once THIS activity has records
+    // to sort on. Counting all of `matchHistory` would announce a ladder mix on
+    // the first game of a new session purely because previous nights exist.
+    const activityId = state.currentActivity?.id ?? null;
+    const hasRecords =
+      activityId !== null && state.matchHistory.some((m) => m.activityId === activityId);
+    notification = settings.ladderMode && hasRecords ? LADDER_MIX_MESSAGE : MIX_MESSAGE;
   } else if (state.courts.some((c) => c.id !== courtId && c.status === 'playing')) {
     notification = '💡 Recommended: Wait for other courts to finish before stacking again, to allow a complete mix of player pools!';
   }
@@ -689,9 +692,13 @@ export function resolveCommand(state, settings, command, opts = {}) {
         // appended, matching the server: `applyAutoMixTx` runs in a separate
         // transaction after the match commits, but the ordering inputs
         // (waitRounds, games, boosts) are all pre-event there too.
-        const records = settings.ladderMode
-          ? computeActivityStats(state.matchHistory, state.currentActivity?.id ?? null)
-          : null;
+        // Null activity id would make `computeActivityStats` count EVERY match
+        // in history — ranking the rack by lifetime form, which is the opposite
+        // of what a per-session ladder means. No open activity means no ladder.
+        const records =
+          settings.ladderMode && state.currentActivity?.id
+            ? computeActivityStats(state.matchHistory, state.currentActivity.id)
+            : null;
         mixedOrder = queueAfter
           .map((id) =>
             autoMixKey(playerById(state, id), {

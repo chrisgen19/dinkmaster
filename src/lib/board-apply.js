@@ -191,7 +191,7 @@ export async function groupAverageMetric(tx, arenaId) {
 export async function addArenaPlayer(tx, arenaId, { id, userId = null, firstName, lastName }) {
   const gamesOffset = await groupAverageMetric(tx, arenaId);
   const order = (await maxQueueOrder(tx, arenaId)) + 1;
-  return tx.player.create({
+  const player = await tx.player.create({
     data: {
       // Offline replay supplies the client-generated `off_...` id so events
       // recorded after the add (check-ins, fills, match snapshots) resolve
@@ -205,6 +205,14 @@ export async function addArenaPlayer(tx, arenaId, { id, userId = null, firstName
       gamesOffset,
     },
   });
+
+  // Adding someone puts them straight on the rack, so it is a check-in in
+  // everything but name — and this path never goes through `applyCheckInTx`.
+  // Without recording here, walk-ins added at the door were missing from the
+  // attendance roll: exactly the people least likely to have RSVP'd, and so
+  // the ones the roll exists to capture.
+  await recordAttendanceTx(tx, arenaId, player);
+  return player;
 }
 
 /**
@@ -872,6 +880,9 @@ async function activityRecordsTx(tx, arenaId) {
  * check-in.
  */
 async function recordAttendanceTx(tx, arenaId, player) {
+  // Attendance is a record, not a gate: it must never be able to fail the
+  // check-in or player-add that triggered it.
+  if (!player?.id) return;
   const activity = await tx.activity.findFirst({
     where: { arenaId, status: 'LIVE' },
     orderBy: { startsAt: 'desc' },
@@ -880,8 +891,14 @@ async function recordAttendanceTx(tx, arenaId, player) {
   if (!activity) return;
 
   const displayName = [player.firstName, player.lastName].filter(Boolean).join(' ');
+  // Either key — a member who RSVP'd before having a `Player` row has a
+  // userId-only attendee row, and matching on playerId alone would duplicate
+  // them on check-in. Mirrors `applyAttendeeStatusTx` in actions.js.
   const existing = await tx.activityAttendee.findFirst({
-    where: { activityId: activity.id, playerId: player.id },
+    where: {
+      activityId: activity.id,
+      OR: [{ playerId: player.id }, ...(player.userId ? [{ userId: player.userId }] : [])],
+    },
     select: { id: true },
   });
 

@@ -861,6 +861,14 @@ export default function Arena({
     matchHistory,
     history,
     lastSessionResetAt,
+    // The snapshot carries `currentActivity` (via boardStateRef) so a cold
+    // offline boot stamps new matches with the right activity. Without this
+    // dep, a server payload that changed ONLY the open activity wouldn't
+    // re-trigger the write and the stored snapshot would keep the superseded
+    // id. Today `startActivity` also empties the rack and bumps
+    // `lastSessionResetAt`, so the common path re-fires anyway — this makes the
+    // guarantee hold on its own rather than by coincidence.
+    currentActivity,
   ]);
 
   // Run a server action inside a transition and reconcile the returned state.

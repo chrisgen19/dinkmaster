@@ -151,11 +151,22 @@ SELECT
 FROM _past_activity p;
 
 -- Stamp historical matches onto their day's activity.
+--
+-- The `createdAt < starts_at` clause is load-bearing, not redundant with the
+-- filter that built `_past_activity`. That filter decided which DAYS have
+-- history; this one decides which MATCHES do. A boundary that falls mid-day
+-- (`lastSessionResetAt` at 18:00, say) puts matches on both sides of it inside
+-- one local day — without this clause the 20:00 match would match the day group
+-- created by the 14:00 match and be filed under the COMPLETED activity. The
+-- follow-up UPDATE below only rescues rows still NULL, so it would stay lost
+-- and the live session would under-report its games.
 UPDATE "Match" m
 SET "activityId" = p.id
-FROM _past_activity p, "Arena" a
+FROM _past_activity p, "Arena" a, _live_activity l
 WHERE a.id = m."arenaId"
   AND p.arena_id = m."arenaId"
+  AND l.arena_id = m."arenaId"
+  AND m."createdAt" < l.starts_at
   AND p.local_day = date_trunc('day', (m."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE a.timezone);
 
 -- Everything at or after the boundary belongs to the session still in progress.

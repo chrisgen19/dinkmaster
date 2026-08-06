@@ -1163,12 +1163,18 @@ const MANAGER_RSVP_STATUSES = ['GOING', 'WAITLIST', 'DECLINED', 'CHECKED_IN', 'N
  * @param {boolean} enforceCapacity - false when a manager is deliberately overriding
  */
 async function applyAttendeeStatusTx(tx, activity, who, desired, { enforceCapacity = true } = {}) {
-  const existing = await tx.activityAttendee.findFirst({
-    where: {
-      activityId: activity.id,
-      ...(who.playerId ? { playerId: who.playerId } : { userId: who.userId }),
-    },
-  });
+  // Match on EITHER key. A member who RSVPs before they have a `Player` row
+  // gets `{playerId: null, userId}`; once they're added as a player the next
+  // write carries a playerId, and looking up by that alone would miss the
+  // original row and create a second — two rows for one person, both counting
+  // against capacity and both showing in the roll.
+  const keys = [
+    ...(who.playerId ? [{ playerId: who.playerId }] : []),
+    ...(who.userId ? [{ userId: who.userId }] : []),
+  ];
+  const existing = keys.length
+    ? await tx.activityAttendee.findFirst({ where: { activityId: activity.id, OR: keys } })
+    : null;
 
   let status = desired;
   let position = null;
@@ -1455,7 +1461,11 @@ export async function createActivity(arenaId, { title, startsAt, endsAt, capacit
   const cleanNotes = (notes ?? '').trim();
   if (cleanNotes.length > 500) return { error: 'Notes must be 500 characters or fewer.' };
 
-  let cap = null;
+  // `undefined` / `''` means "not answered" and takes the arena default below.
+  // An explicit `null` means "uncapped" and must survive — otherwise clearing
+  // the field silently reapplies the default, and `updateActivity` (which does
+  // treat null as uncapped) would disagree with this action on the same input.
+  let cap = capacity === null ? null : undefined;
   if (capacity !== null && capacity !== undefined && capacity !== '') {
     cap = Number(capacity);
     if (!Number.isInteger(cap) || cap < 1 || cap > MAX_ACTIVITY_CAPACITY) {
@@ -1482,7 +1492,7 @@ export async function createActivity(arenaId, { title, startsAt, endsAt, capacit
         timezone: arena.timezone,
         status: 'SCHEDULED',
         source: 'MANUAL',
-        capacity: cap ?? arena.defaultActivityCapacity ?? null,
+        capacity: cap === undefined ? (arena.defaultActivityCapacity ?? null) : cap,
         notes: cleanNotes || null,
       },
       select: { id: true },
@@ -1552,9 +1562,23 @@ export async function updateActivity(arenaId, activityId, patch = {}) {
 
     // updateMany, scoped by arenaId, so an id from another club matches nothing
     // rather than editing someone else's night.
-    const updated = await tx.activity.updateMany({ where: { id: activityId, arenaId }, data });
+    // Scope by arenaId so an id from another club matches nothing. When the
+    // patch moves `status`, also require the row to currently be SCHEDULED or
+    // CANCELLED: without it a COMPLETED night could be flipped back to
+    // SCHEDULED and reappear as upcoming while still holding matches,
+    // standings, and attendance.
+    const updated = await tx.activity.updateMany({
+      where: {
+        id: activityId,
+        arenaId,
+        ...(data.status ? { status: { in: ['SCHEDULED', 'CANCELLED'] } } : {}),
+      },
+      data,
+    });
     if (updated.count === 0) {
-      errorMessage = 'Activity not found.';
+      errorMessage = data.status
+        ? 'Only an upcoming or cancelled session can be changed this way.'
+        : 'Activity not found.';
       return;
     }
 

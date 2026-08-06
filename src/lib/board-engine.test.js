@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { applyEvent, resolveCommand, OFFLINE_COMMANDS } from '@/lib/board-engine';
+import { LADDER_MIX_MESSAGE, MIX_MESSAGE } from '@/lib/matchmaking';
 import { computeMatchRatings, RATING_BASELINE } from '@/lib/rating';
 
 /** Deterministic PRNG (mulberry32) so shuffle outcomes are reproducible. */
@@ -613,5 +614,73 @@ describe('endMatch — activity attribution offline', () => {
     );
 
     expect(result.state.matchHistory[0].activityId).toBeNull();
+  });
+});
+
+describe('ladder mode offline — records are scoped to the open activity', () => {
+  /** A finished match belonging to `activityId`, in the shape matchHistory carries. */
+  const past = (activityId, winners, losers) => ({
+    id: `m-${activityId}-${winners.join('')}`,
+    courtName: 'Court c1',
+    team1: winners.map((id) => ({ id, firstName: id.toUpperCase(), lastName: null })),
+    team2: losers.map((id) => ({ id, firstName: id.toUpperCase(), lastName: null })),
+    score1: 11,
+    score2: 5,
+    timestamp: '2026-07-19T19:00:00.000Z',
+    activityId,
+  });
+
+  const LADDER = { ...SETTINGS, ladderMode: true };
+
+  const stateWith = ({ currentActivity, matchHistory }) => ({
+    ...makeState(),
+    currentActivity,
+    matchHistory,
+  });
+
+  const mix = (state, settings = LADDER) =>
+    resolveCommand(
+      resolveCommand(state, settings, { type: 'fillCourt', courtId: 'c1' }, opts()).state,
+      settings,
+      { type: 'endMatch', courtId: 'c1', score1: '11', score2: '7', autoMix: true },
+      opts(7),
+    );
+
+  it('ignores a previous activity’s history when a new one is open', () => {
+    // The bug this guards: a null/mismatched activity id made
+    // `computeActivityStats` count EVERY match, ranking the rack by lifetime
+    // form — the opposite of a per-session ladder.
+    const state = stateWith({
+      currentActivity: { id: 'tonight' },
+      matchHistory: [past('last-week', ['a', 'b'], ['c', 'd'])],
+    });
+    const result = mix(state);
+    expect(result.error).toBeUndefined();
+    // No records for tonight yet, so it must not announce a ladder mix.
+    expect(result.notification).toBe(MIX_MESSAGE);
+  });
+
+  it('announces the ladder once THIS activity has results', () => {
+    const state = stateWith({
+      currentActivity: { id: 'tonight' },
+      matchHistory: [past('tonight', ['a', 'b'], ['c', 'd'])],
+    });
+    expect(mix(state).notification).toBe(LADDER_MIX_MESSAGE);
+  });
+
+  it('falls back to a fairness mix when no activity is open', () => {
+    const state = stateWith({
+      currentActivity: null,
+      matchHistory: [past('last-week', ['a', 'b'], ['c', 'd'])],
+    });
+    expect(mix(state).notification).toBe(MIX_MESSAGE);
+  });
+
+  it('still announces a plain mix when ladder mode is off', () => {
+    const state = stateWith({
+      currentActivity: { id: 'tonight' },
+      matchHistory: [past('tonight', ['a', 'b'], ['c', 'd'])],
+    });
+    expect(mix(state, SETTINGS).notification).toBe(MIX_MESSAGE);
   });
 });

@@ -478,16 +478,23 @@ function ActivitiesSection({ arenaId, activities }) {
     });
   };
 
-  // Optimistic flip with rollback, matching SessionsSection's toggle: the
-  // checkbox is the control people expect to respond instantly.
+  /**
+   * Optimistic flip with rollback, matching SessionsSection's toggle: the
+   * checkbox is the control people expect to respond instantly.
+   *
+   * Sends the SAVED horizon rather than whatever is currently typed. The action
+   * validates every field, so a blank or out-of-range horizon input would
+   * otherwise reject the write and roll the checkbox back — leaving RSVP
+   * un-toggleable, with an error about a field the user wasn't editing.
+   */
   const toggleRsvp = (next) => {
     setRsvpEnabled(next);
     setError('');
     startTransition(async () => {
       const result = await updateArenaActivities(arenaId, {
         rsvpEnabled: next,
-        defaultActivityCapacity: capacity === '' ? null : Number(capacity),
-        activityHorizonDays: Number(horizon),
+        defaultActivityCapacity: activities?.defaultActivityCapacity ?? null,
+        activityHorizonDays: activities?.activityHorizonDays ?? 28,
       });
       if (result?.error) {
         setRsvpEnabled(!next);
