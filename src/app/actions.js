@@ -6,7 +6,7 @@ import { getCurrentUser, requireUser, requireArenaOwner, requireArenaManager } f
 import { ROLES, canManageArena } from '@/lib/roles';
 import { generateInviteCode } from '@/lib/invite-code';
 import { INVITE_MODES, isInviteMode } from '@/lib/invites';
-import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
+import { MAX_WAIT_THRESHOLD, LADDER_MIX_MESSAGE, MIX_MESSAGE } from '@/lib/matchmaking';
 import {
   DEFAULT_TARGET_SCORE,
   MIN_TARGET_SCORE,
@@ -347,6 +347,7 @@ export async function updateArenaMatchmaking(
     emergencyWait: emergencyInput,
     skipRestoresPriority: skipPriorityInput,
     skipPickReplacement: skipPickInput,
+    ladderMode: ladderInput,
   } = {},
 ) {
   const guard = await requireArenaManager(arenaId);
@@ -378,10 +379,22 @@ export async function updateArenaMatchmaking(
   if (skipPickReplacement === null) {
     return { error: 'Pick-replacement setting must be true or false.' };
   }
+  // Absent means "leave it alone" — the Matchmaking form posts every field, but
+  // an older client (or the offline shell's frozen settings) may not carry it.
+  const ladderMode = ladderInput === undefined ? undefined : asBool(ladderInput);
+  if (ladderMode === null) {
+    return { error: 'Ladder setting must be true or false.' };
+  }
 
   const updated = await prisma.arena.updateMany({
     where: { id: arenaId },
-    data: { starveThreshold: starve, emergencyWait: emergency, skipRestoresPriority, skipPickReplacement },
+    data: {
+      starveThreshold: starve,
+      emergencyWait: emergency,
+      skipRestoresPriority,
+      skipPickReplacement,
+      ...(ladderMode === undefined ? {} : { ladderMode }),
+    },
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
 
@@ -404,6 +417,7 @@ export async function updateArenaMatchmaking(
       emergencyWait: emergency,
       skipRestoresPriority,
       skipPickReplacement,
+      ...(ladderMode === undefined ? {} : { ladderMode }),
     },
   };
 }
@@ -909,11 +923,11 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
     // Auto-mix runs in its own transaction after the match-finish commit; if it
     // bails (arena vanished, lock contention, etc.), skip the mix and still
     // return a clean { state } to the client — the match is already saved.
-    let mixed = false;
+    let mix = { mixed: false, ladder: false };
     try {
       await prisma.$transaction(async (tx) => {
         await lockQueue(tx, arenaId);
-        mixed = await applyAutoMixTx(tx, arenaId);
+        mix = await applyAutoMixTx(tx, arenaId);
       });
     } catch (err) {
       // ARENA_GONE (concurrent delete) is the only known non-bug failure here.
@@ -921,8 +935,8 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
       // commit is unaffected either way.
       if (err?.message !== 'ARENA_GONE') throw err;
     }
-    if (mixed) {
-      notification = '⚡ Silo-Buster: Mixed the rack (longest-waiting up next) to keep matchups fresh and fair!';
+    if (mix.mixed) {
+      notification = mix.ladder ? LADDER_MIX_MESSAGE : MIX_MESSAGE;
     }
   } else if (otherPlaying > 0) {
     notification = '💡 Recommended: Wait for other courts to finish before stacking again, to allow a complete mix of player pools!';

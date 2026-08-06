@@ -1,4 +1,5 @@
-import { ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
+import { ON_DECK_SIZE, autoMixKey, compareAutoMix } from '@/lib/matchmaking';
+import { computeActivityStats } from '@/lib/activities';
 import { computeMatchRatings } from '@/lib/rating';
 import { validateMatchScore } from '@/lib/scoring';
 import { diffLineup, validateLineup } from '@/lib/court-lineup';
@@ -721,10 +722,23 @@ export async function applyAutoMixTx(tx, arenaId, { outcome } = {}) {
   // null-checked explicitly rather than crashing on destructure.
   const arena = await tx.arena.findUnique({
     where: { id: arenaId },
-    select: { starveThreshold: true, emergencyWait: true, skipRestoresPriority: true },
+    select: {
+      starveThreshold: true,
+      emergencyWait: true,
+      skipRestoresPriority: true,
+      ladderMode: true,
+    },
   });
   if (!arena) throw new Error('ARENA_GONE');
-  const { starveThreshold, emergencyWait, skipRestoresPriority } = arena;
+  const { starveThreshold, emergencyWait, skipRestoresPriority, ladderMode } = arena;
+
+  // Ladder mode groups the rack by record in the OPEN activity. Read it here so
+  // the tally and the reorder see one consistent set of finished matches.
+  const records = ladderMode ? await activityRecordsTx(tx, arenaId) : new Map();
+  // Report the ladder as applied only when it could actually bite — with no
+  // records yet (first game of the night) the ordering is identical to a
+  // fairness mix, and saying otherwise would misdescribe it.
+  const ladderApplied = ladderMode && records.size > 0;
 
   // Read the queued set under the lock so a concurrent fillCourt can't make
   // us reassign a position to a player who is now on a court.
@@ -732,7 +746,7 @@ export async function applyAutoMixTx(tx, arenaId, { outcome } = {}) {
     where: { arenaId, leftAt: null, queueOrder: { not: null } },
     select: { id: true, gamesPlayed: true, gamesOffset: true, waitRounds: true, skipBoosted: true },
   });
-  if (queued.length === 0) return false;
+  if (queued.length === 0) return { mixed: false, ladder: false };
   if (outcome && !sameMembers(outcome.mixedOrder, queued.map((p) => p.id))) {
     throw new Error('OUTCOME_MISMATCH');
   }
@@ -742,34 +756,25 @@ export async function applyAutoMixTx(tx, arenaId, { outcome } = {}) {
   // (gamesPlayed + gamesOffset, so a player who has played less goes
   // ahead but a late joiner can't hog), then a random tie-break for
   // variety among equals.
+  // `skipRestoresPriority` gates the boost under the queue lock: a stale
+  // `Player.skipBoosted` (set during a race with a toggle-off — skipPlayer
+  // reads the old `true` value under its own lock, then commits after
+  // `updateArenaMatchmaking`'s wipe outside the lock) must not elevate the
+  // paddle once the arena is in legacy mode. Treating the arena setting as
+  // authoritative here is simpler than locking the settings save.
   const orderedIds =
     outcome?.mixedOrder ??
     queued
-      .map((p) => ({
-        id: p.id,
-        // Gate the boost on the arena setting under the queue lock: a
-        // stale `Player.skipBoosted` (set during a race with a
-        // toggle-off — skipPlayer reads the old `true` value under its
-        // own lock, then commits after `updateArenaMatchmaking`'s wipe
-        // outside the lock) must not elevate the paddle once the arena
-        // is in legacy mode. Treating the arena setting as
-        // authoritative here is simpler than locking the settings save.
-        band: bandOf(p.waitRounds, {
+      .map((p) =>
+        autoMixKey(p, {
           starveThreshold,
           emergencyWait,
-          skipBoosted: p.skipBoosted && skipRestoresPriority,
+          skipRestoresPriority,
+          record: records.get(p.id) ?? null,
+          rand: Math.random(),
         }),
-        waitRounds: p.waitRounds,
-        games: p.gamesPlayed + p.gamesOffset,
-        rand: Math.random(),
-      }))
-      .sort((a, b) => {
-        if (a.band !== b.band) return b.band - a.band; // next-line > emergency > protected > fresh
-        // Both next-line and emergency bands are strictly longest-first.
-        if ((a.band === 3 || a.band === 2) && a.waitRounds !== b.waitRounds) return b.waitRounds - a.waitRounds;
-        if (a.games !== b.games) return a.games - b.games; // fewest games-since-joining first
-        return a.rand - b.rand; // random tie-break among equals
-      })
+      )
+      .sort(compareAutoMix)
       .map((p) => p.id);
   for (let i = 0; i < orderedIds.length; i++) {
     await tx.player.update({ where: { id: orderedIds[i] }, data: { queueOrder: i + 1 } });
@@ -781,7 +786,7 @@ export async function applyAutoMixTx(tx, arenaId, { outcome } = {}) {
     where: { arenaId, leftAt: null, queueOrder: { not: null }, skipBoosted: true },
     data: { skipBoosted: false },
   });
-  return true;
+  return { mixed: true, ladder: ladderApplied };
 }
 
 /**
@@ -809,6 +814,48 @@ export async function applyCheckInTx(tx, arenaId, { playerId }) {
     data: { queueOrder: order, waitRounds: 0, skipBoosted: false, gamesOffset: avg - player.gamesPlayed },
   });
   await recordAttendanceTx(tx, arenaId, player);
+}
+
+/**
+ * Every queued player's record in the arena's OPEN activity, for ladder mode.
+ *
+ * Derived from finished matches rather than a denormalized counter — the same
+ * decision as everywhere else in this feature, and it means the rack order and
+ * the activity's standings table can never disagree about who is winning.
+ * `computeActivityStats` also owns the tie convention (a tie is a game for
+ * everyone, no win, no loss), so reusing it keeps that in one place.
+ *
+ * Returns an empty map when no activity is open, which makes every ladder key
+ * zero and the ordering fall through to the ordinary fairness rules.
+ */
+async function activityRecordsTx(tx, arenaId) {
+  const activity = await tx.activity.findFirst({
+    where: { arenaId, status: 'LIVE' },
+    orderBy: { startsAt: 'desc' },
+    select: { id: true },
+  });
+  if (!activity) return new Map();
+
+  const matches = await tx.match.findMany({
+    where: { arenaId, activityId: activity.id },
+    select: {
+      score1: true,
+      score2: true,
+      activityId: true,
+      players: { select: { playerId: true, team: true } },
+    },
+  });
+
+  return computeActivityStats(
+    matches.map((m) => ({
+      score1: m.score1,
+      score2: m.score2,
+      activityId: m.activityId,
+      team1: m.players.filter((p) => p.team === 1).map((p) => ({ id: p.playerId })),
+      team2: m.players.filter((p) => p.team === 2).map((p) => ({ id: p.playerId })),
+    })),
+    activity.id,
+  );
 }
 
 /**

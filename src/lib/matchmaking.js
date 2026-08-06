@@ -51,3 +51,80 @@ export function bandOf(waitRounds, { starveThreshold, emergencyWait, skipBoosted
   if (waitRounds >= starveThreshold) return 1;
   return 0;
 }
+
+/**
+ * Build the sort key for one queued paddle.
+ *
+ * Extracted here (with {@link compareAutoMix}) because the identical sort ran
+ * in two places — `applyAutoMixTx` server-side and `resolveCommand` in the
+ * offline engine — and they must produce the same order or an offline session
+ * diverges from the board it syncs into. Same rationale as sharing `bandOf`.
+ *
+ * @param {{id:string, waitRounds:number, gamesPlayed:number, gamesOffset:number, skipBoosted?:boolean}} player
+ * @param {object} opts
+ * @param {{wins:number, games:number}} [opts.record] - the player's record in the
+ *   OPEN activity, for ladder mode. Omit (or pass null) when ladder mode is off.
+ * @param {number} [opts.rand] - pre-drawn tie-break, so the caller owns randomness
+ *   (the offline engine needs a seeded PRNG to replay deterministically).
+ */
+export function autoMixKey(player, {
+  starveThreshold,
+  emergencyWait,
+  skipRestoresPriority = true,
+  record = null,
+  rand = 0,
+}) {
+  const tally = record ?? { wins: 0, games: 0 };
+  return {
+    id: player.id,
+    band: bandOf(player.waitRounds, {
+      starveThreshold,
+      emergencyWait,
+      skipBoosted: player.skipBoosted && skipRestoresPriority,
+    }),
+    waitRounds: player.waitRounds,
+    // Ladder tier — wins this activity, then win rate. Both are 0 for everyone
+    // when ladder mode is off, which makes the two ladder comparisons in
+    // `compareAutoMix` no-ops and leaves the ordering byte-identical to the
+    // pre-ladder behaviour. That's deliberate: one comparator serves both modes.
+    wins: tally.wins,
+    winPct: tally.games > 0 ? tally.wins / tally.games : 0,
+    // Fairness metric — games played since joining. Distinct from `tally.games`
+    // (this activity only); conflating them would let a late joiner's offset
+    // leak into the ladder.
+    games: player.gamesPlayed + player.gamesOffset,
+    rand,
+  };
+}
+
+/**
+ * Order two auto-mix sort keys. Lexicographic, most significant first:
+ *
+ *   1. band          — next-line > emergency > protected > fresh
+ *   2. waitRounds    — longest-first, but ONLY in the two strict bands
+ *   3. wins          — ladder tier (no-op when ladder mode is off)
+ *   4. winPct        — ladder tie-break, matching `computeActivityStandings`
+ *   5. games         — fewest games-since-joining first
+ *   6. rand          — random tie-break among equals
+ *
+ * The wait bands sit ABOVE the ladder on purpose: a player on a losing run
+ * groups with other losers, but once they hit `starveThreshold` they still cut
+ * the line. Without that, a small losers' pool could leave someone waiting all
+ * night — the ladder is a preference, starvation protection is a guarantee.
+ */
+/**
+ * Post-mix notification copy. Shared so the server and the offline engine can't
+ * describe the same reorder differently — and so the ladder variant doesn't
+ * claim "longest-waiting up next" when the rack was actually sorted by record.
+ */
+export const MIX_MESSAGE = '⚡ Silo-Buster: Mixed the rack (longest-waiting up next) to keep matchups fresh and fair!';
+export const LADDER_MIX_MESSAGE = '🪜 Ladder: Mixed the rack by tonight’s record — winners face winners. Long waits still cut the line.';
+
+export function compareAutoMix(a, b) {
+  if (a.band !== b.band) return b.band - a.band;
+  if ((a.band === 3 || a.band === 2) && a.waitRounds !== b.waitRounds) return b.waitRounds - a.waitRounds;
+  if (a.wins !== b.wins) return b.wins - a.wins;
+  if (a.winPct !== b.winPct) return b.winPct - a.winPct;
+  if (a.games !== b.games) return a.games - b.games;
+  return a.rand - b.rand;
+}

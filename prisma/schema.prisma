@@ -95,6 +95,18 @@ model Arena {
   defaultActivityCapacity Int?
   activityHorizonDays     Int     @default(28)
 
+  // Ladder ("king of the court") matchmaking. When on, the auto-mix groups the
+  // rack by each player's record IN THE OPEN ACTIVITY — winners with winners,
+  // losers with losers — instead of treating everyone as peers. Records are
+  // per-activity, so every session starts the ladder from scratch.
+  //
+  // The wait bands still outrank it: a player who hits `starveThreshold` cuts
+  // the line regardless of record, so a small losers' pool can't strand anyone.
+  //
+  // Defaults false — it materially changes how a night plays, so existing
+  // arenas keep peer-based mixing until a manager opts in.
+  ladderMode Boolean @default(false)
+
   // Advisory offline hold (Phase 4 of offline session mode). Set by
   // `declareOfflineHold` when a manager starts running the board offline
   // while still reachable; cleared by `releaseOfflineHold` and inside the

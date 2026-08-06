@@ -50,6 +50,7 @@ import { ROLES } from '@/lib/roles';
 import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
 import { MAX_TARGET_SCORE, MAX_LEADERBOARD_SIZE } from '@/lib/match-defaults';
 import { boardFingerprint } from '@/lib/board-fingerprint';
+import { applyAutoMixTx } from '@/lib/board-apply';
 import * as actions from '@/app/actions';
 
 const ARENA = 'arena_test';
@@ -2843,6 +2844,106 @@ describe('invite links', () => {
       expect(result.error).toBeTruthy();
       expect(tx.arenaMembership.upsert).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('ladder mode — the auto-mix ranks by record in the open activity', () => {
+  const ACTIVITY = 'activity-live';
+
+  /**
+   * The auto-mix transaction. `matches` are the finished games it tallies;
+   * `queued` the rack it reorders. Only the ladder wiring is asserted here —
+   * the ordering itself is covered by matchmaking-ladder.test.js.
+   */
+  const mixTx = ({ ladderMode = true, matches = [], queued = [] } = {}) => ({
+    $executeRaw: vi.fn(),
+    arena: {
+      findUnique: vi.fn().mockResolvedValue({
+        starveThreshold: 2,
+        emergencyWait: 4,
+        skipRestoresPriority: true,
+        ladderMode,
+      }),
+    },
+    activity: { findFirst: vi.fn().mockResolvedValue({ id: ACTIVITY }) },
+    match: { findMany: vi.fn().mockResolvedValue(matches) },
+    player: {
+      findMany: vi.fn().mockResolvedValue(queued),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
+  });
+
+  const paddle = (id, gamesPlayed = 0) => ({
+    id, gamesPlayed, gamesOffset: 0, waitRounds: 0, skipBoosted: false,
+  });
+
+  /** One finished match in the shape the tally query selects. */
+  const finished = (winners, losers) => ({
+    score1: 11,
+    score2: 5,
+    activityId: ACTIVITY,
+    players: [
+      ...winners.map((playerId) => ({ playerId, team: 1 })),
+      ...losers.map((playerId) => ({ playerId, team: 2 })),
+    ],
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireArenaManager.mockResolvedValue({ user: { id: 'u1' }, arena: { id: ARENA }, role: ROLES.OWNER });
+  });
+
+  it('tallies the open activity and puts winners ahead of losers', async () => {
+    const tx = mixTx({
+      matches: [finished(['w1', 'w2'], ['l1', 'l2'])],
+      queued: [paddle('l1', 1), paddle('l2', 1), paddle('w1', 1), paddle('w2', 1)],
+    });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    const result = await applyAutoMixTx(tx, ARENA);
+
+    expect(result).toEqual({ mixed: true, ladder: true });
+    // Scoped to the OPEN activity — a previous night's results must not rank
+    // tonight's rack.
+    expect(tx.match.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { arenaId: ARENA, activityId: ACTIVITY } }),
+    );
+    // queueOrder 1 and 2 go to the winners.
+    const assigned = tx.player.update.mock.calls.map(([c]) => [c.where.id, c.data.queueOrder]);
+    const top2 = assigned.filter(([, order]) => order <= 2).map(([id]) => id).sort();
+    expect(top2).toEqual(['w1', 'w2']);
+  });
+
+  it('skips the tally entirely when ladder mode is off', async () => {
+    const tx = mixTx({ ladderMode: false, queued: [paddle('a'), paddle('b')] });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    const result = await applyAutoMixTx(tx, ARENA);
+
+    expect(result).toEqual({ mixed: true, ladder: false });
+    expect(tx.match.findMany).not.toHaveBeenCalled();
+    expect(tx.activity.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('reports ladder:false on the first mix of the night', async () => {
+    // No games played yet, so the ordering is identical to a fairness mix and
+    // the notification must not claim otherwise.
+    const tx = mixTx({ matches: [], queued: [paddle('a'), paddle('b')] });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    expect(await applyAutoMixTx(tx, ARENA)).toEqual({ mixed: true, ladder: false });
+  });
+
+  it('falls back to fairness when no activity is open', async () => {
+    const tx = mixTx({ queued: [paddle('a'), paddle('b')] });
+    tx.activity.findFirst.mockResolvedValue(null);
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    const result = await applyAutoMixTx(tx, ARENA);
+
+    expect(result).toEqual({ mixed: true, ladder: false });
+    expect(tx.match.findMany).not.toHaveBeenCalled();
   });
 });
 

@@ -105,6 +105,7 @@ export default async function ArenaPage({ params }) {
         emergencyWait: arena.emergencyWait,
         skipRestoresPriority: arena.skipRestoresPriority,
         skipPickReplacement: arena.skipPickReplacement,
+        ladderMode: arena.ladderMode,
       }}
       matchDefaults={{
         targetScore: arena.targetScore,

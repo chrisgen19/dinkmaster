@@ -1,4 +1,11 @@
-import { ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
+import {
+  ON_DECK_SIZE,
+  autoMixKey,
+  compareAutoMix,
+  LADDER_MIX_MESSAGE,
+  MIX_MESSAGE,
+} from '@/lib/matchmaking';
+import { computeActivityStats } from '@/lib/activities';
 import { RATING_BASELINE, computeMatchRatings } from '@/lib/rating';
 import { validateMatchScore } from '@/lib/scoring';
 import { diffLineup, validateLineup } from '@/lib/court-lineup';
@@ -457,7 +464,10 @@ function applyEndMatch(state, settings, event) {
     }
     queue = outcome.mixedOrder;
     players = players.map((p) => (queue.includes(p.id) && p.skipBoosted ? { ...p, skipBoosted: false } : p));
-    notification = '⚡ Silo-Buster: Mixed the rack (longest-waiting up next) to keep matchups fresh and fair!';
+    // Mirrors the server: only claim the ladder once there are records for it
+    // to sort on, otherwise the first mix of the night would be mislabelled.
+    notification =
+      settings.ladderMode && state.matchHistory.length > 0 ? LADDER_MIX_MESSAGE : MIX_MESSAGE;
   } else if (state.courts.some((c) => c.id !== courtId && c.status === 'playing')) {
     notification = '💡 Recommended: Wait for other courts to finish before stacking again, to allow a complete mix of player pools!';
   }
@@ -671,27 +681,28 @@ export function resolveCommand(state, settings, command, opts = {}) {
       // player rows are the correct sort inputs (matching applyAutoMixTx).
       let mixedOrder = null;
       if (command.autoMix && queueAfter.length > 4) {
+        // Ladder records come from the local match history, which already
+        // carries `activityId` — so an offline session ranks the rack exactly
+        // as the server would, using the same pure tally.
+        //
+        // Deliberately tallied from `state.matchHistory` BEFORE this finish is
+        // appended, matching the server: `applyAutoMixTx` runs in a separate
+        // transaction after the match commits, but the ordering inputs
+        // (waitRounds, games, boosts) are all pre-event there too.
+        const records = settings.ladderMode
+          ? computeActivityStats(state.matchHistory, state.currentActivity?.id ?? null)
+          : null;
         mixedOrder = queueAfter
-          .map((id) => {
-            const p = playerById(state, id);
-            return {
-              id,
-              band: bandOf(p.waitRounds, {
-                starveThreshold: settings.starveThreshold,
-                emergencyWait: settings.emergencyWait,
-                skipBoosted: p.skipBoosted && settings.skipRestoresPriority,
-              }),
-              waitRounds: p.waitRounds,
-              games: p.gamesPlayed + p.gamesOffset,
+          .map((id) =>
+            autoMixKey(playerById(state, id), {
+              starveThreshold: settings.starveThreshold,
+              emergencyWait: settings.emergencyWait,
+              skipRestoresPriority: settings.skipRestoresPriority,
+              record: records?.get(id) ?? null,
               rand: rng(),
-            };
-          })
-          .sort((a, b) => {
-            if (a.band !== b.band) return b.band - a.band;
-            if ((a.band === 3 || a.band === 2) && a.waitRounds !== b.waitRounds) return b.waitRounds - a.waitRounds;
-            if (a.games !== b.games) return a.games - b.games;
-            return a.rand - b.rand;
-          })
+            }),
+          )
+          .sort(compareAutoMix)
           .map((p) => p.id);
       }
       event = {

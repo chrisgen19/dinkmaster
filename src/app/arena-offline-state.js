@@ -57,6 +57,10 @@ export function engineSettings({ matchmaking, matchDefaults }) {
     emergencyWait: matchmaking.emergencyWait,
     skipRestoresPriority: matchmaking.skipRestoresPriority,
     skipPickReplacement: matchmaking.skipPickReplacement,
+    // Frozen onto the log at entry like the rest: an offline session must keep
+    // ranking the rack the way it did when it started, even if a manager
+    // flips the toggle on another device mid-session.
+    ladderMode: matchmaking.ladderMode ?? false,
   };
 }
 

@@ -61,6 +61,7 @@ describe('engineSettings', () => {
           emergencyWait: 5,
           skipRestoresPriority: false,
           skipPickReplacement: true,
+          ladderMode: true,
         },
         matchDefaults: { targetScore: 15, leaderboardSize: 5 },
       }),
@@ -70,7 +71,18 @@ describe('engineSettings', () => {
       emergencyWait: 5,
       skipRestoresPriority: false,
       skipPickReplacement: true,
+      ladderMode: true,
     });
+  });
+
+  it('defaults ladderMode off when the prop is absent', () => {
+    // A snapshot saved before ladder mode existed, or an older client — the
+    // offline board must not silently start ranking by record.
+    const settings = engineSettings({
+      matchmaking: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true },
+      matchDefaults: { targetScore: 11, leaderboardSize: 5 },
+    });
+    expect(settings.ladderMode).toBe(false);
   });
 });
 
