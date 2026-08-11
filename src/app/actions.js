@@ -915,6 +915,67 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
   return { notification, state: await getState(arenaId) };
 }
 
+/**
+ * Correct the scoreline of an already-recorded match. Manager-gated.
+ *
+ * Scope is deliberately narrow: the correction must keep the SAME winner.
+ * Everything downstream of a match reads from the `Match` rows at query time
+ * (weekly leaderboard, session stats, /profile insights, streaks, best
+ * partner), so a winner-preserving edit needs no recompute anywhere. The two
+ * stored aggregates that a finish writes — `Player.wins`/`losses` and the Elo
+ * `Player.rating` (see `applyEndMatchTx`) — only move when the winner changes,
+ * and Elo is path-dependent: once later matches have been played, no local fix
+ * restores the ratings the arena would have had. So a winner-flipping edit is
+ * rejected rather than silently corrupting ratings.
+ *
+ * `gamesPlayed` and `Partnership` counts are incremented at FILL time, not at
+ * finish, so they're unaffected either way.
+ */
+export async function updateMatchScore(arenaId, matchId, score1, score2) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  const match = await prisma.match.findUnique({ where: { id: matchId } });
+  // Scope the lookup to the caller's arena so a manager of arena X can't
+  // rewrite a match in arena Y by id.
+  if (!match || match.arenaId !== arenaId) {
+    return { error: 'That match no longer exists.', state: await getState(arenaId) };
+  }
+
+  // Same rules the entry modal enforces, re-checked server-side so a stale tab
+  // or a hand-rolled call can't write an illegal scoreline.
+  const target = guard.arena?.targetScore ?? DEFAULT_TARGET_SCORE;
+  const check = validateMatchScore(score1, score2, target);
+  if (!check.ok) {
+    return {
+      error: check.reason || 'Both scores are required.',
+      state: await getState(arenaId),
+    };
+  }
+
+  const s1 = parseInt(score1, 10);
+  const s2 = parseInt(score2, 10);
+
+  if (s1 === match.score1 && s2 === match.score2) {
+    return { state: await getState(arenaId) }; // nothing to correct
+  }
+
+  // Rejected outright for a legacy tie record: it banked no win/loss and was
+  // rated as a draw, so ANY legal correction of it changes the outcome.
+  const winnerOf = (a, b) => (a > b ? 1 : b > a ? 2 : 0);
+  if (winnerOf(s1, s2) !== winnerOf(match.score1, match.score2)) {
+    return {
+      error:
+        "This changes who won. Correcting the winner isn't supported yet, because it would rewrite skill ratings for every game since.",
+      state: await getState(arenaId),
+    };
+  }
+
+  await prisma.match.update({ where: { id: matchId }, data: { score1: s1, score2: s2 } });
+
+  return { state: await getState(arenaId) };
+}
+
 /** Add a new vacant court at the end. */
 export async function addCourt(arenaId) {
   const guard = await requireArenaManager(arenaId);

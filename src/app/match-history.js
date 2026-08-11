@@ -52,6 +52,11 @@ export function MatchHistory({
   // so their matches don't read as the viewer's. Null (default) keeps "You"
   // for the viewer's own profile and My Stats.
   subjectName = null,
+  // Optional: called with the raw `Match` when the viewer asks to correct a
+  // recorded score. Null/omitted (the default) renders the ledger read-only —
+  // /profile, /p, /u and My Stats never pass it; the arena History tab passes
+  // it for managers only.
+  onEditMatch = null,
 }) {
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'wins' | 'losses'
 
@@ -150,6 +155,7 @@ export function MatchHistory({
                         formatTime={formatTime}
                         profileHrefFor={profileHrefFor}
                         subjectName={subjectName}
+                        onEditMatch={onEditMatch}
                       />
                     </li>
                   ))}
@@ -300,7 +306,7 @@ function GroupHeader({ label, count }) {
   );
 }
 
-function MatchRow({ match, perspective, formatTime, profileHrefFor = null, subjectName = null }) {
+function MatchRow({ match, perspective, formatTime, profileHrefFor = null, subjectName = null, onEditMatch = null }) {
   const winner = winnerSide(match);
   const youOn = match.youOn;
   const youWon = perspective === 'player' ? viewerWon(match) : null;
@@ -355,6 +361,33 @@ function MatchRow({ match, perspective, formatTime, profileHrefFor = null, subje
             <path d="M12 6v6l4 2" />
           </svg>
           <span>{formatTime(match.timestamp)}</span>
+          {/* Correct-score affordance. Sized to a 44px tap target on mobile
+              (where the row has no card padding to absorb a mis-tap) and
+              pulled back to the meta row's rhythm with a negative margin so
+              it doesn't grow the header band. */}
+          {onEditMatch && (
+            <button
+              type="button"
+              onClick={() => onEditMatch(match)}
+              aria-label={`Correct score for ${match.courtName}`}
+              title="Correct score"
+              className="-my-2.5 -mr-1.5 sm:my-0 sm:mr-0 w-11 h-11 sm:w-7 sm:h-7 shrink-0 rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 flex items-center justify-center transition"
+            >
+              <svg
+                className="w-3.5 h-3.5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
