@@ -971,7 +971,16 @@ export async function updateMatchScore(arenaId, matchId, score1, score2) {
     };
   }
 
-  await prisma.match.update({ where: { id: matchId }, data: { score1: s1, score2: s2 } });
+  // updateMany (not update) so a concurrent delete is a clean count===0 rather
+  // than a thrown P2025 — same reasoning as `updateArenaGeneral`. Re-scoping by
+  // arenaId also closes the read-then-write gap above.
+  const updated = await prisma.match.updateMany({
+    where: { id: matchId, arenaId },
+    data: { score1: s1, score2: s2 },
+  });
+  if (updated.count === 0) {
+    return { error: 'That match no longer exists.', state: await getState(arenaId) };
+  }
 
   return { state: await getState(arenaId) };
 }

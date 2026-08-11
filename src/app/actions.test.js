@@ -29,7 +29,7 @@ vi.mock('@/lib/prisma', () => ({
       update: vi.fn(),
     },
     court: { findMany: vi.fn() },
-    match: { findUnique: vi.fn(), update: vi.fn() },
+    match: { findUnique: vi.fn(), updateMany: vi.fn() },
     player: { count: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
     joinRequest: { upsert: vi.fn(), deleteMany: vi.fn(), findUnique: vi.fn() },
     linkRequest: {
@@ -362,21 +362,22 @@ describe('arena server actions — authorization', () => {
           role: ROLES.OWNER,
         });
         prisma.match.findUnique.mockResolvedValue(MATCH);
+        prisma.match.updateMany.mockResolvedValue({ count: 1 });
       });
 
       it('persists a winner-preserving correction', async () => {
         const result = await actions.updateMatchScore(ARENA, 'm1', 11, 8);
         expect(result.error).toBeUndefined();
-        expect(prisma.match.update).toHaveBeenCalledWith({
-          where: { id: 'm1' },
+        expect(prisma.match.updateMany).toHaveBeenCalledWith({
+          where: { id: 'm1', arenaId: ARENA },
           data: { score1: 11, score2: 8 },
         });
       });
 
       it('accepts numeric strings from the client', async () => {
         await actions.updateMatchScore(ARENA, 'm1', '13', '11');
-        expect(prisma.match.update).toHaveBeenCalledWith({
-          where: { id: 'm1' },
+        expect(prisma.match.updateMany).toHaveBeenCalledWith({
+          where: { id: 'm1', arenaId: ARENA },
           data: { score1: 13, score2: 11 },
         });
       });
@@ -384,13 +385,13 @@ describe('arena server actions — authorization', () => {
       it('no-ops when the scoreline is unchanged', async () => {
         const result = await actions.updateMatchScore(ARENA, 'm1', 11, 5);
         expect(result.error).toBeUndefined();
-        expect(prisma.match.update).not.toHaveBeenCalled();
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
       });
 
       it('rejects a correction that flips the winner', async () => {
         const result = await actions.updateMatchScore(ARENA, 'm1', 5, 11);
         expect(result.error).toMatch(/changes who won/i);
-        expect(prisma.match.update).not.toHaveBeenCalled();
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
       });
 
       // A legacy tie banked no win/loss and was rated as a draw, so every legal
@@ -399,7 +400,7 @@ describe('arena server actions — authorization', () => {
         prisma.match.findUnique.mockResolvedValueOnce({ ...MATCH, score1: 9, score2: 9 });
         const result = await actions.updateMatchScore(ARENA, 'm1', 11, 9);
         expect(result.error).toMatch(/changes who won/i);
-        expect(prisma.match.update).not.toHaveBeenCalled();
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
       });
 
       it.each([
@@ -409,21 +410,29 @@ describe('arena server actions — authorization', () => {
       ])('rejects %s and writes nothing', async (_label, s1, s2) => {
         const result = await actions.updateMatchScore(ARENA, 'm1', s1, s2);
         expect(result.error).toBeTruthy();
-        expect(prisma.match.update).not.toHaveBeenCalled();
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
       });
 
       it('refuses a match id belonging to another arena', async () => {
         prisma.match.findUnique.mockResolvedValueOnce({ ...MATCH, arenaId: 'other_arena' });
         const result = await actions.updateMatchScore(ARENA, 'm1', 11, 8);
         expect(result.error).toMatch(/no longer exists/i);
-        expect(prisma.match.update).not.toHaveBeenCalled();
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
       });
 
       it('reports a clean error when the match is gone', async () => {
         prisma.match.findUnique.mockResolvedValueOnce(null);
         const result = await actions.updateMatchScore(ARENA, 'm1', 11, 8);
         expect(result.error).toMatch(/no longer exists/i);
-        expect(prisma.match.update).not.toHaveBeenCalled();
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
+      });
+
+      // The read and the write are separate statements: a delete landing
+      // between them is a count===0, not a thrown P2025.
+      it('reports a clean error when the match is deleted mid-correction', async () => {
+        prisma.match.updateMany.mockResolvedValueOnce({ count: 0 });
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 8);
+        expect(result.error).toMatch(/no longer exists/i);
       });
     });
 

@@ -52,8 +52,10 @@ export function MatchHistory({
   // so their matches don't read as the viewer's. Null (default) keeps "You"
   // for the viewer's own profile and My Stats.
   subjectName = null,
-  // Optional: called with the raw `Match` when the viewer asks to correct a
-  // recorded score. Null/omitted (the default) renders the ledger read-only —
+  // Optional: called with the NORMALISED match this component renders (the
+  // `{ id, courtName, teams: { a, b } }` shape out of `toMatch`), not the
+  // caller's `score1`/`score2` row, when the viewer asks to correct a recorded
+  // score. Null/omitted (the default) renders the ledger read-only —
   // /profile, /p, /u and My Stats never pass it; the arena History tab passes
   // it for managers only.
   onEditMatch = null,
@@ -369,7 +371,9 @@ function MatchRow({ match, perspective, formatTime, profileHrefFor = null, subje
             <button
               type="button"
               onClick={() => onEditMatch(match)}
-              aria-label={`Correct score for ${match.courtName}`}
+              // Court names repeat down the ledger ("Court 1" on every row), so
+              // the timestamp is what makes each button's name distinguishable.
+              aria-label={`Correct score for ${match.courtName} at ${formatTime(match.timestamp)}`}
               title="Correct score"
               className="-my-2.5 -mr-1.5 sm:my-0 sm:mr-0 w-11 h-11 sm:w-7 sm:h-7 shrink-0 rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 flex items-center justify-center transition"
             >

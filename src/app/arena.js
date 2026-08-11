@@ -982,15 +982,23 @@ export default function Arena({
     if (!matchToCorrect) return;
     const matchId = matchToCorrect.id;
     startTransition(async () => {
-      const result = await updateMatchScore(arenaId, matchId, score1, score2);
-      if (result?.error) {
-        if (result.state) applyResult({ state: result.state });
-        setCorrectionError(result.error);
-        return;
+      try {
+        const result = await updateMatchScore(arenaId, matchId, score1, score2);
+        if (result?.error) {
+          if (result.state) applyResult({ state: result.state });
+          setCorrectionError(result.error);
+          return;
+        }
+        applyResult(result);
+        setCorrectionError('');
+        setMatchToCorrect(null);
+      } catch {
+        // Transport failure — same reasoning as `run()`: nothing was written,
+        // so asking the manager to retry is safe. The message lands inside the
+        // dialog (not the page banner, which the backdrop would cover).
+        setCorrectionError('Connection problem: that correction was not saved. Please try again.');
+        offline.notifyActionFailed();
       }
-      applyResult(result);
-      setCorrectionError('');
-      setMatchToCorrect(null);
     });
   };
 
