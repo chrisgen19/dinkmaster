@@ -80,22 +80,45 @@ export function e2eDatabaseUrl({ suffix = 'e2e', overrideVar = 'E2E_DATABASE_URL
 function assertNotDevelopmentDatabase(url, overrideVar) {
   const dev = process.env.DATABASE_URL;
   if (!dev) return url;
-  const same = (a, b) => {
-    try {
-      const x = new URL(a);
-      const y = new URL(b);
-      return x.host === y.host && databaseName(x.toString()) === databaseName(y.toString());
-    } catch {
-      return false; // unparseable: let Prisma produce the real error
-    }
-  };
-  if (same(url, dev)) {
+
+  if (sameDatabase(url, dev)) {
     throw new Error(
       `${overrideVar} points at the development database (${databaseName(dev)}). ` +
         'e2e empties its database before every run, so this is refused.',
     );
   }
   return url;
+}
+
+/** Loopback spellings that all reach the same server. */
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+/**
+ * Do two connection strings name the same database?
+ *
+ * Compared field by field rather than as strings, because the same database has
+ * many spellings and this decides whether we are about to TRUNCATE it:
+ *
+ *   - the port may be omitted when it is Postgres's default, so `localhost` and
+ *     `localhost:5432` are one server (`URL.host` reports them as different);
+ *   - loopback has several names;
+ *   - the database name may be percent-encoded.
+ *
+ * Anything it cannot parse is treated as "not the same", leaving Prisma to
+ * report the real problem with the URL.
+ */
+function sameDatabase(a, b) {
+  try {
+    const x = new URL(a);
+    const y = new URL(b);
+    const host = (u) => (LOOPBACK.has(u.hostname) ? 'loopback' : u.hostname.toLowerCase());
+    const port = (u) => u.port || '5432';
+    return (
+      host(x) === host(y) && port(x) === port(y) && databaseName(a) === databaseName(b)
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Same server, but pointed at the default maintenance database, so the e2e
