@@ -2027,6 +2027,32 @@ describe('arena server actions — authorization', () => {
       expect(result.notification).toMatch(/Silo-Buster/);
     });
 
+    it('endMatch() lets any other mix failure roll the finish back', async () => {
+      // The other half of the single-commit trade-off. ARENA_GONE is swallowed
+      // (below) because it throws off a null read with the transaction still
+      // healthy; a real infrastructure failure must NOT be, or the mix would be
+      // skipped silently and the rack left in the recycled-but-unmixed order
+      // this PR exists to stop anyone from seeing.
+      //
+      // Injected on `player.findMany`, which ONLY `applyAutoMixTx` calls in this
+      // path — failing `player.updateMany` instead would abort inside
+      // `applyEndMatchTx` (the wins/losses increments run first) and the test
+      // would pass without the mix ever being reached.
+      const tx = finishTxMock();
+      tx.player.findMany.mockRejectedValue(new Error('P1001'));
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+      prisma.court.findMany.mockResolvedValue([]);
+
+      await expect(actions.endMatch(ARENA, 'c1', 11, 5, true)).rejects.toThrow('P1001');
+      // It got past the finish and into the mix — the failure is the mix's.
+      expect(tx.match.create).toHaveBeenCalled();
+      expect(tx.arena.findUnique).toHaveBeenCalled();
+      // What protects the match is the rejection escaping the transaction
+      // callback (Prisma then rolls back); the writes issued against this mock
+      // before the throw are exactly what the real rollback discards, so
+      // asserting they never happened would be asserting the wrong thing.
+    });
+
     it('endMatch() degrades gracefully when the arena vanishes during auto-mix', async () => {
       // The arena row is gone by the time the mix reads it. That throws off a
       // null read rather than a failed statement, so the transaction is still
