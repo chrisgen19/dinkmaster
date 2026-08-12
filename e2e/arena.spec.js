@@ -259,6 +259,53 @@ test.describe('arenas', () => {
     await expect(ledger.getByText('Edited')).toHaveCount(1);
   });
 
+  // Deleting a match must unwind everything it counted for, not just remove
+  // the row. Two matches are played so the rating stays visible after the
+  // delete (a player with no games shows "—"), which lets the test assert the
+  // rating returns to exactly its value before the deleted match.
+  test('a manager can delete the most recent match', async ({ page }) => {
+    await registerFreshUser(page);
+    await createArenaFromDirectory(page, `Delete Arena ${Date.now()}`);
+    await expect(page).toHaveURL(/\/arena\/.+/);
+
+    await addWalkIns(page, ['Ana', 'Ben', 'Cai']);
+
+    const playMatch = async (a, b) => {
+      // myDupr() leaves the viewer on My Stats, so come back to the board.
+      await page.getByRole('tab', { name: /Active Courts/ }).click();
+      await page.getByRole('button', { name: /Stack Next 4 Paddles/ }).first().click();
+      await page.getByRole('button', { name: /Finish Game & Record Score/ }).first().click();
+      await page.getByRole('textbox', { name: 'Team A score' }).fill(a);
+      await page.getByRole('textbox', { name: 'Team B score' }).fill(b);
+      await page.getByRole('button', { name: 'Save Score' }).click();
+      await expect(page.getByText('4 in rack').first()).toBeVisible();
+    };
+
+    await playMatch('11', '5');
+    const afterFirst = await myDupr(page);
+    await playMatch('11', '7');
+    expect(await myDupr(page)).not.toBeCloseTo(afterFirst, 3);
+
+    await page.getByRole('tab', { name: /Match Log/ }).click();
+    const ledger = page.getByRole('tabpanel', { name: /Match Log/ });
+    await expect(ledger.locator('article')).toHaveCount(2);
+    // Offered on the newest row only — the one whose rating effect can be
+    // undone exactly.
+    await expect(ledger.getByRole('button', { name: /Delete match on/ })).toHaveCount(1);
+
+    await ledger.getByRole('button', { name: /Delete match on/ }).click();
+    const confirm = page.getByRole('alertdialog');
+    // The dialog names the match it is about to remove.
+    await expect(confirm).toContainText('11');
+    await expect(confirm).toContainText('7');
+    await confirm.getByRole('button', { name: 'Delete Match' }).click();
+
+    // The row is gone...
+    await expect(ledger.locator('article')).toHaveCount(1);
+    // ...and the rating is back exactly where it stood before that match.
+    expect(await myDupr(page)).toBeCloseTo(afterFirst, 3);
+  });
+
   // The scores-in-the-wrong-boxes correction: the whole result inverts, which
   // means reversing the Elo the finish banked (see `applyMatchReversalTx`).
   // Ratings are asserted through the leaderboard's DUPR column, since that is

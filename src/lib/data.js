@@ -43,7 +43,13 @@ export async function getState(arenaId) {
     }),
     prisma.match.findMany({
       where: { arenaId },
-      orderBy: { createdAt: 'desc' },
+      // The id tie-break matters: `deleteMatch` picks the newest row with the
+      // same ordering, and the arena's ledger offers its delete affordance on
+      // whichever row lands first here. Ordering by `createdAt` alone lets the
+      // two disagree when rows share a timestamp (possible for matches synced
+      // from an older offline batch), putting the button on a row the server
+      // would refuse.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       include: { players: true },
     }),
     prisma.partnership.findMany({ where: { arenaId } }),
