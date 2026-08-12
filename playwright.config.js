@@ -11,6 +11,10 @@ import { e2eDatabaseUrl } from './e2e/e2e-database.js';
  */
 export default defineConfig({
   testDir: './e2e',
+  // Explicit, rather than Playwright's default (which also claims `*.test.js`):
+  // the e2e harness has vitest unit tests beside its specs, and Playwright must
+  // not try to run them. `.spec.js` is Playwright, `.test.js` is vitest.
+  testMatch: '**/*.spec.js',
   // Offline/PWA specs need a production build (the service worker is
   // disabled in dev) and run via playwright.offline.config.js instead.
   testIgnore: '**/offline-*.spec.js',
