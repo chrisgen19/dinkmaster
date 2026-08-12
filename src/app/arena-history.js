@@ -24,12 +24,9 @@ export function ArenaHistory({
   profileHrefFor = null,
   onEditMatch = null,
   onDeleteMatch = null,
+  deletableFrom = null,
 }) {
   const normalised = useMemo(() => matches.map((m) => toMatch(m)), [matches]);
-  // `matches` arrives newest-first from `getState`, and only that row can be
-  // deleted (the server enforces it too) — so the affordance appears on one
-  // row rather than tempting a manager into a rejection on the others.
-  const deletableMatchId = normalised[0]?.id ?? null;
 
   return (
     <div
@@ -48,7 +45,7 @@ export function ArenaHistory({
         profileHrefFor={profileHrefFor ? (p) => profileHrefFor(p?.id) : null}
         onEditMatch={onEditMatch}
         onDeleteMatch={onDeleteMatch}
-        deletableMatchId={deletableMatchId}
+        deletableFrom={deletableFrom}
       />
     </div>
   );

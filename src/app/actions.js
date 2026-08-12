@@ -1073,20 +1073,24 @@ export async function updateMatchScore(arenaId, matchId, score1, score2) {
 }
 
 /**
- * Newest match first. The id tie-break keeps the ordering deterministic when
- * two rows share a `createdAt` — possible for matches synced from an older
- * offline batch — so the server and `getState` (which orders the ledger the
- * same way) always agree on which row is "the most recent".
+ * Was this match recorded in the session that is running now?
+ *
+ * A null boundary means the arena has never been reset, so its whole history
+ * IS the current session — the same reading `computeSessionStats` and the
+ * balanced-pairing inputs use, so "this session" means one thing everywhere.
  */
-const NEWEST_MATCH_FIRST = [{ createdAt: 'desc' }, { id: 'desc' }];
+function withinCurrentSession(match, lastSessionResetAt) {
+  if (!lastSessionResetAt) return true;
+  return new Date(match.createdAt) >= new Date(lastSessionResetAt);
+}
 
 /** Typed `applyMatchDeletionTx` failures, as the manager should read them. */
-const NOT_LATEST_DELETION =
-  'Only the most recent match can be deleted, so its effect on skill ratings can be undone exactly. Correct its score instead.';
+const PREVIOUS_SESSION_DELETION =
+  "That match belongs to an earlier session, so deleting it can't be unwound cleanly. Correct its score instead.";
 
 const DELETION_FAILURES = Object.assign(Object.create(null), {
   RACED: 'That match was already removed.',
-  NOT_LATEST: NOT_LATEST_DELETION,
+  PREVIOUS_SESSION: PREVIOUS_SESSION_DELETION,
   NO_RATING_DELTA:
     "This match was recorded before the app tracked rating changes, so deleting it can't undo its effect on skill ratings.",
   INCOMPLETE_ROSTER:
@@ -1102,21 +1106,22 @@ const DELETION_FAILURES = Object.assign(Object.create(null), {
  * be re-recorded. {@link updateMatchScore} is the tool for a bad scoreline,
  * including one whose winner was entered backwards.
  *
- * Restricted to the arena's MOST RECENT match. That keeps the Elo reversal
- * exact rather than the bounded approximation a correction settles for (see
- * {@link applyMatchReversalTx}), and it matches the real use case: a
- * duplicate is noticed immediately. Deleting further back would need the
- * approximation, which is a much harder trade to justify for an operation
- * that can't be undone.
+ * Scoped to the CURRENT SESSION — anything recorded since the last
+ * `prepareNextSession`, or the whole history for an arena that has never been
+ * reset. Wide enough for the case that actually happens (a duplicate spotted
+ * at the end of the night, several games later), while keeping the reversal's
+ * inaccuracy small: the more matches have followed, the further the recovered
+ * ratings sit from what history would have produced.
  *
- * KNOWN LIMIT: "most recent" is by `createdAt`, which is when the match was
- * PLAYED, not when its rating was applied. An offline batch replays with
- * historical timestamps, so a match synced after a later online one carries an
- * older `createdAt` while its delta was applied on top. Deleting the
- * `createdAt`-newest row then subtracts a delta that isn't the last one
- * applied, degrading to the same bounded, zero-sum approximation a correction
- * accepts (capped at 2K — see `applyMatchReversalTx`). Closing this properly
- * needs a rating-application sequence on `Match`; tracked in #167.
+ * That inaccuracy is the same bounded, zero-sum one a score correction already
+ * accepts — no player moves by more than 2K however stale the match (see
+ * {@link applyMatchReversalTx}) — so deletion is no longer stricter than
+ * correction for no reason a manager could explain.
+ *
+ * Everything else deletion undoes is exact at any age: wins/losses, the
+ * `gamesPlayed` bump, the partnership counts, and the row itself. Only Elo
+ * degrades, and only by that bound. Tracked in #167: a rating-application
+ * sequence would let this be exact rather than bounded.
  */
 export async function deleteMatch(arenaId, matchId) {
   const guard = await requireArenaManager(arenaId);
@@ -1128,17 +1133,10 @@ export async function deleteMatch(arenaId, matchId) {
   }
 
   // Fast path only — the authoritative check runs under the lock below, since
-  // a finish or a correction can commit between these reads and the lock.
-  // Newest by `createdAt`, with the id as a deterministic tie-break: offline
-  // batches clamp timestamps, and while `syncOfflineEvents` now keeps them
-  // strictly increasing, older synced rows can still share one.
-  const latest = await prisma.match.findFirst({
-    where: { arenaId },
-    orderBy: NEWEST_MATCH_FIRST,
-    select: { id: true },
-  });
-  if (latest?.id !== matchId) {
-    return { error: NOT_LATEST_DELETION, state: await getState(arenaId) };
+  // `prepareNextSession` could stamp a new boundary between this read and the
+  // lock, putting the match in a session that has already been closed.
+  if (!withinCurrentSession(match, guard.arena?.lastSessionResetAt)) {
+    return { error: PREVIOUS_SESSION_DELETION, state: await getState(arenaId) };
   }
 
   let failure = null;
@@ -1147,19 +1145,19 @@ export async function deleteMatch(arenaId, matchId) {
       await lockQueue(tx, arenaId);
       try {
         // Re-read EVERYTHING the decision rests on, now that the lock is held.
-        // `endMatch` and `updateMatchScore` take the same lock, so either could
-        // have committed while this call queued for it: a finish would leave
-        // this match no longer newest (deleting it would reverse a delta that
-        // later ratings are built on), and a winner-flipping correction would
-        // have replaced the `ratingDelta` read above with a different one.
+        // A winner-flipping `updateMatchScore` takes the same lock and would
+        // have replaced the `ratingDelta` read above, so reversing the stale
+        // value would move all four players the wrong way; `prepareNextSession`
+        // takes it too and would have closed the session this match sits in.
         const fresh = await tx.match.findUnique({ where: { id: matchId } });
         if (!fresh || fresh.arenaId !== arenaId) throw new Error('RACED');
-        const newest = await tx.match.findFirst({
-          where: { arenaId },
-          orderBy: NEWEST_MATCH_FIRST,
-          select: { id: true },
+        const arena = await tx.arena.findUnique({
+          where: { id: arenaId },
+          select: { lastSessionResetAt: true },
         });
-        if (newest?.id !== matchId) throw new Error('NOT_LATEST');
+        if (!withinCurrentSession(fresh, arena?.lastSessionResetAt)) {
+          throw new Error('PREVIOUS_SESSION');
+        }
 
         await applyMatchDeletionTx(tx, arenaId, { match: fresh });
       } catch (err) {
