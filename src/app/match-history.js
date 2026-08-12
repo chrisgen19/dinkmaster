@@ -356,6 +356,18 @@ function MatchRow({ match, perspective, formatTime, profileHrefFor = null, subje
               {match.arenaName}
             </span>
           )}
+          {/* A corrected scoreline is marked, so a rewrite is visible to the
+              people who played it rather than silently replacing what they
+              remember. Amber (not the roster's slate) to read as a note, and
+              the correction time goes in the tooltip to keep the row calm. */}
+          {match.editedAt && (
+            <span
+              title={`Score corrected ${formatTime(match.editedAt)}`}
+              className="shrink-0 font-sans font-extrabold text-[8px] tracking-wider text-amber-700 bg-amber-50 border border-amber-200/60 rounded-full px-2 py-0.5 normal-case"
+            >
+              Edited
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0 font-medium normal-case tracking-normal text-slate-400 font-mono text-[10px]">
           <svg className="w-3.5 h-3.5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">

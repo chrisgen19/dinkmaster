@@ -98,6 +98,10 @@ export async function getState(arenaId) {
     // recorded before it was captured; the client falls back to the arena's
     // current setting exactly as `updateMatchScore` does.
     targetScore: m.targetScore,
+    // Set when a manager corrected this scoreline after the fact; the ledger
+    // marks those rows so a rewrite isn't invisible to the people who played.
+    // Null for every match that has never been edited.
+    editedAt: m.editedAt ? new Date(m.editedAt).toISOString() : null,
     // ISO string; formatted in the client so it uses the viewer's locale/timezone.
     timestamp: new Date(m.createdAt).toISOString(),
   }));

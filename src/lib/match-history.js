@@ -70,6 +70,9 @@ export function toMatch(raw, options = {}) {
       // back to the arena's current setting). Absent from player-shape rows,
       // which are read-only everywhere they're rendered.
       targetScore: raw.targetScore ?? null,
+      // When a manager corrected this scoreline (ISO string), so the ledger
+      // can mark the row. Null = never edited.
+      editedAt: raw.editedAt ?? null,
       youOn: onA ? 'a' : onB ? 'b' : null,
     };
   }

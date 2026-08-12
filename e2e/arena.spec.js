@@ -240,6 +240,9 @@ test.describe('arenas', () => {
     const ledger = page.getByRole('tabpanel', { name: /Match Log/ });
     await expect(ledger.getByText('5', { exact: true })).toBeVisible();
 
+    // A freshly recorded match carries no edit mark.
+    await expect(ledger.getByText('Edited')).toHaveCount(0);
+
     // The dialog opens seeded with the recorded scoreline, not blank.
     await ledger.getByRole('button', { name: /Correct score for/ }).first().click();
     await expect(page.getByRole('textbox', { name: 'Team A score' })).toHaveValue('11');
@@ -251,6 +254,9 @@ test.describe('arenas', () => {
     await page.getByRole('button', { name: 'Save Correction' }).click();
     await expect(page.getByRole('dialog')).toBeHidden();
     await expect(ledger.getByText('9', { exact: true })).toBeVisible();
+    // ...and the row now says so, so the rewrite isn't invisible to the
+    // players who were on that court.
+    await expect(ledger.getByText('Edited')).toHaveCount(1);
   });
 
   // The scores-in-the-wrong-boxes correction: the whole result inverts, which
