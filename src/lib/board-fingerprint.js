@@ -77,9 +77,17 @@ export function canonicalBoardString(state, settings) {
 
   // `balancedPairing` belongs here: it changes which team split a fill picks,
   // so a device that ran a session under the old value produced a board the
-  // server would not have produced. Absent (a snapshot predating the setting)
-  // hashes as ON, matching the column default.
-  const rules = `${settings.targetScore}|${settings.starveThreshold}|${settings.emergencyWait}|${bit(settings.skipRestoresPriority)}|${bit(settings.skipPickReplacement)}|${bit(settings.balancedPairing !== false)}`;
+  // server would not have produced.
+  //
+  // ON is encoded by ABSENCE, not by a sixth field. A pending log stamped
+  // before this setting shipped carries a fingerprint STRING computed by the
+  // old five-field code — it can't be recomputed, only matched. Appending a
+  // field unconditionally would change the hash of every unchanged board, so
+  // every offline session in flight across the deploy would report a phantom
+  // divergence. Since the migration backfills every arena to ON, the default
+  // must hash exactly as it did before, and only the opt-out adds `|0`.
+  const legacyRules = `${settings.targetScore}|${settings.starveThreshold}|${settings.emergencyWait}|${bit(settings.skipRestoresPriority)}|${bit(settings.skipPickReplacement)}`;
+  const rules = settings.balancedPairing === false ? `${legacyRules}|0` : legacyRules;
 
   return `p:${players}\nq:${queue}\nc:${courts}\nh:${partnerships}\ns:${rules}`;
 }

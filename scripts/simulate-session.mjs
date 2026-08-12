@@ -33,12 +33,23 @@ import { RECENT_MATCH_WINDOW, rankMatchups, recentResults } from '@/lib/pairing.
 import { eloToDupr } from '@/lib/rating.js';
 import { validateMatchScore } from '@/lib/scoring.js';
 
-const [arenaId, matchesArg, ...flags] = process.argv.slice(2);
+// Flags are collected from ANY position: the match count is optional, so
+// positional destructuring would read `--dry` as the count in
+// `<arenaId> --dry` — leaving DRY_RUN false and MAX_MATCHES NaN, i.e. the
+// documented dry-run invocation refusing itself as an unflagged write.
+const argv = process.argv.slice(2);
+const flags = argv.filter((a) => a.startsWith('--'));
+const [arenaId, matchesArg] = argv.filter((a) => !a.startsWith('--'));
 const DRY_RUN = flags.includes('--dry');
 const MAX_MATCHES = Number(matchesArg ?? 20);
 
 if (!arenaId) {
   console.error('Usage: node .sim-build.mjs <arenaId> [matches] [--dry|--write]');
+  process.exit(1);
+}
+
+if (!Number.isInteger(MAX_MATCHES) || MAX_MATCHES < 1) {
+  console.error(`Match count must be a positive integer (got "${matchesArg}").`);
   process.exit(1);
 }
 
@@ -140,12 +151,19 @@ const stats = {
 async function run() {
   const arena = await prisma.arena.findUnique({
     where: { id: arenaId },
-    select: { id: true, name: true, targetScore: true, autoMixDefault: true },
+    // `balancedPairing` drives the readout: scoring a legacy-mode arena with
+    // the balanced rule would print crossed/gap numbers for a split production
+    // never considered.
+    select: { id: true, name: true, targetScore: true, autoMixDefault: true, balancedPairing: true },
   });
   if (!arena) throw new Error(`Arena ${arenaId} not found`);
   const target = arena.targetScore;
+  const balanced = arena.balancedPairing;
 
-  console.log(`\n▶ Simulating "${arena.name}" — ${MAX_MATCHES} matches to ${target}${DRY_RUN ? ' (DRY RUN)' : ''}\n`);
+  console.log(
+    `\n▶ Simulating "${arena.name}" — ${MAX_MATCHES} matches to ${target}` +
+      ` · pairing: ${balanced ? 'balanced' : 'legacy'}${DRY_RUN ? ' (DRY RUN)' : ''}\n`,
+  );
 
   let round = 0;
   while (stats.matches < MAX_MATCHES) {
@@ -241,7 +259,7 @@ async function fillOne(court) {
       const [a, b] = x < y ? [x, y] : [y, x];
       return pairs.find((r) => r.playerA === a && r.playerB === b)?.count ?? 0;
     };
-    const ranked = rankMatchups(ids, { results, ratings, pairCount });
+    const ranked = rankMatchups(ids, { results, ratings, pairCount, balanced });
 
     // No `outcome` — production's own rule picks the split.
     let chosen = ranked[0];

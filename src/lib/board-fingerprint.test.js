@@ -112,7 +112,7 @@ describe('boardFingerprint', () => {
     // Anchored to end-of-string, not `toContain`: the rules section is last,
     // and a substring match silently passes when a NEW rule is appended —
     // which is exactly how `balancedPairing` slipped in unasserted.
-    expect(text).toMatch(/\ns:11\|2\|4\|1\|1\|1$/);
+    expect(text).toMatch(/\ns:11\|2\|4\|1\|1$/);
   });
 
   it('changes when the pairing mode is toggled', () => {
@@ -130,5 +130,18 @@ describe('boardFingerprint', () => {
     // offline session survives the deploy that adds the column.
     const { balancedPairing: _omitted, ...preFeature } = SETTINGS;
     expect(boardFingerprint(baseState(), preFeature)).toBe(boardFingerprint(baseState(), SETTINGS));
+  });
+
+  it('leaves the pre-feature canonical string byte-identical when the mode is ON', () => {
+    // The case the test above CANNOT cover: a log stamped before this setting
+    // shipped carries a fingerprint string the old five-field code produced.
+    // That string can't be recomputed, only matched — so ON must add nothing
+    // to the canonical form, or every session in flight across the deploy
+    // reports a phantom divergence. This literal IS the old format.
+    const legacy = `s:${SETTINGS.targetScore}|${SETTINGS.starveThreshold}|${SETTINGS.emergencyWait}|1|1`;
+    expect(canonicalBoardString(baseState(), SETTINGS).endsWith(`\n${legacy}`)).toBe(true);
+    // ...and the opt-out is what deviates from it.
+    const off = { ...SETTINGS, balancedPairing: false };
+    expect(canonicalBoardString(baseState(), off).endsWith(`\n${legacy}|0`)).toBe(true);
   });
 });
