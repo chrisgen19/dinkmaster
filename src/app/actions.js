@@ -712,22 +712,35 @@ export async function shuffleQueue(arenaId) {
  *   Optional and only enforced when it arrives well-formed: a client running
  *   cached JS from an earlier deploy (this is an installable PWA) omits it and
  *   keeps the previous take-whoever-is-on-top behavior rather than breaking.
+ * @param {{players: string[], deck: 'W'|'L'}} [manualFour] - a hand-assembled
+ *   deck (Settings → Matchmaking's win/lose decks only). When a deck is short,
+ *   the organizer tops it up from the rack and stacks that; `deck` names the
+ *   one they were filling so the rotation still advances. The server
+ *   re-validates every id against the live rack under the queue lock, so this
+ *   grants no ability the manager didn't already have — it only chooses WHICH
+ *   racked four go on.
  */
-export async function fillCourt(arenaId, courtId, expectedPlayerIds) {
+export async function fillCourt(arenaId, courtId, expectedPlayerIds, manualFour) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
-  const expected =
-    Array.isArray(expectedPlayerIds) &&
-    expectedPlayerIds.length === ON_DECK_SIZE &&
-    expectedPlayerIds.every((id) => typeof id === 'string' && id.length > 0)
-      ? expectedPlayerIds
+  const wellFormedFour = (ids) =>
+    Array.isArray(ids) &&
+    ids.length === ON_DECK_SIZE &&
+    ids.every((id) => typeof id === 'string' && id.length > 0);
+
+  const expected = wellFormedFour(expectedPlayerIds) ? expectedPlayerIds : undefined;
+  // Ignored unless BOTH halves arrive well-formed; a malformed manual payload
+  // falls back to the ordinary automatic selection rather than failing the tap.
+  const manual =
+    wellFormedFour(manualFour?.players) && ['W', 'L'].includes(manualFour?.deck)
+      ? { players: manualFour.players, deck: manualFour.deck }
       : undefined;
 
   try {
     await prisma.$transaction(async (tx) => {
       await lockQueue(tx, arenaId);
-      await applyFillCourtTx(tx, arenaId, { courtId, expected });
+      await applyFillCourtTx(tx, arenaId, { courtId, expected, manual });
     });
   } catch (err) {
     if (err?.message === 'NOT_ENOUGH') {

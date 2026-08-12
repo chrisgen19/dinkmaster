@@ -1,6 +1,6 @@
 import { ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
 import { RECENT_MATCH_WINDOW, bestMatchups, rankMatchups, recentResults } from '@/lib/pairing';
-import { bucketFor, deckOf, nextDeck, splitDecks } from '@/lib/decks';
+import { DECK_LOSE, DECK_WIN, bucketFor, deckOf, nextDeck, splitDecks } from '@/lib/decks';
 import { computeMatchRatings } from '@/lib/rating';
 import { validateMatchScore } from '@/lib/scoring';
 import { diffLineup, validateLineup } from '@/lib/court-lineup';
@@ -211,8 +211,15 @@ export async function applyShuffleQueueTx(tx, arenaId, { outcome } = {}) {
  *   all reorder the rack between the manager's last repaint and their tap.
  *   Order-insensitive: the team split is decided here, so only the membership
  *   of the four is the caller's claim.
+ * @param {{players: string[], deck: 'W'|'L'}} [opts.manual] - a hand-assembled
+ *   four. When a deck is short of players (two recent winners, say), the
+ *   organizer can top it up from anyone still racked and stack that; `deck`
+ *   says which deck they were filling, so the alternation still advances as if
+ *   that deck took its turn. Deck mode only, and it replaces the automatic
+ *   selection entirely — but every downstream rule (dequeue, wait bump, team
+ *   split, slot snapshot) is unchanged, and the four must still all be racked.
  */
-export async function applyFillCourtTx(tx, arenaId, { courtId, outcome, expected }) {
+export async function applyFillCourtTx(tx, arenaId, { courtId, outcome, expected, manual }) {
   // Atomically claim the court only if it is still vacant (row-locks it).
   // The arenaId guard also rejects a courtId from another arena.
   const claimed = await tx.court.updateMany({
@@ -270,7 +277,25 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome, expected
   // NOT_ENOUGH guard above has already established.
   let deck = null;
   let players;
-  if (deckMode) {
+  if (manual && deckMode) {
+    // A hand-topped deck: the organizer named all four, so there is nothing to
+    // derive. Validated exactly like a replayed deck outcome — four distinct
+    // paddles, all still racked — because it makes the same class of claim
+    // (these four, not necessarily the rack's front four). Anything else is a
+    // stale or crafted request and must not stack.
+    const valid =
+      Array.isArray(manual.players) &&
+      manual.players.length === ON_DECK_SIZE &&
+      new Set(manual.players).size === ON_DECK_SIZE &&
+      manual.players.every((id) => rack.includes(id)) &&
+      (manual.deck === DECK_WIN || manual.deck === DECK_LOSE);
+    if (!valid) throw new Error('QUEUE_CHANGED');
+    players = manual.players;
+    // The organizer pressed that deck's button, so the rotation moves on as if
+    // it took its turn — however the four were assembled. Anything else lets
+    // the same deck go out twice running.
+    deck = manual.deck;
+  } else if (deckMode) {
     const picked = nextDeck(rack, recentResults(recentMatches, rack), prevDeck);
     deck = picked.deck;
     players = picked.players;

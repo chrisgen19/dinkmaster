@@ -127,6 +127,64 @@ test.describe('win/lose decks', () => {
     await expect(page.getByRole('button', { name: /Finish Game & Record Score/ })).toHaveCount(2);
   });
 
+  test('an organizer can hand-fill a short deck and stack it', async ({ page }) => {
+    await registerAndSignIn(page);
+    await createArena(page, `Top Up ${Date.now()}`);
+    const arenaUrl = page.url();
+
+    // Eight paddles. After one game there are two recent winners, so the
+    // winners deck sits at 2 of 4 and can never stack on its own — the case
+    // this feature exists for. The other four (2 real losers + the 2 who
+    // haven't played) fill the losers deck, leaving 2 in Waiting to draw from.
+    await addWalkIns(page, ['Ana', 'Ben', 'Cai', 'Dev', 'Eve', 'Fay', 'Gus']);
+    await enableDeckMode(page, arenaUrl);
+    await playAGame(page, 8);
+
+    // Two empty slots offered, and no stack button until they're filled.
+    const addSlot = page.getByRole('button', { name: 'Add a paddle to the winners deck' });
+    await expect(page.getByText('needs 2 more').first()).toBeVisible();
+    await expect(addSlot.first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Stack the winners deck/ })).toHaveCount(0);
+
+    // Fill both slots from Waiting.
+    for (let i = 0; i < 2; i++) {
+      await addSlot.first().click();
+      const dialog = page.getByRole('dialog', { name: 'Add to Winners' });
+      await dialog.getByRole('listitem').first().getByRole('button').click();
+      await dialog.getByRole('button', { name: 'Add to deck' }).click();
+      await expect(dialog).toHaveCount(0);
+    }
+
+    // Deck is complete: the slots are gone and it offers its own stack button.
+    await expect(addSlot).toHaveCount(0);
+    await expect(page.getByText('needs 2 more')).toHaveCount(0);
+
+    // Send them out. Four leave the rack, and the court goes live.
+    await page.getByRole('button', { name: /^Stack the winners deck/ }).first().click();
+    await expect(page.getByText('4 in rack').first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /Finish Game & Record Score/ }).first()).toBeVisible();
+  });
+
+  test('never offers a paddle who is already on the other deck', async ({ page }) => {
+    // The pool is Waiting only: topping up a short deck must not break a deck
+    // that was ready to play. With nobody waiting the picker says so rather
+    // than offering someone it would be wrong to take.
+    await registerAndSignIn(page);
+    await createArena(page, `No Steal ${Date.now()}`);
+    const arenaUrl = page.url();
+
+    // Six paddles: after a game the winners deck is 2, the losers deck is 4,
+    // and Waiting is empty — every remaining paddle is spoken for.
+    await addWalkIns(page, ['Ana', 'Ben', 'Cai', 'Dev', 'Eve']);
+    await enableDeckMode(page, arenaUrl);
+    await playAGame(page, 6);
+
+    await page.getByRole('button', { name: 'Add a paddle to the winners deck' }).first().click();
+    const dialog = page.getByRole('dialog', { name: 'Add to Winners' });
+    await expect(dialog.getByText('Nobody waiting')).toBeVisible();
+    await expect(dialog.getByRole('listitem')).toHaveCount(0);
+  });
+
   test('labels each racked paddle with how their last game went', async ({ page }) => {
     // Independent of deck mode — every arena gets the chip, so this runs with
     // the setting untouched.

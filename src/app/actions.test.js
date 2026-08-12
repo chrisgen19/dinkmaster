@@ -3284,6 +3284,115 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
 
       expect(tx.arena.updateMany).not.toHaveBeenCalled();
     });
+
+    // Hand-topping a short deck: the organizer fills the empty slots from the
+    // rack and stacks that four themselves.
+    describe('a hand-assembled four', () => {
+      // Only two recent winners, so the winners deck can't stack on its own.
+      const SHORT = [
+        { id: 'w1', queueOrder: 1, waitRounds: 0, rating: 1000 },
+        { id: 'l1', queueOrder: 2, waitRounds: 0, rating: 1000 },
+        { id: 'w2', queueOrder: 3, waitRounds: 0, rating: 1000 },
+        { id: 'l2', queueOrder: 4, waitRounds: 0, rating: 1000 },
+        { id: 'l3', queueOrder: 5, waitRounds: 0, rating: 1000 },
+        { id: 'l4', queueOrder: 6, waitRounds: 0, rating: 1000 },
+      ];
+      const SHORT_MATCHES = [
+        {
+          score1: 11,
+          score2: 6,
+          players: [
+            { playerId: 'w1', team: 1 },
+            { playerId: 'w2', team: 1 },
+            { playerId: 'l1', team: 2 },
+            { playerId: 'l2', team: 2 },
+          ],
+        },
+      ];
+      const HAND_PICKED = ['w1', 'w2', 'l3', 'l4'];
+
+      const shortTx = (over = {}) =>
+        makeDeckTx({ rack: SHORT, matches: SHORT_MATCHES, ...over });
+
+      it('stacks exactly the four the organizer named', async () => {
+        const tx = shortTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.fillCourt(ARENA, COURT, HAND_PICKED, {
+          players: HAND_PICKED,
+          deck: 'W',
+        });
+
+        expect(result.error).toBeUndefined();
+        expect(stacked(tx)).toEqual(HAND_PICKED);
+      });
+
+      it('counts as that deck\'s turn, so the rotation moves on', async () => {
+        // The organizer pressed the winners' button, however the four were
+        // assembled — otherwise the same deck could go out twice running.
+        const tx = shortTx({ lastDeckFilled: 'L' });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.fillCourt(ARENA, COURT, HAND_PICKED, { players: HAND_PICKED, deck: 'W' });
+
+        expect(tx.arena.updateMany).toHaveBeenCalledWith({
+          where: { id: ARENA },
+          data: { lastDeckFilled: 'W' },
+        });
+      });
+
+      it('refuses when one of the four already left the rack', async () => {
+        const tx = shortTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const gone = ['w1', 'w2', 'l3', 'departed'];
+        const result = await actions.fillCourt(ARENA, COURT, gone, { players: gone, deck: 'W' });
+
+        expect(result.error).toBe('The court or queue changed while loading. Please try again.');
+        expect(tx.player.updateMany).not.toHaveBeenCalled();
+        expect(tx.courtSlot.createMany).not.toHaveBeenCalled();
+      });
+
+      it('refuses a four naming the same paddle twice', async () => {
+        const tx = shortTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const dupes = ['w1', 'w1', 'l3', 'l4'];
+        const result = await actions.fillCourt(ARENA, COURT, dupes, { players: dupes, deck: 'W' });
+
+        expect(result.error).toBe('The court or queue changed while loading. Please try again.');
+        expect(tx.courtSlot.createMany).not.toHaveBeenCalled();
+      });
+
+      it('ignores a malformed payload and stacks automatically instead', async () => {
+        // A garbled manual payload must not fail the tap — it falls back to the
+        // ordinary deck selection, which here is the four losers.
+        const tx = shortTx({ lastDeckFilled: 'W' });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.fillCourt(ARENA, COURT, undefined, {
+          players: ['w1', 'w2'],
+          deck: 'X',
+        });
+
+        expect(result.error).toBeUndefined();
+        expect(stacked(tx)).toEqual(['l1', 'l2', 'l3', 'l4']);
+      });
+
+      it('is ignored entirely when the arena is not running decks', async () => {
+        // Outside deck mode there are no decks to top up, so the classic top
+        // four stack regardless of what was sent.
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.fillCourt(ARENA, COURT, undefined, {
+          players: ['p4', 'p3', 'p2', 'p1'],
+          deck: 'W',
+        });
+
+        expect(stacked(tx)).toEqual(['p1', 'p2', 'p3', 'p4']);
+      });
+    });
   });
 
   it('records the exact bumped player ids on the court for cancelFill to reverse', async () => {

@@ -1,6 +1,6 @@
 import { ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
 import { bestMatchups, rankMatchups, recentResults } from '@/lib/pairing';
-import { bucketFor, deckOf, nextDeck, splitDecks } from '@/lib/decks';
+import { DECK_LOSE, DECK_WIN, bucketFor, deckOf, nextDeck, splitDecks } from '@/lib/decks';
 import { RATING_BASELINE, computeMatchRatings } from '@/lib/rating';
 import { validateMatchScore } from '@/lib/scoring';
 import { diffLineup, validateLineup } from '@/lib/court-lineup';
@@ -729,11 +729,25 @@ export function resolveCommand(state, settings, command, opts = {}) {
       // One results map serves both the deck split and the team split, exactly
       // as on the server.
       const results = sessionResults(state, state.queue);
-      // Deck mode draws from the front of the winners or losers deck,
+      // A hand-topped deck names its own four (see `applyFillCourtTx`'s
+      // `manual`): validated the same way, and the rotation still advances as
+      // if that deck took its turn. Deck mode only.
+      const manual =
+        deckMode &&
+        Array.isArray(command.manualPlayers) &&
+        command.manualPlayers.length === 4 &&
+        new Set(command.manualPlayers).size === 4 &&
+        command.manualPlayers.every((id) => state.queue.includes(id)) &&
+        (command.manualDeck === DECK_WIN || command.manualDeck === DECK_LOSE)
+          ? { deck: command.manualDeck, players: command.manualPlayers }
+          : null;
+      // Otherwise deck mode draws from the front of the winners or losers deck,
       // alternating; classic mode takes the rack's top four.
-      const picked = deckMode
-        ? nextDeck(state.queue, results, state.lastDeckFilled ?? null)
-        : { deck: null, players: state.queue.slice(0, 4) };
+      const picked =
+        manual ??
+        (deckMode
+          ? nextDeck(state.queue, results, state.lastDeckFilled ?? null)
+          : { deck: null, players: state.queue.slice(0, 4) });
       const filled = picked.players;
       const ranked = rankMatchups(filled, {
         results,

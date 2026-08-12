@@ -114,6 +114,13 @@ export function deriveRackRow(
  * watching it fill is how a manager knows the next stack is coming. Empty
  * sections are dropped.
  *
+ * A short deck can also be topped up by hand (`drafted`): the organizer picks
+ * anyone still racked to fill its empty slots, so a session with only two
+ * recent winners can still send a "winners" court out. Drafted paddles are
+ * shown in the deck they were added to and removed from wherever they came
+ * from, so nobody appears twice. The draft is a CLIENT-SIDE staging choice for
+ * one stack — it never changes anyone's recorded result.
+ *
  * @param {string[]} queue - rack order, index 0 = front
  * @param {object} [opts]
  * @param {import('@/lib/decks').splitDecks extends never ? never : {winners:string[],losers:string[],winnersDeck:string[],losersDeck:string[]}} [opts.decks]
@@ -123,11 +130,17 @@ export function deriveRackRow(
  * @param {Map<string, 'W'|'L'|null>} [opts.results] - each player's most recent
  *   result (from `recentResults`), surfaced per row as `lastResult` for the
  *   W/L chip. Independent of deck mode — every arena shows it.
- * @returns {Array<{key:string, label:string, accent:boolean, isNext:boolean, short:number, rows:Array<{playerId:string, rackIndex:number, bucketIndex:number, bucketLength:number, lastResult:'W'|'L'|null}>}>}
+ * @param {{W: string[], L: string[]}} [opts.drafted] - player ids hand-added to
+ *   each deck, in the order they were picked
+ * @returns {Array<{key:string, label:string, deck:'W'|'L'|null, accent:boolean, isNext:boolean, short:number, canStack:boolean, rows:Array<{playerId:string, rackIndex:number, bucketIndex:number, bucketLength:number, lastResult:'W'|'L'|null, isDrafted:boolean}>}>}
  */
-export function buildRackSections(queue, { decks = null, nextDeck = null, results = null } = {}) {
+export function buildRackSections(
+  queue,
+  { decks = null, nextDeck = null, results = null, drafted = null } = {},
+) {
   const rackIndexOf = new Map(queue.map((id, i) => [id, i]));
-  const row = (playerId, bucket) => ({
+  const draftedIn = (deck) => (drafted?.[deck] ?? []).filter((id) => rackIndexOf.has(id));
+  const row = (playerId, bucket, isDrafted = false) => ({
     playerId,
     rackIndex: rackIndexOf.get(playerId),
     bucketIndex: bucket.indexOf(playerId),
@@ -135,13 +148,17 @@ export function buildRackSections(queue, { decks = null, nextDeck = null, result
     // `null` for a player with no game this session — no chip, rather than a
     // chip that says "nothing yet".
     lastResult: results?.get(playerId) ?? null,
+    isDrafted,
   });
-  const section = (key, label, rows, { accent = false, isNext = false, short = 0 } = {}) => ({
+  const section = (key, label, rows, opts = {}) => ({
     key,
     label,
-    accent,
-    isNext,
-    short,
+    deck: null,
+    accent: false,
+    isNext: false,
+    short: 0,
+    canStack: false,
+    ...opts,
     rows,
   });
 
@@ -157,23 +174,55 @@ export function buildRackSections(queue, { decks = null, nextDeck = null, result
     ];
   }
 
-  const onDeckIds = new Set([...decks.winnersDeck, ...decks.losersDeck]);
+  // Each deck's four = its natural members, then whoever was drafted into it,
+  // capped at a court. A drafted paddle is claimed by exactly one deck, so it
+  // can't also appear in its natural spot or in Waiting.
+  const claimed = new Set([...draftedIn(DECK_WIN), ...draftedIn(DECK_LOSE)]);
+  const deckFour = (deck) => {
+    const natural = (deck === DECK_WIN ? decks.winnersDeck : decks.losersDeck).filter(
+      (id) => !claimed.has(id),
+    );
+    return [...natural, ...draftedIn(deck)].slice(0, ON_DECK_SIZE);
+  };
+  const winnersFour = deckFour(DECK_WIN);
+  const losersFour = deckFour(DECK_LOSE);
+
+  const onDeckIds = new Set([...winnersFour, ...losersFour]);
   const waiting = queue.filter((id) => !onDeckIds.has(id));
   // A waiting paddle's bucket is still its OWN deck — that's what decides
   // whether it can skip and who would replace it.
   const bucketOf = (id) => (decks.winners.includes(id) ? decks.winners : decks.losers);
+  const isDrafted = (id, deck) => draftedIn(deck).includes(id);
+
+  const deckSection = (deck, key, label, four) =>
+    section(
+      key,
+      label,
+      four.map((id) => {
+        // A drafted paddle is measured against the ASSEMBLED four, not their
+        // natural bucket: they are on deck now (so the row reads as on-deck,
+        // which is what a manager sees), and a four-long bucket means they
+        // can't skip — the organizer takes them back out with the row's ✕
+        // instead, which is the reversal that actually makes sense here.
+        const drafted = isDrafted(id, deck);
+        return row(id, drafted ? four : bucketOf(id), drafted);
+      }),
+      {
+        deck,
+        accent: true,
+        isNext: nextDeck === deck,
+        short: Math.max(0, ON_DECK_SIZE - four.length),
+        // Only a HAND-COMPLETED deck offers its own stack button: a deck that
+        // reached four on its own is stacked from the court card, on the
+        // rotation's turn. Without this every full deck would sprout a button
+        // that bypasses the alternation.
+        canStack: four.length === ON_DECK_SIZE && draftedIn(deck).length > 0,
+      },
+    );
 
   return [
-    section('winners', 'Winners · next court', decks.winnersDeck.map((id) => row(id, decks.winners)), {
-      accent: true,
-      isNext: nextDeck === DECK_WIN,
-      short: Math.max(0, ON_DECK_SIZE - decks.winnersDeck.length),
-    }),
-    section('losers', 'Losers · next court', decks.losersDeck.map((id) => row(id, decks.losers)), {
-      accent: true,
-      isNext: nextDeck === DECK_LOSE,
-      short: Math.max(0, ON_DECK_SIZE - decks.losersDeck.length),
-    }),
+    deckSection(DECK_WIN, 'winners', 'Winners · next court', winnersFour),
+    deckSection(DECK_LOSE, 'losers', 'Losers · next court', losersFour),
     section('waiting', `Waiting · ${waiting.length}`, waiting.map((id) => row(id, bucketOf(id)))),
-  ].filter((s) => s.rows.length > 0);
+  ].filter((s) => s.rows.length > 0 || s.short > 0);
 }

@@ -251,6 +251,107 @@ describe('buildRackSections', () => {
     expect(losers.short).toBe(0);
   });
 
+  describe('hand-topping a short deck', () => {
+    // Two recent winners, four losers: the winners deck can't stack on its own.
+    const six = ['w1', 'l1', 'w2', 'l2', 'l3', 'l4'];
+    const sixDecks = splitDecks(six, new Map(six.map((id) => [id, id[0] === 'w' ? 'W' : 'L'])));
+
+    it('fills the empty slots with the drafted paddles', () => {
+      const [winners] = buildRackSections(six, {
+        decks: sixDecks,
+        drafted: { W: ['l3', 'l4'] },
+      });
+      expect(winners.rows.map((r) => r.playerId)).toEqual(['w1', 'w2', 'l3', 'l4']);
+      expect(winners.short).toBe(0);
+      expect(winners.rows.map((r) => r.isDrafted)).toEqual([false, false, true, true]);
+    });
+
+    it('takes the drafted paddles out of the deck they came from', () => {
+      // l3 and l4 were in the losers deck; they must not appear twice.
+      const [winners, losers] = buildRackSections(six, {
+        decks: sixDecks,
+        drafted: { W: ['l3', 'l4'] },
+      });
+      expect(losers.rows.map((r) => r.playerId)).toEqual(['l1', 'l2']);
+      const everyone = [...winners.rows, ...losers.rows].map((r) => r.playerId);
+      expect(new Set(everyone).size).toBe(everyone.length);
+    });
+
+    it('takes them out of Waiting too', () => {
+      const eight = [...six, 'l5', 'l6'];
+      const decks = splitDecks(eight, new Map(eight.map((id) => [id, id[0] === 'w' ? 'W' : 'L'])));
+      const sections = buildRackSections(eight, { decks, drafted: { W: ['l5', 'l6'] } });
+      const waiting = sections.find((s) => s.key === 'waiting');
+      expect(waiting).toBeUndefined();
+    });
+
+    it('offers its own stack button only once hand-completed', () => {
+      const short = buildRackSections(six, { decks: sixDecks })[0];
+      expect(short.canStack).toBe(false);
+
+      const partly = buildRackSections(six, { decks: sixDecks, drafted: { W: ['l3'] } })[0];
+      expect(partly.short).toBe(1);
+      expect(partly.canStack).toBe(false);
+
+      const full = buildRackSections(six, { decks: sixDecks, drafted: { W: ['l3', 'l4'] } })[0];
+      expect(full.canStack).toBe(true);
+    });
+
+    it('leaves a naturally full deck alone — that one stacks from the court', () => {
+      // Otherwise every full deck would sprout a button that bypasses the
+      // W -> L -> W rotation.
+      const eight = ['w1', 'w2', 'w3', 'w4', 'l1', 'l2', 'l3', 'l4'];
+      const decks = splitDecks(eight, new Map(eight.map((id) => [id, id[0] === 'w' ? 'W' : 'L'])));
+      const [winners] = buildRackSections(eight, { decks });
+      expect(winners.short).toBe(0);
+      expect(winners.canStack).toBe(false);
+    });
+
+    it('measures a drafted paddle against the assembled four, not their old bucket', () => {
+      // They ARE on deck now, so the row must read that way; and a four-long
+      // bucket means no Skip — the organizer removes them with the row's ✕
+      // instead, which is the reversal that makes sense for a hand-added
+      // paddle.
+      const [winners] = buildRackSections(six, {
+        decks: sixDecks,
+        drafted: { W: ['l3', 'l4'] },
+      });
+      const [, , third, fourth] = winners.rows;
+      expect(third).toMatchObject({ playerId: 'l3', bucketIndex: 2, bucketLength: 4 });
+      expect(fourth).toMatchObject({ playerId: 'l4', bucketIndex: 3, bucketLength: 4 });
+    });
+
+    it('caps a deck at four however many are drafted', () => {
+      const [winners] = buildRackSections(six, {
+        decks: sixDecks,
+        drafted: { W: ['l1', 'l2', 'l3', 'l4'] },
+      });
+      expect(winners.rows).toHaveLength(4);
+    });
+
+    it('ignores a drafted paddle that has left the rack', () => {
+      // They were pulled onto a court (or unracked) between the pick and the
+      // repaint; the slot just goes back to empty.
+      const [winners] = buildRackSections(six, {
+        decks: sixDecks,
+        drafted: { W: ['gone', 'l3'] },
+      });
+      expect(winners.rows.map((r) => r.playerId)).toEqual(['w1', 'w2', 'l3']);
+      expect(winners.short).toBe(1);
+    });
+
+    it('keeps an empty deck visible while it has slots to fill', () => {
+      // Nobody has won yet, so the winners deck has no rows at all — but it
+      // still has to render, or there is nothing to add the first paddle to.
+      const losersOnly = ['l1', 'l2', 'l3', 'l4'];
+      const decks = { winners: [], losers: losersOnly, winnersDeck: [], losersDeck: losersOnly };
+      const [winners] = buildRackSections(losersOnly, { decks });
+      expect(winners.key).toBe('winners');
+      expect(winners.rows).toEqual([]);
+      expect(winners.short).toBe(4);
+    });
+  });
+
   it('puts everyone past both decks in one waiting group', () => {
     const ten = ['w1', 'w2', 'w3', 'w4', 'w5', 'l1', 'l2', 'l3', 'l4', 'l5'];
     const decks = splitDecks(ten, new Map(ten.map((id) => [id, id[0] === 'w' ? 'W' : 'L'])));

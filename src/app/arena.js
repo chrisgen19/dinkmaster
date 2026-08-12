@@ -51,6 +51,8 @@ import { ArenaScheduleModal } from './arena-schedule-modal';
 import { ArenaCourtsPanel } from './arena-courts-panel';
 import { CourtEditModal } from './court-edit-modal';
 import { SkipPickerModal } from './skip-picker-modal';
+import { DeckAddModal } from './deck-add-modal';
+import { buildRackSections } from './paddle-rack-stack-state';
 import { ScoreEntryModal } from './score-entry-modal';
 import { ArenaThisWeek } from './arena-this-week';
 import { ArenaSessionPrepBanner } from './arena-session-prep-banner';
@@ -441,6 +443,13 @@ export default function Arena({
   // page-level banner would be hidden behind the modal's backdrop.
   const [skipPickerSkippedId, setSkipPickerSkippedId] = useState(null);
   const [skipPickerError, setSkipPickerError] = useState('');
+  // Paddles the organizer has hand-added to a short win/lose deck, staged for
+  // the next stack. Deliberately client-side and un-persisted: it is a staging
+  // choice about ONE fill, not a fact about the player, so it never changes
+  // anyone's recorded result and a reload simply drops it. Which deck's picker
+  // is open (`deckPickerFor`) is null when closed.
+  const [drafted, setDrafted] = useState({ W: [], L: [] });
+  const [deckPickerFor, setDeckPickerFor] = useState(null);
 
   const [activeTab, setActiveTab] = useState('courts');
 
@@ -640,6 +649,21 @@ export default function Arena({
   // and a "Stack Losers" button over a rack that shows one plain "On deck"
   // group would be both confusing and a bit insulting to the four going on.
   const upNextLabel = decks ? upNext.deck : null;
+
+  // Who the deck picker offers: paddles in WAITING only — everyone racked who
+  // isn't already in one of the two decks. Topping up a short deck must never
+  // pull someone out of the other deck: that would break a group that was
+  // ready to play to patch one that wasn't, and the manager would be fixing
+  // one hole by digging another.
+  const deckAddCandidates = useMemo(() => {
+    if (!deckPickerFor || !decks) return [];
+    const onDeck = new Set(
+      buildRackSections(queue, { decks, drafted })
+        .filter((s) => s.deck)
+        .flatMap((s) => s.rows.map((r) => r.playerId)),
+    );
+    return queue.filter((id) => !onDeck.has(id));
+  }, [deckPickerFor, decks, drafted, queue]);
 
   // The pool a skipped paddle's replacement must come from — its own deck when
   // the arena runs them, otherwise the whole rack. Mirrors the bucket
@@ -955,6 +979,63 @@ export default function Arena({
     // Offline needs no equivalent: the local engine records the four in the
     // event's outcome and the sync replay rejects a mismatch there.
     run(() => fillCourt(arenaId, courtId, upNext.players));
+  };
+
+  // --- Hand-topping a short win/lose deck ---------------------------------
+  // A deck short of four (only two recent winners, say) can be filled from the
+  // rack so a court can still go out. All three handlers are no-ops without
+  // deck mode: the empty slots only render inside a deck section.
+
+  const handleAddToDeck = (deck) => {
+    if (!canManage) return;
+    setDeckPickerFor(deck);
+  };
+
+  const handleConfirmDeckAdd = (playerId) => {
+    const deck = deckPickerFor;
+    if (!deck || !playerId) return;
+    setDrafted((prev) => {
+      // A paddle belongs to at most one deck, so adding to one removes it from
+      // the other — the rack must never show the same person twice.
+      const other = deck === 'W' ? 'L' : 'W';
+      return {
+        ...prev,
+        [deck]: prev[deck].includes(playerId) ? prev[deck] : [...prev[deck], playerId],
+        [other]: prev[other].filter((id) => id !== playerId),
+      };
+    });
+    setDeckPickerFor(null);
+  };
+
+  const handleRemoveFromDeck = (deck, playerId) => {
+    if (!canManage) return;
+    setDrafted((prev) => ({ ...prev, [deck]: prev[deck].filter((id) => id !== playerId) }));
+  };
+
+  const handleStackDeck = (deck, playerIds) => {
+    if (!canManage) return;
+    // First open court, matching what the button promises. Nothing to stack
+    // onto is a no-op rather than an error — the button is only reachable when
+    // a deck is complete, not when a court is free.
+    const open = courts.find((c) => c.status !== 'playing');
+    if (!open) {
+      setErrorMsg('No open court to stack onto. Finish a game first.');
+      return;
+    }
+    // Clear the staging either way: these four are on their way out, and a
+    // refused fill repaints the rack from the server anyway.
+    setDrafted((prev) => ({ ...prev, [deck]: [] }));
+    if (offline.offlineActive) {
+      return runLocalCommand({
+        type: 'fillCourt',
+        courtId: open.id,
+        manualPlayers: playerIds,
+        manualDeck: deck,
+      });
+    }
+    // `expected` is the same four: the organizer named them, so the staleness
+    // guard still asks the server to confirm they're all still racked.
+    run(() => fillCourt(arenaId, open.id, playerIds, { players: playerIds, deck }));
   };
 
   // The rack X takes a player off the rack (reversible) rather than deleting
@@ -1663,6 +1744,10 @@ export default function Arena({
             decks={decks}
             nextDeck={upNextLabel}
             results={rackResults}
+            drafted={drafted}
+            onAddToDeck={handleAddToDeck}
+            onRemoveFromDeck={handleRemoveFromDeck}
+            onStackDeck={handleStackDeck}
             errorMsg={errorMsg}
           />
         </div>
@@ -1868,6 +1953,10 @@ export default function Arena({
             decks={decks}
             nextDeck={upNextLabel}
             results={rackResults}
+            drafted={drafted}
+            onAddToDeck={handleAddToDeck}
+            onRemoveFromDeck={handleRemoveFromDeck}
+            onStackDeck={handleStackDeck}
             errorMsg={errorMsg}
           />
         </div>
@@ -1995,6 +2084,19 @@ export default function Arena({
           error={skipPickerError}
           onConfirm={handleConfirmSkipWithReplacement}
           onClose={handleCancelSkipPicker}
+        />
+      )}
+
+      {/* Add-to-deck picker: fills an empty slot on a short win/lose deck.
+          Purely client-side staging until the deck is stacked. */}
+      {mounted && deckPickerFor && decks && (
+        <DeckAddModal
+          deck={deckPickerFor}
+          players={displayPlayers}
+          candidates={deckAddCandidates}
+          isPending={isPending}
+          onConfirm={handleConfirmDeckAdd}
+          onClose={() => setDeckPickerFor(null)}
         />
       )}
 

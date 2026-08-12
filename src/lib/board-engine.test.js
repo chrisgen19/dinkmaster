@@ -502,6 +502,37 @@ describe('fillCourt', () => {
       ]);
     });
 
+    it('stacks a hand-assembled four and counts it as that deck\'s turn', () => {
+      // Only two recent winners, so the winners deck is short; the organizer
+      // tops it up from the rack and sends it out.
+      const six = makeState({
+        matchHistory: [played(['a', 'b'], ['c', 'd'])],
+        lastDeckFilled: 'L',
+      });
+      const result = resolveCommand(
+        six,
+        DECKS,
+        { type: 'fillCourt', courtId: 'c1', manualPlayers: ['a', 'b', 'e', 'f'], manualDeck: 'W' },
+        opts(),
+      );
+      expect(result.event.outcome.players).toEqual(['a', 'b', 'e', 'f']);
+      expect(result.event.outcome.deck).toBe('W');
+      expect(result.state.lastDeckFilled).toBe('W');
+      expect(result.state.queue).toEqual(['c', 'd']);
+    });
+
+    it('ignores a hand-assembled four naming someone off the rack', () => {
+      // Falls back to the ordinary selection rather than failing the tap,
+      // mirroring the server.
+      const result = resolveCommand(
+        eightState({ lastDeckFilled: 'L' }),
+        DECKS,
+        { type: 'fillCourt', courtId: 'c1', manualPlayers: ['a', 'b', 'c', 'gone'], manualDeck: 'W' },
+        opts(),
+      );
+      expect(result.event.outcome.players).toEqual(['a', 'b', 'c', 'd']);
+    });
+
     it('refuses to skip a paddle that is not on its own deck', () => {
       // `h` is fourth in the losers deck… but `i` below makes them fifth, so
       // they are off-deck and the skip is a no-op.
