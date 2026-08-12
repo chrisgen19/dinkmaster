@@ -863,7 +863,14 @@ export default function Arena({
   const handleFillCourt = (courtId) => {
     if (!canManage) return;
     if (offline.offlineActive) return runLocalCommand({ type: 'fillCourt', courtId });
-    run(() => fillCourt(arenaId, courtId));
+    // Send the on-deck four THIS render is showing, so the server stacks the
+    // players the manager could actually see rather than whoever reached the
+    // front while the tap was in flight (auto-mix on a finish, another
+    // manager's action, a sub-out jumping to #1). A mismatch comes back as
+    // "the court or queue changed" with a repainted rack. Offline needs no
+    // equivalent: the local engine records the four in the event's outcome and
+    // the sync replay rejects a mismatch there.
+    run(() => fillCourt(arenaId, courtId, queue.slice(0, ON_DECK_SIZE)));
   };
 
   // The rack X takes a player off the rack (reversible) rather than deleting

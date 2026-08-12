@@ -165,8 +165,15 @@ export async function applyShuffleQueueTx(tx, arenaId, { outcome } = {}) {
  * @param {{players: string[], team1: string[], team2: string[]}} [opts.outcome] -
  *   pre-resolved matchup (offline replay); when absent the lowest-partnership
  *   split is picked with a random tie-break.
+ * @param {string[]} [opts.expected] - the on-deck four the CALLER was looking
+ *   at when they asked for the fill. When given, the stack only proceeds if
+ *   those are still the top four; otherwise `QUEUE_CHANGED`. Without it a fill
+ *   silently stacks whoever reached the front in the meantime — an auto-mix, a
+ *   sub-out, a skip, or another manager's fill can all reorder the rack between
+ *   the manager's last repaint and their tap. Order-insensitive: the team split
+ *   is decided here, so only the membership of the four is the caller's claim.
  */
-export async function applyFillCourtTx(tx, arenaId, { courtId, outcome }) {
+export async function applyFillCourtTx(tx, arenaId, { courtId, outcome, expected }) {
   // Atomically claim the court only if it is still vacant (row-locks it).
   // The arenaId guard also rejects a courtId from another arena.
   const claimed = await tx.court.updateMany({
@@ -188,6 +195,12 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome }) {
   if (queued.length < 4) throw new Error('NOT_ENOUGH');
 
   const [p0, p1, p2, p3] = queued.map((p) => p.id);
+  // The caller's claim about who is on deck must still hold under the lock.
+  // Same class of check as `editCourtLineup`'s QUEUE_CHANGED and the recorded
+  // `outcome` validation below — a fill is the one board mutation that used to
+  // name no players at all, so a stale rack view produced a wrong stack with
+  // no error. Refusing sends the manager a repainted rack to tap again.
+  if (expected && !sameMembers(expected, [p0, p1, p2, p3])) throw new Error('QUEUE_CHANGED');
   // A recorded outcome must stack exactly the four the transaction sees on
   // top of the rack, split two-a-side over those same four.
   if (
