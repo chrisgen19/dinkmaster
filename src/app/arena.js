@@ -1938,13 +1938,15 @@ export default function Arena({
               </p>
               {/* Only the newest match reverses exactly; after that, ratings are
                   adjusted by this match's own swing rather than recomputed from
-                  the history that would have been. Say so rather than let a
-                  manager infer precision that isn't there. */}
+                  the history that would have been. No figure is quoted: the
+                  honest one is a range (a few thousandths of a DUPR point
+                  typically, up to ~0.3 in the pathological case), and this
+                  dialog is the wrong place to teach the rating scale. */}
               {matchHistory[0]?.id !== matchToDelete.id && (
                 <p className="text-xs text-slate-500 mt-2 leading-relaxed">
                   Games have been played since. Skill ratings will be adjusted by this match&apos;s
-                  own result rather than recalculated, so they may land a point or two from where
-                  they would have been.
+                  own result rather than recalculated, so they may differ slightly from a full
+                  recalculation.
                 </p>
               )}
               {deleteError && (
