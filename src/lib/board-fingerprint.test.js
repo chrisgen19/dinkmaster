@@ -144,4 +144,53 @@ describe('boardFingerprint', () => {
     const off = { ...SETTINGS, balancedPairing: false };
     expect(canonicalBoardString(baseState(), off).endsWith(`\n${legacy}|0`)).toBe(true);
   });
+
+  describe('win/lose decks', () => {
+    const legacyRules = `s:${SETTINGS.targetScore}|${SETTINGS.starveThreshold}|${SETTINGS.emergencyWait}|1|1`;
+
+    it('adds nothing when the mode is off', () => {
+      // Same absence-encoding contract as `balancedPairing`, but inverted:
+      // deck mode ships OFF, so an arena not running it — which is every
+      // existing arena, and every pending log stamped before this shipped —
+      // must hash byte-identically to before.
+      const off = { ...SETTINGS, splitDeckByResult: false };
+      expect(canonicalBoardString(baseState(), off).endsWith(`\n${legacyRules}`)).toBe(true);
+      const { splitDeckByResult: _omitted, ...preFeature } = off;
+      expect(boardFingerprint(baseState(), preFeature)).toBe(boardFingerprint(baseState(), off));
+    });
+
+    it('changes when the mode is turned on', () => {
+      const on = { ...SETTINGS, splitDeckByResult: true };
+      expect(boardFingerprint(baseState(), on)).not.toBe(boardFingerprint(baseState(), SETTINGS));
+      expect(canonicalBoardString(baseState(), on)).toMatch(/\ns:11\|2\|4\|1\|1\|d1$/);
+    });
+
+    it('hashes the alternation pointer, so two boards mid-rotation differ', () => {
+      // A batch that forked from "winners went last" replayed onto a server
+      // that says "losers went last" would alternate the wrong way — exactly
+      // the divergence this fingerprint exists to catch.
+      const on = { ...SETTINGS, splitDeckByResult: true };
+      const afterWin = { ...baseState(), lastDeckFilled: 'W' };
+      const afterLose = { ...baseState(), lastDeckFilled: 'L' };
+      expect(boardFingerprint(afterWin, on)).not.toBe(boardFingerprint(afterLose, on));
+      expect(canonicalBoardString(afterWin, on)).toMatch(/\|d1\|kW$/);
+      expect(canonicalBoardString(afterLose, on)).toMatch(/\|d1\|kL$/);
+    });
+
+    it('ignores the pointer while the mode is off', () => {
+      // Nothing writes it in that case, but a stale value left over from a
+      // manager toggling the mode off must not fork the hash.
+      const stale = { ...baseState(), lastDeckFilled: 'W' };
+      expect(boardFingerprint(stale, SETTINGS)).toBe(boardFingerprint(baseState(), SETTINGS));
+    });
+
+    it('stays unambiguous next to the legacy pairing opt-out', () => {
+      // Both suffixes on one board: the `d`/`k` prefixes are what stop `|0|d1`
+      // from being read as anything other than "legacy pairing, deck mode on".
+      const both = { ...SETTINGS, balancedPairing: false, splitDeckByResult: true };
+      expect(canonicalBoardString({ ...baseState(), lastDeckFilled: 'L' }, both)).toMatch(
+        /\ns:11\|2\|4\|1\|1\|0\|d1\|kL$/,
+      );
+    });
+  });
 });

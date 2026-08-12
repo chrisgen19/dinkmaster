@@ -26,12 +26,17 @@ import { PlayerSearchField } from './player-search-field';
  * @param {string} props.skippedId - Player id being skipped (modal is open while non-null).
  * @param {Array} props.players - All players, for name/stat lookup.
  * @param {string[]} props.queue - Rack player ids in order; candidates come from past the on-deck group.
+ * @param {string[]} [props.bucket] - The pool the replacement must come from,
+ *   in rack order. Defaults to the whole rack. In an arena running win/lose
+ *   decks the parent passes the skipped paddle's OWN deck, because that is
+ *   where the server takes the replacement from — offering a loser to fill a
+ *   winners-deck slot would just be refused.
  * @param {boolean} props.isPending - A confirm is in flight (locks the UI).
  * @param {string} props.error - Race/server error to surface inside the modal.
  * @param {(replacementId: string) => void} props.onConfirm
  * @param {() => void} props.onClose
  */
-export function SkipPickerModal({ skippedId, players, queue, isPending, error, onConfirm, onClose }) {
+export function SkipPickerModal({ skippedId, players, queue, bucket, isPending, error, onConfirm, onClose }) {
   // Local selection: null until the manager taps a row.
   const [selectedId, setSelectedId] = useState(null);
   // Name filter for the waiting list — purely visual: a selection made
@@ -99,7 +104,7 @@ export function SkipPickerModal({ skippedId, players, queue, isPending, error, o
   // today). The parent's open-condition guarantees a non-empty list only AT
   // OPEN TIME — realtime pushes and the race-refresh update this list live,
   // so it can drain to zero while open (handled by the empty state below).
-  const waitingPlayers = queue
+  const waitingPlayers = (bucket ?? queue)
     .slice(ON_DECK_SIZE)
     .filter((id) => id !== skippedId)
     .map((id) => players.find((p) => p.id === id))

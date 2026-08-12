@@ -61,6 +61,7 @@ export async function getArena(id) {
       skipRestoresPriority: true,
       skipPickReplacement: true,
       balancedPairing: true,
+      splitDeckByResult: true,
       targetScore: true,
       autoMixDefault: true,
       leaderboardSize: true,

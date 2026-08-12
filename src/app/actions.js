@@ -334,6 +334,7 @@ export async function updateArenaMatchmaking(
     skipRestoresPriority: skipPriorityInput,
     skipPickReplacement: skipPickInput,
     balancedPairing: balancedPairingInput,
+    splitDeckByResult: splitDeckInput,
   } = {},
 ) {
   const guard = await requireArenaManager(arenaId);
@@ -369,6 +370,10 @@ export async function updateArenaMatchmaking(
   if (balancedPairing === null) {
     return { error: 'Balanced-pairing setting must be true or false.' };
   }
+  const splitDeckByResult = asBool(splitDeckInput);
+  if (splitDeckByResult === null) {
+    return { error: 'Win/lose deck setting must be true or false.' };
+  }
 
   const updated = await prisma.arena.updateMany({
     where: { id: arenaId },
@@ -378,6 +383,12 @@ export async function updateArenaMatchmaking(
       skipRestoresPriority,
       skipPickReplacement,
       balancedPairing,
+      splitDeckByResult,
+      // Turning deck mode OFF drops the alternation pointer. Without this a
+      // manager who switches off mid-session and back on later would resume
+      // from a stale "winners went last" that no longer describes anything
+      // that happened. Idempotent: already null when the mode was off.
+      ...(splitDeckByResult ? {} : { lastDeckFilled: null }),
     },
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
@@ -402,6 +413,7 @@ export async function updateArenaMatchmaking(
       skipRestoresPriority,
       skipPickReplacement,
       balancedPairing,
+      splitDeckByResult,
     },
   };
 }
@@ -1274,6 +1286,10 @@ export async function resetArena(arenaId) {
     await tx.courtSlot.deleteMany({ where: { court: { arenaId } } });
     await tx.partnership.deleteMany({ where: { arenaId } });
     await tx.court.updateMany({ where: { arenaId }, data: { status: 'vacant' } });
+    // The win/lose deck alternation points at a game that no longer exists
+    // once the match history is gone, so a reset arena starts from a clean
+    // pointer rather than "winners went last".
+    await tx.arena.updateMany({ where: { id: arenaId }, data: { lastDeckFilled: null } });
 
     // Clear stats for EVERY player in the arena, departed rows included: a
     // reset wipes the arena's match history, so a later rejoin (which reuses
@@ -1339,7 +1355,10 @@ export async function prepareNextSession(arenaId) {
     });
     const updated = await tx.arena.updateMany({
       where: { id: arenaId },
-      data: { lastSessionResetAt: new Date() },
+      // The new session's fills classify off matches after this boundary, so
+      // the deck alternation resets with them — tonight shouldn't open with
+      // "the winners went last" from a week ago.
+      data: { lastSessionResetAt: new Date(), lastDeckFilled: null },
     });
     if (updated.count === 0) arenaGone = true;
   });
@@ -1594,6 +1613,9 @@ export async function syncOfflineEvents(arenaId, input) {
           // fingerprint a legacy-mode arena as if it were balanced, and every
           // strict sync from that arena would report a phantom divergence.
           balancedPairing: true,
+          // Same reason: deck mode changes which four a fill stacks, so it is
+          // hashed too (the pointer it drives comes from the board read below).
+          splitDeckByResult: true,
         },
       });
       if (!arena) throw new Error('ARENA_GONE');

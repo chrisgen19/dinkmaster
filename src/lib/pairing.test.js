@@ -115,6 +115,33 @@ describe('rankMatchups', () => {
     expect(ranked[0].crossCount).toBe(1);
   });
 
+  it('balances a deck of four winners on rating, then partnerships', () => {
+    // What a win-vs-win court looks like (src/lib/decks.js): all four share a
+    // result, so no split can cross a winner with a loser and `crossCount`
+    // ties at 0 for every option. The ranking then falls through to the
+    // closer-rated, least-repeated split on its own — no special-casing in
+    // this module, which is why deck mode needed no change here.
+    const winners = ['w1', 'w2', 'w3', 'w4'];
+    const results = { w1: 'W', w2: 'W', w3: 'W', w4: 'W' };
+
+    const [byRating] = rankMatchups(winners, ctx({
+      results,
+      ratings: { w1: 1200, w2: 1100, w3: 900, w4: 800 },
+    }));
+    expect(byRating.crossCount).toBe(0);
+    // Strongest with weakest: 1200+800 vs 1100+900.
+    expect(byRating.ratingGap).toBe(0);
+    expect(new Set(byRating.team1)).toEqual(new Set(['w1', 'w4']));
+
+    const [byRepeats] = rankMatchups(winners, ctx({
+      results,
+      ratings: { w1: 1000, w2: 1000, w3: 1000, w4: 1000 },
+      pairs: { 'w1|w2': 4, 'w3|w4': 4 },
+    }));
+    expect(byRepeats.crossCount).toBe(0);
+    expect(byRepeats.repeats).toBe(0);
+  });
+
   it('always returns all three splits over the same four players', () => {
     const ranked = rankMatchups(ids, ctx({ ratings: flatRatings }));
     expect(ranked).toHaveLength(3);

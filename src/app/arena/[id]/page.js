@@ -75,6 +75,7 @@ export default async function ArenaPage({ params }) {
         skipRestoresPriority: arena.skipRestoresPriority,
         skipPickReplacement: arena.skipPickReplacement,
         balancedPairing: arena.balancedPairing,
+        splitDeckByResult: arena.splitDeckByResult,
       }}
       matchDefaults={{
         targetScore: arena.targetScore,

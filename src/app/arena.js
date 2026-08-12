@@ -21,6 +21,8 @@ import {
   prepareNextSession,
 } from './actions';
 import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT, ON_DECK_SIZE } from '@/lib/matchmaking';
+import { bucketFor, deckOf, hasTwoDecks, nextDeck, splitDecks } from '@/lib/decks';
+import { recentResults } from '@/lib/pairing';
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE, DEFAULT_SHOW_PARTNERSHIP_MATRIX } from '@/lib/match-defaults';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
 import { createStateFreshnessGuard } from '@/lib/state-freshness';
@@ -173,6 +175,11 @@ export default function Arena({
   // because the prop-refresh resync block right after this needs to call
   // `setLastSessionResetAt` — declaring it later would TDZ-throw on render.
   const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
+  // Which win/lose deck stacked last ("W" | "L" | null). Board state, not a
+  // setting: it drives the alternation, so the rack has to name the deck that
+  // is up next and the offline engine forks from the same value. Always null
+  // in an arena that isn't running `splitDeckByResult`.
+  const [lastDeckFilled, setLastDeckFilled] = useState(initialState.lastDeckFilled ?? null);
   // Arena schedule (powers the "This Week" leaderboard window). Declared up
   // here, before `persistSnapshot`, so the offline snapshot captures the LIVE
   // schedule: `handleSaveSchedule` updates this state without a
@@ -203,6 +210,7 @@ export default function Arena({
       matchHistory: initialState.matchHistory,
       history: initialState.history,
       lastSessionResetAt: initialState.lastSessionResetAt,
+      lastDeckFilled: initialState.lastDeckFilled ?? null,
     };
   }
   // Stamp of the last applied server snapshot: recorded as the offline
@@ -230,8 +238,16 @@ export default function Arena({
   // sets board state (including the render-time prop resync, which may not
   // touch refs itself under react-hooks/refs).
   useEffect(() => {
-    boardStateRef.current = { players, queue, courts, matchHistory, history, lastSessionResetAt };
-  }, [players, queue, courts, matchHistory, history, lastSessionResetAt]);
+    boardStateRef.current = {
+      players,
+      queue,
+      courts,
+      matchHistory,
+      history,
+      lastSessionResetAt,
+      lastDeckFilled,
+    };
+  }, [players, queue, courts, matchHistory, history, lastSessionResetAt, lastDeckFilled]);
 
   // Write a board produced by the LOCAL engine (offline mode) into state.
   // Bypasses the freshness guard on purpose: local states carry no fetchedAt
@@ -246,6 +262,7 @@ export default function Arena({
       matchHistory: state.matchHistory,
       history: state.history,
       lastSessionResetAt: state.lastSessionResetAt ?? null,
+      lastDeckFilled: state.lastDeckFilled ?? null,
     };
     setPlayers(state.players);
     setQueue(state.queue);
@@ -253,6 +270,9 @@ export default function Arena({
     setMatchHistory(state.matchHistory);
     setHistory(state.history);
     if ('lastSessionResetAt' in state) setLastSessionResetAt(state.lastSessionResetAt);
+    // The offline engine advances this itself on every local fill, so a local
+    // board carries it just like the server's does.
+    setLastDeckFilled(state.lastDeckFilled ?? null);
     // Sync responses arrive through this path too (applySyncedState); they
     // carry `offlineHold: null` after the server cleared it. Engine states
     // never have the key, so a live hold can't be wiped by local play.
@@ -570,6 +590,58 @@ export default function Arena({
       }),
     [players, sessionStats],
   );
+  // Win/lose decks, when the arena runs them. Derived from the same inputs the
+  // server uses inside `applyFillCourtTx` — this session's match results over
+  // the current rack — so the four the rack shows as up next are the four the
+  // server will actually stack. `null` means the classic single on-deck group:
+  // either the mode is off, or nobody has won a game yet this session (see
+  // `hasTwoDecks`), which is how game one looks.
+  const deckResults = useMemo(() => {
+    if (!matchmakingProp.splitDeckByResult) return null;
+    const sessionStart = lastSessionResetAt ? Date.parse(lastSessionResetAt) : null;
+    const recent = matchHistory
+      .filter((m) => sessionStart === null || Date.parse(m.timestamp) >= sessionStart)
+      .map((m) => ({
+        score1: m.score1,
+        score2: m.score2,
+        team1: m.team1.map((p) => p.id),
+        team2: m.team2.map((p) => p.id),
+      }));
+    return recentResults(recent, queue);
+  }, [matchmakingProp.splitDeckByResult, matchHistory, lastSessionResetAt, queue]);
+
+  const decks = useMemo(() => {
+    if (!deckResults) return null;
+    const split = splitDecks(queue, deckResults);
+    return hasTwoDecks(split) ? split : null;
+  }, [deckResults, queue]);
+
+  // The four that stack next, and which deck they came from. Recomputed from
+  // the same rule as the server so the `expected` guard on `fillCourt` carries
+  // the manager's real claim about who they were looking at.
+  const upNext = useMemo(
+    () =>
+      deckResults
+        ? nextDeck(queue, deckResults, lastDeckFilled)
+        : { deck: null, players: queue.slice(0, ON_DECK_SIZE) },
+    [deckResults, queue, lastDeckFilled],
+  );
+
+  // The deck to NAME in the UI. Only once the rack is actually drawn as two
+  // groups: before anyone has won, everything is technically the losers deck,
+  // and a "Stack Losers" button over a rack that shows one plain "On deck"
+  // group would be both confusing and a bit insulting to the four going on.
+  const upNextLabel = decks ? upNext.deck : null;
+
+  // The pool a skipped paddle's replacement must come from — its own deck when
+  // the arena runs them, otherwise the whole rack. Mirrors the bucket
+  // `applySkipPlayerTx` computes server-side, so the picker never offers a
+  // paddle the server would refuse.
+  const skipBucketFor = useCallback(
+    (playerId) => (decks ? bucketFor(deckOf(playerId, decks), decks) : queue),
+    [decks, queue],
+  );
+
   // The viewer's own linked player in this arena (null for guests / non-players).
   const myPlayer = viewerUserId
     ? displayPlayers.find((p) => p.userId === viewerUserId) ?? null
@@ -660,6 +732,9 @@ export default function Arena({
     if ('lastSessionResetAt' in state) {
       setLastSessionResetAt(state.lastSessionResetAt);
     }
+    // Server-authoritative deck alternation pointer, so two managers watching
+    // the same board agree on which deck is up next.
+    setLastDeckFilled(state.lastDeckFilled ?? null);
     // Advisory hold rides every server payload; guarded so a local engine
     // state (which never carries the key) can't clear a live hold.
     if ('offlineHold' in state) {
@@ -863,14 +938,15 @@ export default function Arena({
   const handleFillCourt = (courtId) => {
     if (!canManage) return;
     if (offline.offlineActive) return runLocalCommand({ type: 'fillCourt', courtId });
-    // Send the on-deck four THIS render is showing, so the server stacks the
-    // players the manager could actually see rather than whoever reached the
-    // front while the tap was in flight (auto-mix on a finish, another
-    // manager's action, a sub-out jumping to #1). A mismatch comes back as
-    // "the court or queue changed" with a repainted rack. Offline needs no
-    // equivalent: the local engine records the four in the event's outcome and
-    // the sync replay rejects a mismatch there.
-    run(() => fillCourt(arenaId, courtId, queue.slice(0, ON_DECK_SIZE)));
+    // Send the four THIS render is showing as up next — the top of the rack,
+    // or the front of whichever deck the alternation has reached — so the
+    // server stacks the players the manager could actually see rather than
+    // whoever reached the front while the tap was in flight (auto-mix on a
+    // finish, another manager's action, a sub-out jumping to #1). A mismatch
+    // comes back as "the court or queue changed" with a repainted rack.
+    // Offline needs no equivalent: the local engine records the four in the
+    // event's outcome and the sync replay rejects a mismatch there.
+    run(() => fillCourt(arenaId, courtId, upNext.players));
   };
 
   // The rack X takes a player off the rack (reversible) rather than deleting
@@ -904,7 +980,9 @@ export default function Arena({
     // resolution the modal's list uses (`players.find(...)`), not just raw
     // queue ids, so the open-condition is provably identical to what renders —
     // the manager never lands on a modal with an empty, unconfirmable list.
-    const hasWaiting = queue
+    // In deck mode the pool is the skipped paddle's own deck, matching where
+    // `applySkipPlayerTx` actually takes the replacement from.
+    const hasWaiting = skipBucketFor(id)
       .slice(ON_DECK_SIZE)
       .some((qid) => qid !== id && players.some((p) => p.id === qid));
     if (canManage && matchmakingProp.skipPickReplacement && hasWaiting) {
@@ -1574,6 +1652,8 @@ export default function Arena({
             starveThreshold={matchmakingProp.starveThreshold}
             emergencyWait={matchmakingProp.emergencyWait}
             skipRestoresPriority={matchmakingProp.skipRestoresPriority}
+            decks={decks}
+            nextDeck={upNextLabel}
             errorMsg={errorMsg}
           />
         </div>
@@ -1604,6 +1684,7 @@ export default function Arena({
               onFillCourt={handleFillCourt}
               onRemoveCourt={handleRemoveCourt}
               profileHrefFor={playerProfileHrefFor}
+              nextDeck={upNextLabel}
             />
           )}
 
@@ -1775,6 +1856,8 @@ export default function Arena({
             starveThreshold={matchmakingProp.starveThreshold}
             emergencyWait={matchmakingProp.emergencyWait}
             skipRestoresPriority={matchmakingProp.skipRestoresPriority}
+            decks={decks}
+            nextDeck={upNextLabel}
             errorMsg={errorMsg}
           />
         </div>
@@ -1897,6 +1980,7 @@ export default function Arena({
           skippedId={skipPickerSkippedId}
           players={displayPlayers}
           queue={queue}
+          bucket={skipBucketFor(skipPickerSkippedId)}
           isPending={isPending}
           error={skipPickerError}
           onConfirm={handleConfirmSkipWithReplacement}

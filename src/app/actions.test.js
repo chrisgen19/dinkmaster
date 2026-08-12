@@ -246,37 +246,60 @@ describe('arena server actions — authorization', () => {
         prisma.arena.updateMany.mockResolvedValue({ count: 1 });
       });
 
+      // Every valid payload has to name all four booleans; `base` keeps the
+      // table rows below readable while each test overrides just its own.
+      const base = {
+        starveThreshold: 2,
+        emergencyWait: 4,
+        skipRestoresPriority: true,
+        skipPickReplacement: true,
+        balancedPairing: true,
+        splitDeckByResult: false,
+      };
+
       it('persists valid thresholds and coerces numeric strings', async () => {
-        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: '3', emergencyWait: '6', skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true });
+        const result = await actions.updateArenaMatchmaking(ARENA, { ...base, starveThreshold: '3', emergencyWait: '6' });
         expect(result.error).toBeUndefined();
         expect(prisma.arena.updateMany).toHaveBeenCalledWith({
           where: { id: ARENA },
-          data: { starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true },
+          // Deck mode off also nulls the alternation pointer, so flipping it
+          // back on later can't resume from a stale "winners went last".
+          data: { starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true, splitDeckByResult: false, lastDeckFilled: null },
         });
-        expect(result.matchmaking).toEqual({ starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true });
+        expect(result.matchmaking).toEqual({ starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true, splitDeckByResult: false });
       });
 
       it('coerces "true"/"false" string values for skipRestoresPriority', async () => {
-        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: 'false', skipPickReplacement: 'true', balancedPairing: true });
+        await actions.updateArenaMatchmaking(ARENA, { ...base, skipRestoresPriority: 'false', skipPickReplacement: 'true' });
         expect(prisma.arena.updateMany).toHaveBeenLastCalledWith({
           where: { id: ARENA },
-          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false, skipPickReplacement: true, balancedPairing: true },
+          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false, skipPickReplacement: true, balancedPairing: true, splitDeckByResult: false, lastDeckFilled: null },
         });
       });
 
       it('coerces "true"/"false" string values for skipPickReplacement', async () => {
-        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: 'false', balancedPairing: true });
+        await actions.updateArenaMatchmaking(ARENA, { ...base, skipPickReplacement: 'false' });
         expect(prisma.arena.updateMany).toHaveBeenLastCalledWith({
           where: { id: ARENA },
-          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: false, balancedPairing: true },
+          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: false, balancedPairing: true, splitDeckByResult: false, lastDeckFilled: null },
         });
       });
 
       it('coerces "true"/"false" string values for balancedPairing', async () => {
-        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: 'false' });
+        await actions.updateArenaMatchmaking(ARENA, { ...base, balancedPairing: 'false' });
         expect(prisma.arena.updateMany).toHaveBeenLastCalledWith({
           where: { id: ARENA },
-          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: false },
+          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: false, splitDeckByResult: false, lastDeckFilled: null },
+        });
+      });
+
+      it('coerces "true"/"false" string values for splitDeckByResult', async () => {
+        await actions.updateArenaMatchmaking(ARENA, { ...base, splitDeckByResult: 'true' });
+        expect(prisma.arena.updateMany).toHaveBeenLastCalledWith({
+          where: { id: ARENA },
+          // Turning deck mode ON leaves the pointer alone — an arena mid-
+          // session keeps whichever deck went last.
+          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true, splitDeckByResult: true },
         });
       });
 
@@ -284,7 +307,7 @@ describe('arena server actions — authorization', () => {
         // After persisting `skipRestoresPriority: false`, the action must also
         // clear `Player.skipBoosted` for the arena so the next auto-mix can't
         // elevate paddles that were boosted while the setting was on.
-        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false, skipPickReplacement: true, balancedPairing: true });
+        await actions.updateArenaMatchmaking(ARENA, { ...base, skipRestoresPriority: false });
         expect(prisma.player.updateMany).toHaveBeenCalledWith({
           where: { arenaId: ARENA, skipBoosted: true },
           data: { skipBoosted: false },
@@ -292,27 +315,29 @@ describe('arena server actions — authorization', () => {
       });
 
       it('does NOT wipe skipBoosted when the setting is being turned on', async () => {
-        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true });
+        await actions.updateArenaMatchmaking(ARENA, base);
         expect(prisma.player.updateMany).not.toHaveBeenCalled();
       });
 
       it('reports a clean error when the arena no longer exists', async () => {
         prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
-        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true });
+        const result = await actions.updateArenaMatchmaking(ARENA, base);
         expect(result.error).toMatch(/no longer exists/i);
       });
 
       it.each([
-        ['a zero starve threshold', { starveThreshold: 0, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true }],
-        ['a fractional starve threshold', { starveThreshold: 2.5, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true }],
-        ['a non-numeric starve threshold', { starveThreshold: 'lots', emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true }],
-        ['an emergency wait below the starve threshold', { starveThreshold: 4, emergencyWait: 2, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true }],
-        ['an out-of-range starve threshold', { starveThreshold: MAX_WAIT_THRESHOLD + 1, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true }],
-        ['an out-of-range emergency wait', { starveThreshold: 2, emergencyWait: MAX_WAIT_THRESHOLD + 1, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true }],
-        ['a non-boolean skipRestoresPriority', { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: 'maybe', skipPickReplacement: true }],
-        ['a non-boolean skipPickReplacement', { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: 'maybe' }],
-        ['a non-boolean balancedPairing', { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: 'maybe' }],
-        ['a missing balancedPairing', { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true }],
+        ['a zero starve threshold', { ...base, starveThreshold: 0 }],
+        ['a fractional starve threshold', { ...base, starveThreshold: 2.5 }],
+        ['a non-numeric starve threshold', { ...base, starveThreshold: 'lots' }],
+        ['an emergency wait below the starve threshold', { ...base, starveThreshold: 4, emergencyWait: 2 }],
+        ['an out-of-range starve threshold', { ...base, starveThreshold: MAX_WAIT_THRESHOLD + 1 }],
+        ['an out-of-range emergency wait', { ...base, emergencyWait: MAX_WAIT_THRESHOLD + 1 }],
+        ['a non-boolean skipRestoresPriority', { ...base, skipRestoresPriority: 'maybe' }],
+        ['a non-boolean skipPickReplacement', { ...base, skipPickReplacement: 'maybe' }],
+        ['a non-boolean balancedPairing', { ...base, balancedPairing: 'maybe' }],
+        ['a missing balancedPairing', { ...base, balancedPairing: undefined }],
+        ['a non-boolean splitDeckByResult', { ...base, splitDeckByResult: 'maybe' }],
+        ['a missing splitDeckByResult', { ...base, splitDeckByResult: undefined }],
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaMatchmaking(ARENA, input);
         expect(result.error).toBeTruthy();
@@ -1070,6 +1095,7 @@ describe('arena server actions — authorization', () => {
           skipRestoresPriority: true,
           skipPickReplacement: true,
           balancedPairing: true,
+          splitDeckByResult: true,
         });
       });
 
@@ -1434,7 +1460,10 @@ describe('arena server actions — authorization', () => {
         // is a clean error, not an uncaught P2025.
         expect(tx.arena.updateMany).toHaveBeenCalledWith({
           where: { id: ARENA },
-          data: { lastSessionResetAt: expect.any(Date) },
+          // The deck alternation resets with the session boundary: the new
+          // session's fills classify off matches after it, so a pointer from
+          // last week's games must not carry over.
+          data: { lastSessionResetAt: expect.any(Date), lastDeckFilled: null },
         });
       });
 
@@ -1821,6 +1850,9 @@ describe('arena server actions — authorization', () => {
         courtSlot: { deleteMany: vi.fn() },
         partnership: { deleteMany: vi.fn() },
         court: { updateMany: vi.fn() },
+        // The reset also clears the win/lose deck alternation, which points at
+        // matches it just deleted.
+        arena: { updateMany: vi.fn() },
         player: {
           findMany: vi.fn().mockResolvedValue([{ id: 'p1' }]),
           update: vi.fn(),
@@ -1830,6 +1862,10 @@ describe('arena server actions — authorization', () => {
       prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
       await actions.resetArena(ARENA);
+      expect(tx.arena.updateMany).toHaveBeenCalledWith({
+        where: { id: ARENA },
+        data: { lastDeckFilled: null },
+      });
       // The reset must scope its player scan to active rows so a departed
       // player can't be silently re-queued (invisible to getState).
       expect(tx.player.findMany).toHaveBeenCalledWith(
@@ -2606,10 +2642,38 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
     maxOrder = rackIds.length,
     skipRestoresPriority = true,
     skipPickReplacement = true,
+    // Win/lose decks: `winners` names the racked ids whose last game was a win;
+    // everyone else is a loser. Off by default, so the classic single-bucket
+    // rack (and every test above) is unchanged.
+    splitDeckByResult = false,
+    winners = [],
   } = {}) => ({
     $executeRaw: vi.fn(),
     arena: {
-      findUnique: vi.fn().mockResolvedValue({ skipRestoresPriority, skipPickReplacement }),
+      findUnique: vi.fn().mockResolvedValue({
+        skipRestoresPriority,
+        skipPickReplacement,
+        splitDeckByResult,
+        lastSessionResetAt: null,
+      }),
+    },
+    match: {
+      findMany: vi.fn().mockResolvedValue(
+        winners.length === 0
+          ? []
+          : [
+              {
+                score1: 11,
+                score2: 6,
+                players: [
+                  ...winners.map((playerId) => ({ playerId, team: 1 })),
+                  ...rackIds
+                    .filter((id) => !winners.includes(id))
+                    .map((playerId) => ({ playerId, team: 2 })),
+                ],
+              },
+            ],
+      ),
     },
     player: {
       findMany: vi
@@ -2639,6 +2703,74 @@ describe('skipPlayer() — hybrid self/manager authorization', () => {
     expect(updates).toContainEqual({ where: { id: 'p1' }, data: { skipBoosted: true } });
     // p6 was already at position 6 — no rewrite needed.
     expect(updates).not.toContainEqual(expect.objectContaining({ where: { id: 'p6' } }));
+  });
+
+  it('deck mode: promotes the next paddle from the SAME deck, leaving the other deck alone', async () => {
+    getCurrentUser.mockResolvedValue({ id: 'u-me' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
+    // Rack: w1 l1 w2 l2 w3 l3 w4 l4 w5 — winners at odd positions, losers at
+    // even. w1 is on the winners deck; skipping them must pull w5 (the fifth
+    // winner) into the freed winners slot and leave every loser untouched.
+    const rack = ['w1', 'l1', 'w2', 'l2', 'w3', 'l3', 'w4', 'l4', 'w5'];
+    const tx = txWithRack(rack, {
+      splitDeckByResult: true,
+      winners: ['w1', 'w2', 'w3', 'w4', 'w5'],
+    });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    const result = await actions.skipPlayer(ARENA, 'w1');
+
+    expect(result.notification).toBe('Marked Next in Line — top priority on the next mix.');
+    const updates = tx.player.update.mock.calls.map((c) => c[0]);
+    // The winners' rack slots (1,3,5,7,9) are rewritten with the new deck
+    // order w2,w3,w4,w5,w1; the losers' slots (2,4,6,8) are never touched.
+    expect(updates).toContainEqual({ where: { id: 'w2' }, data: { queueOrder: 1 } });
+    expect(updates).toContainEqual({ where: { id: 'w3' }, data: { queueOrder: 3 } });
+    expect(updates).toContainEqual({ where: { id: 'w4' }, data: { queueOrder: 5 } });
+    expect(updates).toContainEqual({ where: { id: 'w5' }, data: { queueOrder: 7 } });
+    expect(updates).toContainEqual({ where: { id: 'w1' }, data: { queueOrder: 9 } });
+    expect(updates).toContainEqual({ where: { id: 'w1' }, data: { skipBoosted: true } });
+    for (const loser of ['l1', 'l2', 'l3', 'l4']) {
+      expect(updates).not.toContainEqual(expect.objectContaining({ where: { id: loser } }));
+    }
+  });
+
+  it('deck mode: refuses when nobody is waiting behind that deck', async () => {
+    getCurrentUser.mockResolvedValue({ id: 'u-me' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-me' });
+    // Nine racked, so the rack as a whole has depth — but the winners deck is
+    // exactly four, so there is no same-deck paddle to take the freed slot.
+    const rack = ['w1', 'l1', 'w2', 'l2', 'w3', 'l3', 'w4', 'l4', 'l5'];
+    const tx = txWithRack(rack, {
+      splitDeckByResult: true,
+      winners: ['w1', 'w2', 'w3', 'w4'],
+    });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    const result = await actions.skipPlayer(ARENA, 'w1');
+
+    expect(result.notification).toBe('');
+    expect(tx.player.update).not.toHaveBeenCalled();
+  });
+
+  it('deck mode: rejects a manager pick from the other deck', async () => {
+    getCurrentUser.mockResolvedValue({ id: 'u-mgr' });
+    prisma.player.findFirst.mockResolvedValue({ userId: 'u-other' });
+    requireArenaManager.mockResolvedValue({ user: { id: 'u-mgr' }, arena: { id: ARENA }, role: ROLES.OWNER });
+    const rack = ['w1', 'l1', 'w2', 'l2', 'w3', 'l3', 'w4', 'l4', 'w5'];
+    const tx = txWithRack(rack, {
+      splitDeckByResult: true,
+      winners: ['w1', 'w2', 'w3', 'w4', 'w5'],
+    });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    // l5 doesn't exist; l4 does, but it's in the losers deck — not a candidate
+    // for a winners-deck slot, so the pick is refused rather than silently
+    // auto-filling with someone the manager didn't choose.
+    const result = await actions.skipPlayer(ARENA, 'w1', 'l4');
+
+    expect(result.error).toBe('That replacement is no longer available. Pick again.');
+    expect(tx.player.update).not.toHaveBeenCalled();
   });
 
   it('Off (legacy) + auto-pick: ONE write — skipped paddle to the back, first-waiting auto-promotes', async () => {
@@ -2852,7 +2984,14 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
       // The fill reads the arena's pairing mode and session boundary before
       // splitting the four.
       arena: {
-        findUnique: vi.fn().mockResolvedValue({ balancedPairing: true, lastSessionResetAt: null }),
+        findUnique: vi.fn().mockResolvedValue({
+          balancedPairing: true,
+          lastSessionResetAt: null,
+          splitDeckByResult: false,
+          lastDeckFilled: null,
+        }),
+        // Only written in deck mode (advancing the W/L alternation).
+        updateMany: vi.fn(),
       },
       // Recent matches feed the losers-partner-winners team split; an empty
       // history means nobody has a recent result, so the split falls through
@@ -2996,6 +3135,157 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
     });
   });
 
+  // Win/lose decks: the four are the front of a deck rather than the front of
+  // the rack, so `fillCourt` no longer stacks a prefix of the queue.
+  describe('win/lose decks', () => {
+    // Eight racked paddles. w1-w4 won their last game, l1-l4 lost theirs, and
+    // the rack interleaves them so a deck fill is provably NOT a prefix.
+    const RACK = [
+      { id: 'w1', queueOrder: 1, waitRounds: 0, rating: 1000 },
+      { id: 'l1', queueOrder: 2, waitRounds: 0, rating: 1000 },
+      { id: 'w2', queueOrder: 3, waitRounds: 0, rating: 1000 },
+      { id: 'l2', queueOrder: 4, waitRounds: 0, rating: 1000 },
+      { id: 'w3', queueOrder: 5, waitRounds: 0, rating: 1000 },
+      { id: 'l3', queueOrder: 6, waitRounds: 0, rating: 1000 },
+      { id: 'w4', queueOrder: 7, waitRounds: 0, rating: 1000 },
+      { id: 'l4', queueOrder: 8, waitRounds: 0, rating: 1000 },
+    ];
+    const WINNERS = ['w1', 'w2', 'w3', 'w4'];
+    const LOSERS = ['l1', 'l2', 'l3', 'l4'];
+    const MATCHES = [
+      {
+        score1: 11,
+        score2: 6,
+        players: [
+          ...WINNERS.map((playerId) => ({ playerId, team: 1 })),
+          ...LOSERS.map((playerId) => ({ playerId, team: 2 })),
+        ],
+      },
+    ];
+
+    function makeDeckTx({ lastDeckFilled = null, rack = RACK, matches = MATCHES } = {}) {
+      const tx = makeTx();
+      tx.arena.findUnique.mockResolvedValue({
+        balancedPairing: true,
+        lastSessionResetAt: null,
+        splitDeckByResult: true,
+        lastDeckFilled,
+      });
+      tx.player.findMany = vi
+        .fn()
+        .mockResolvedValueOnce(rack)
+        // The bumped set: whoever is still racked after the four are dequeued.
+        .mockResolvedValueOnce([]);
+      tx.match.findMany.mockResolvedValue(matches);
+      return tx;
+    }
+
+    /** The four ids the fill actually dequeued. */
+    const stacked = (tx) => tx.player.updateMany.mock.calls[0][0].where.id.in;
+
+    it('stacks the winners deck, not the top of the rack', async () => {
+      const tx = makeDeckTx({ lastDeckFilled: 'L' });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.fillCourt(ARENA, COURT, WINNERS);
+
+      expect(result.error).toBeUndefined();
+      expect(stacked(tx)).toEqual(WINNERS);
+      expect(tx.arena.updateMany).toHaveBeenCalledWith({
+        where: { id: ARENA },
+        data: { lastDeckFilled: 'W' },
+      });
+    });
+
+    it('alternates to the losers deck when the winners went last', async () => {
+      const tx = makeDeckTx({ lastDeckFilled: 'W' });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.fillCourt(ARENA, COURT, LOSERS);
+
+      expect(stacked(tx)).toEqual(LOSERS);
+      expect(tx.arena.updateMany).toHaveBeenCalledWith({
+        where: { id: ARENA },
+        data: { lastDeckFilled: 'L' },
+      });
+    });
+
+    it('snapshots each player\'s real rack position, not their deck position', async () => {
+      // cancelFill restores from these, so a losers-deck fill has to record
+      // queueOrder 2/4/6/8 — not 1/2/3/4.
+      const tx = makeDeckTx({ lastDeckFilled: 'W' });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.fillCourt(ARENA, COURT, LOSERS);
+
+      const [{ data }] = tx.courtSlot.createMany.mock.calls[0];
+      expect(data.map((s) => s.prevQueueOrder).sort((x, y) => x - y)).toEqual([2, 4, 6, 8]);
+    });
+
+    it('records the pre-fill pointer on the court so cancelFill can rewind it', async () => {
+      const tx = makeDeckTx({ lastDeckFilled: 'W' });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.fillCourt(ARENA, COURT, LOSERS);
+
+      expect(tx.court.update).toHaveBeenCalledWith({
+        where: { id: COURT },
+        data: expect.objectContaining({ fillPrevDeck: 'W' }),
+      });
+    });
+
+    it('refuses when the manager was looking at the other deck', async () => {
+      const tx = makeDeckTx({ lastDeckFilled: 'L' });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      // The alternation reached the winners, but this manager's screen still
+      // showed the losers as up next.
+      const result = await actions.fillCourt(ARENA, COURT, LOSERS);
+
+      expect(result.error).toBe('The court or queue changed while loading. Please try again.');
+      expect(tx.player.updateMany).not.toHaveBeenCalled();
+      expect(tx.courtSlot.createMany).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the classic top four when neither deck is full', async () => {
+      // Six racked, three winners / three losers: no deck can stack.
+      const short = RACK.slice(0, 6);
+      const tx = makeDeckTx({
+        lastDeckFilled: 'L',
+        rack: short,
+        matches: [
+          {
+            score1: 11,
+            score2: 6,
+            players: [
+              ...['w1', 'w2', 'w3'].map((playerId) => ({ playerId, team: 1 })),
+              ...['l1', 'l2', 'l3'].map((playerId) => ({ playerId, team: 2 })),
+            ],
+          },
+        ],
+      });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.fillCourt(ARENA, COURT);
+
+      expect(stacked(tx)).toEqual(['w1', 'l1', 'w2', 'l2']);
+      // A mixed fill credits neither deck with a turn.
+      expect(tx.arena.updateMany).toHaveBeenCalledWith({
+        where: { id: ARENA },
+        data: { lastDeckFilled: null },
+      });
+    });
+
+    it('leaves the pointer untouched when the mode is off', async () => {
+      const tx = makeTx();
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await actions.fillCourt(ARENA, COURT);
+
+      expect(tx.arena.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
   it('records the exact bumped player ids on the court for cancelFill to reverse', async () => {
     const tx = makeTx();
     prisma.$transaction.mockImplementation(async (cb) => cb(tx));
@@ -3006,7 +3296,9 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
     // recycled into the queue by a later finish must not be touched.
     expect(tx.court.update).toHaveBeenCalledWith({
       where: { id: COURT },
-      data: { fillBumpedPlayerIds: ['p5', 'p6'] },
+      // `fillPrevDeck` rides along on the same write: null here because this
+      // arena isn't running win/lose decks.
+      data: { fillBumpedPlayerIds: ['p5', 'p6'], fillPrevDeck: null },
     });
   });
 });
@@ -3017,11 +3309,18 @@ describe('cancelFill() — return four players to the rack without recording a m
   // Build a fresh tx mock for cancelFill: covers every prisma call the action
   // makes inside the transaction. court.updateMany returns count: 1 by default
   // (the happy "atomic claim" path); each test overrides specifics.
-  function makeTx({ slots, bumpedIds = [], others = [], courtClaimCount = 1 } = {}) {
+  function makeTx({ slots, bumpedIds = [], others = [], courtClaimCount = 1, prevDeck = null } = {}) {
     return {
       $executeRaw: vi.fn(),
+      // cancelFill rewinds the win/lose deck alternation to the court's
+      // `fillPrevDeck`, so the arena delegate has to be present even for
+      // arenas that don't run deck mode (where it writes null over null).
+      arena: { updateMany: vi.fn() },
       court: {
-        findFirst: vi.fn().mockResolvedValue({ fillBumpedPlayerIds: bumpedIds }),
+        findFirst: vi.fn().mockResolvedValue({
+          fillBumpedPlayerIds: bumpedIds,
+          fillPrevDeck: prevDeck,
+        }),
         updateMany: vi.fn().mockResolvedValue({ count: courtClaimCount }),
       },
       courtSlot: {
@@ -3057,6 +3356,35 @@ describe('cancelFill() — return four players to the rack without recording a m
     });
   });
 
+  it('rewinds the win/lose deck alternation to the pointer the fill found', async () => {
+    // A cancelled stack must not cost the other deck its turn: the winners
+    // were stacked over "losers went last", so undoing it puts the pointer
+    // back to L and the winners are up next again.
+    const tx = makeTx({ slots: FULL_SLOTS, prevDeck: 'L' });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.cancelFill(ARENA, COURT);
+
+    expect(tx.arena.updateMany).toHaveBeenCalledWith({
+      where: { id: ARENA },
+      data: { lastDeckFilled: 'L' },
+    });
+  });
+
+  it('writes a null pointer for an arena not running decks', async () => {
+    // `fillPrevDeck` is always null outside deck mode, so this is null over
+    // null — asserted so the write can never carry a stale value instead.
+    const tx = makeTx({ slots: FULL_SLOTS });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.cancelFill(ARENA, COURT);
+
+    expect(tx.arena.updateMany).toHaveBeenCalledWith({
+      where: { id: ARENA },
+      data: { lastDeckFilled: null },
+    });
+  });
+
   it('restores waitRounds, decrements gamesPlayed with a floor, and renumbers 1..N with the four first', async () => {
     const tx = makeTx({
       slots: FULL_SLOTS,
@@ -3071,7 +3399,7 @@ describe('cancelFill() — return four players to the rack without recording a m
     // Court flipped vacant AND bookkeeping cleared on the same claim.
     expect(tx.court.updateMany).toHaveBeenCalledWith({
       where: { id: COURT, arenaId: ARENA, status: 'playing' },
-      data: { status: 'vacant', fillBumpedPlayerIds: [] },
+      data: { status: 'vacant', fillBumpedPlayerIds: [], fillPrevDeck: null },
     });
 
     // waitRounds restored via plain update; gamesPlayed decremented via

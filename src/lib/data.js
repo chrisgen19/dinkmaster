@@ -59,7 +59,15 @@ export async function getState(arenaId) {
     // which would drift under clock skew / network latency around a reset.
     prisma.arena.findUnique({
       where: { id: arenaId },
-      select: { lastSessionResetAt: true, offlineHolderLabel: true, offlineHeldAt: true },
+      select: {
+        lastSessionResetAt: true,
+        offlineHolderLabel: true,
+        offlineHeldAt: true,
+        // Win/lose deck alternation pointer. Board STATE, not a setting: the
+        // rack UI names the deck that stacks next, and the offline engine has
+        // to fork from the same value the server holds.
+        lastDeckFilled: true,
+      },
     }),
   ]);
 
@@ -78,6 +86,7 @@ export async function getState(arenaId) {
     // cancelFill/endMatch exactly. Board data is already public via the SSE
     // stream, and these are non-sensitive ints/id arrays.
     fillBumpedPlayerIds: c.fillBumpedPlayerIds,
+    fillPrevDeck: c.fillPrevDeck,
     slots: c.slots.map((s) => ({
       playerId: s.playerId,
       team: s.team,
@@ -144,6 +153,10 @@ export async function getState(arenaId) {
     matchHistory,
     history,
     lastSessionResetAt: arena?.lastSessionResetAt ? arena.lastSessionResetAt.toISOString() : null,
+    // "W" | "L" | null — which deck `fillCourt` stacked last. Drives the
+    // W -> L -> W alternation, so both the rack UI and the offline engine read
+    // it. Always null for an arena not running `splitDeckByResult`.
+    lastDeckFilled: arena?.lastDeckFilled ?? null,
     // Advisory "a manager is running the board offline" flag. Both columns
     // are always written together; require both so a half-cleared row can't
     // render a nameless banner. Freshness is judged client-side (a dead

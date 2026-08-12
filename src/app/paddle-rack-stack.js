@@ -14,16 +14,17 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { deriveRackRow, ON_DECK_SIZE } from './paddle-rack-stack-state';
+import { buildRackSections, deriveRackRow } from './paddle-rack-stack-state';
 
 /** Subtle labeled divider between the on-deck and waiting groups. */
-function GroupLabel({ children, accent = false, className = '' }) {
+function GroupLabel({ children, accent = false, className = '', trailing = null }) {
   return (
     <div className={`flex items-center gap-2 px-1 ${className}`}>
       <span className={`text-[10px] font-bold uppercase tracking-wider ${accent ? 'text-emerald-700' : 'text-slate-400'}`}>
         {children}
       </span>
       <span className={`h-px flex-1 ${accent ? 'bg-emerald-200/70' : 'bg-slate-200'}`} />
+      {trailing}
     </div>
   );
 }
@@ -49,6 +50,8 @@ function GroupLabel({ children, accent = false, className = '' }) {
  * @param {number} props.starveThreshold - wait rounds before the amber wait badge
  * @param {number} props.emergencyWait - wait rounds before the red wait badge
  * @param {boolean} props.skipRestoresPriority - when true, Skip = "back soon, top priority on return" (drives the button label/tooltip)
+ * @param {{winners:string[],losers:string[],winnersDeck:string[],losersDeck:string[]}|null} props.decks - win/lose decks from `splitDecks`; null = the classic single on-deck group
+ * @param {'W'|'L'|null} props.nextDeck - which deck stacks onto the next open court
  * @param {string} props.errorMsg - surfaced inline above the list
  */
 export function PaddleRackStack({
@@ -67,6 +70,8 @@ export function PaddleRackStack({
   starveThreshold,
   emergencyWait,
   skipRestoresPriority = true,
+  decks = null,
+  nextDeck = null,
   errorMsg,
   // Distinguishes the DOM ids of multiple mounted instances (e.g. the
   // desktop sidebar vs. the mobile block) so they don't collide.
@@ -97,6 +102,19 @@ export function PaddleRackStack({
     setExpandedPlayerId((prev) => (prev === playerId ? null : playerId));
   };
 
+  // Rows are grouped, not flat: one on-deck group classically, or a winners
+  // and a losers deck when the arena runs `splitDeckByResult`. Each row carries
+  // its true rack position, so the badge keeps counting the real rack.
+  // Flattened back to one list, with the first row of each group carrying its
+  // header, so the list stays a single map over rows.
+  const rows = buildRackSections(queue, { decks, nextDeck }).flatMap((section, sectionIndex) =>
+    section.rows.map((row, rowIndex) => ({
+      ...row,
+      section: rowIndex === 0 ? section : null,
+      sectionIndex,
+    })),
+  );
+
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       {/* Header */}
@@ -108,7 +126,11 @@ export function PaddleRackStack({
             </span>
             <div className="min-w-0">
               <h3 className="text-sm font-bold text-slate-800">Paddle Rack Stack</h3>
-              <p className="truncate text-xs text-slate-600">Top 4 stack onto the next open court</p>
+              <p className="truncate text-xs text-slate-600">
+                {decks
+                  ? 'Winners and losers stack in turn'
+                  : 'Top 4 stack onto the next open court'}
+              </p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -189,14 +211,23 @@ export function PaddleRackStack({
             <p className="text-xs text-slate-400">Add players to stack their paddles for the next court.</p>
           </div>
         ) : (
-          queue.map((playerId, index) => {
+          rows.map(({ playerId, rackIndex, bucketIndex, bucketLength, section, sectionIndex }) => {
             const player = players.find((p) => p.id === playerId);
             if (!player) return null;
 
             const { rank, isOnDeck, isYou, isWalkIn, badge, waitRounds, name, initials, canSkip, profileHref } = deriveRackRow(
               player,
-              index,
-              { viewerUserId, viewerIsMember, starveThreshold, emergencyWait, canManage, queueLength: queue.length },
+              rackIndex,
+              {
+                viewerUserId,
+                viewerIsMember,
+                starveThreshold,
+                emergencyWait,
+                canManage,
+                queueLength: queue.length,
+                bucketIndex,
+                bucketLength,
+              },
             );
             const nextLine = badge === 'next-line';
             const starving = badge !== 'none' && !nextLine;
@@ -207,9 +238,24 @@ export function PaddleRackStack({
 
             return (
               <Fragment key={playerId}>
-                {index === 0 && <GroupLabel accent>On deck · next court</GroupLabel>}
-                {index === ON_DECK_SIZE && (
-                  <GroupLabel className="pt-2">Waiting · {queue.length - ON_DECK_SIZE}</GroupLabel>
+                {section && (
+                  <GroupLabel
+                    accent={section.accent}
+                    className={sectionIndex > 0 ? 'pt-2' : ''}
+                    trailing={
+                      section.isNext ? (
+                        <span className="shrink-0 rounded-full bg-emerald-600 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
+                          Up next
+                        </span>
+                      ) : section.short > 0 ? (
+                        <span className="shrink-0 text-[10px] font-semibold text-slate-400">
+                          needs {section.short} more
+                        </span>
+                      ) : null
+                    }
+                  >
+                    {section.label}
+                  </GroupLabel>
                 )}
 
                 <div

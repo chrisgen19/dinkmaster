@@ -36,6 +36,9 @@ const makeCourt = (id, overrides = {}) => ({
   team1: [],
   team2: [],
   fillBumpedPlayerIds: [],
+  // getState emits this on every court, so a realistic fixture carries it —
+  // and cancelFill's exact-reversal test compares the whole court object.
+  fillPrevDeck: null,
   slots: [],
   ...overrides,
 });
@@ -344,6 +347,176 @@ describe('fillCourt', () => {
     // Both new partnerships recorded symmetrically.
     expect(result.state.history[team1[0]][team1[1]]).toBe(1);
     expect(result.state.history[team2[1]][team2[0]]).toBe(1);
+  });
+
+  describe('win/lose decks', () => {
+    const DECKS = { ...SETTINGS, splitDeckByResult: true };
+
+    /** Match in getState's shape: `winners` beat `losers`. */
+    const played = (winners, losers, at = '2026-07-20T08:00:00.000Z') => ({
+      id: `m-${at}`,
+      courtName: 'Court c1',
+      team1: winners.map((id) => ({ id })),
+      team2: losers.map((id) => ({ id })),
+      score1: 11,
+      score2: 6,
+      timestamp: at,
+    });
+
+    // Eight racked paddles; a-d won their last game, e-h lost theirs.
+    const eightState = (overrides = {}) =>
+      makeState({
+        players: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((id) => makePlayer(id)),
+        queue: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
+        matchHistory: [
+          played(['a', 'b'], ['e', 'f'], '2026-07-20T08:10:00.000Z'),
+          played(['c', 'd'], ['g', 'h'], '2026-07-20T08:00:00.000Z'),
+        ],
+        ...overrides,
+      });
+
+    it('stacks a whole deck and records which one', () => {
+      const result = resolveCommand(
+        eightState({ lastDeckFilled: 'L' }),
+        DECKS,
+        { type: 'fillCourt', courtId: 'c1' },
+        opts(),
+      );
+      expect(result.event.outcome.players).toEqual(['a', 'b', 'c', 'd']);
+      expect(result.event.outcome.deck).toBe('W');
+      expect(result.state.lastDeckFilled).toBe('W');
+      // The losers are still racked, and every one of them took the wait bump.
+      expect(result.state.queue).toEqual(['e', 'f', 'g', 'h']);
+      expect(playerIn(result.state, 'e').waitRounds).toBe(1);
+    });
+
+    it('alternates to the other deck on the next fill', () => {
+      const state = eightState({ courts: [makeCourt('c1'), makeCourt('c2')] });
+      const first = resolveCommand(state, DECKS, { type: 'fillCourt', courtId: 'c1' }, opts());
+      const second = resolveCommand(
+        first.state,
+        DECKS,
+        { type: 'fillCourt', courtId: 'c2' },
+        opts(),
+      );
+      expect(first.event.outcome.deck).toBe('W');
+      expect(second.event.outcome.deck).toBe('L');
+      expect(second.event.outcome.players).toEqual(['e', 'f', 'g', 'h']);
+    });
+
+    it('treats a session start as one deck: no winners yet', () => {
+      // Nobody has played, so every paddle is a loser and the fill is just the
+      // top four — what game one looks like.
+      const result = resolveCommand(
+        makeState(),
+        DECKS,
+        { type: 'fillCourt', courtId: 'c1' },
+        opts(),
+      );
+      expect(result.event.outcome.players).toEqual(['a', 'b', 'c', 'd']);
+      expect(result.event.outcome.deck).toBe('L');
+    });
+
+    it('falls back to the classic top four when neither deck is full', () => {
+      // Six racked, three winners / three losers: no deck can stack, so this
+      // is today's behaviour and the pointer clears rather than crediting a
+      // deck with a turn it did not take.
+      const state = makeState({
+        matchHistory: [played(['a', 'b'], ['d', 'e']), played(['c', 'x'], ['f', 'y'])],
+        lastDeckFilled: 'L',
+      });
+      const result = resolveCommand(state, DECKS, { type: 'fillCourt', courtId: 'c1' }, opts());
+      expect(result.event.outcome.players).toEqual(['a', 'b', 'c', 'd']);
+      expect(result.event.outcome.deck).toBeNull();
+      expect(result.state.lastDeckFilled).toBeNull();
+    });
+
+    it('replays a recorded deck fill that is not the top of the rack', () => {
+      // The core of the loosened validation: applying the event straight back
+      // must reproduce the same board, even though `e,f,g,h` are ranked 5-8.
+      const state = eightState({ lastDeckFilled: 'W' });
+      const resolved = resolveCommand(state, DECKS, { type: 'fillCourt', courtId: 'c1' }, opts());
+      expect(resolved.event.outcome.deck).toBe('L');
+
+      const replayed = applyEvent(state, DECKS, resolved.event);
+      expect(replayed.error).toBeUndefined();
+      expect(replayed.state.queue).toEqual(resolved.state.queue);
+      expect(replayed.state.lastDeckFilled).toBe('L');
+    });
+
+    it('refuses a recorded fill naming someone who left the rack', () => {
+      const state = eightState({ lastDeckFilled: 'W' });
+      const resolved = resolveCommand(state, DECKS, { type: 'fillCourt', courtId: 'c1' }, opts());
+      const gone = { ...state, queue: state.queue.filter((id) => id !== 'g') };
+      expect(applyEvent(gone, DECKS, resolved.event).error).toBe('STATE_MISMATCH');
+    });
+
+    it('still demands the top four when the mode is off', () => {
+      // The classic strictness must not weaken for arenas not running decks.
+      const state = eightState({ lastDeckFilled: 'W' });
+      const resolved = resolveCommand(state, DECKS, { type: 'fillCourt', courtId: 'c1' }, opts());
+      expect(applyEvent(state, SETTINGS, resolved.event).error).toBe('STATE_MISMATCH');
+    });
+
+    it('rewinds the alternation when the fill is cancelled', () => {
+      const state = eightState({ lastDeckFilled: 'L' });
+      const filled = resolveCommand(state, DECKS, { type: 'fillCourt', courtId: 'c1' }, opts());
+      expect(filled.state.lastDeckFilled).toBe('W');
+      const cancelled = resolveCommand(
+        filled.state,
+        DECKS,
+        { type: 'cancelFill', courtId: 'c1' },
+        opts(),
+      );
+      expect(cancelled.state.lastDeckFilled).toBe('L');
+    });
+
+    it('skips within a deck: the replacement comes from the same deck', () => {
+      // `a` is on the winners deck; the paddle promoted behind them must be
+      // another winner, never the front of the losers deck.
+      const state = eightState({
+        players: ['a', 'b', 'c', 'd', 'i', 'e', 'f', 'g', 'h'].map((id) => makePlayer(id)),
+        queue: ['a', 'b', 'c', 'd', 'i', 'e', 'f', 'g', 'h'],
+        matchHistory: [
+          played(['a', 'b'], ['e', 'f'], '2026-07-20T08:20:00.000Z'),
+          played(['c', 'd'], ['g', 'h'], '2026-07-20T08:10:00.000Z'),
+          played(['i', 'z'], ['y', 'x'], '2026-07-20T08:00:00.000Z'),
+        ],
+      });
+      const result = resolveCommand(
+        state,
+        DECKS,
+        { type: 'skipPlayer', playerId: 'a', isManager: true },
+        opts(),
+      );
+      expect(result.error).toBeUndefined();
+      // `i` (the fifth winner) is promoted into the freed winners slot; the
+      // losers keep their exact rack positions.
+      const winnersNow = result.state.queue.filter((id) => ['b', 'c', 'd', 'i', 'a'].includes(id));
+      expect(winnersNow.slice(0, 4)).toEqual(['b', 'c', 'd', 'i']);
+      expect(result.state.queue.filter((id) => ['e', 'f', 'g', 'h'].includes(id))).toEqual([
+        'e',
+        'f',
+        'g',
+        'h',
+      ]);
+    });
+
+    it('refuses to skip a paddle that is not on its own deck', () => {
+      // `h` is fourth in the losers deck… but `i` below makes them fifth, so
+      // they are off-deck and the skip is a no-op.
+      const state = eightState({
+        players: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'i', 'h'].map((id) => makePlayer(id)),
+        queue: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'i', 'h'],
+      });
+      const result = resolveCommand(
+        state,
+        DECKS,
+        { type: 'skipPlayer', playerId: 'h', isManager: true },
+        opts(),
+      );
+      expect(result.state.queue).toEqual(state.queue);
+    });
   });
 
   it('errors when the court is busy or fewer than four wait', () => {
