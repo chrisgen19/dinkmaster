@@ -982,9 +982,15 @@ export async function updateMatchScore(arenaId, matchId, score1, score2) {
 
   // Same rules the entry modal enforces, re-checked server-side so a stale tab
   // or a hand-rolled call can't write an illegal scoreline.
-  const target = guard.arena?.targetScore ?? DEFAULT_TARGET_SCORE;
-  // TODO(#159 phase 3): prefer `match.targetScore` so a correction is judged
-  // by the rules this game was played under, not the arena's current setting.
+  //
+  // Judged by the target THIS MATCH was played under, not the arena's current
+  // one: a manager who raised the target from 11 to 15 would otherwise be
+  // unable to correct any older 11-point game, and one who lowered it could
+  // rewrite an old game into a score that was never legal for it. Matches
+  // recorded before that was captured fall back to the arena setting, which is
+  // the best guess available for them.
+  const target =
+    match.targetScore ?? guard.arena?.targetScore ?? DEFAULT_TARGET_SCORE;
   const check = validateMatchScore(score1, score2, target);
   if (!check.ok) {
     return {
