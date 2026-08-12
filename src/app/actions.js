@@ -6,7 +6,7 @@ import { getCurrentUser, requireUser, requireArenaOwner, requireArenaManager } f
 import { ROLES, canManageArena } from '@/lib/roles';
 import { generateInviteCode } from '@/lib/invite-code';
 import { INVITE_MODES, isInviteMode } from '@/lib/invites';
-import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
+import { MAX_WAIT_THRESHOLD, ON_DECK_SIZE } from '@/lib/matchmaking';
 import {
   DEFAULT_TARGET_SCORE,
   MIN_TARGET_SCORE,
@@ -686,15 +686,36 @@ export async function shuffleQueue(arenaId) {
   };
 }
 
-/** Stack the top 4 waiting players onto a court using the lowest-partnership matchup. */
-export async function fillCourt(arenaId, courtId) {
+/**
+ * Stack the top 4 waiting players onto a court using the lowest-partnership
+ * matchup.
+ *
+ * @param {string} arenaId
+ * @param {string} courtId
+ * @param {string[]} [expectedPlayerIds] - the "On deck · next court" four the
+ *   manager could see when they tapped. The fill is refused (QUEUE_CHANGED)
+ *   when the rack no longer starts with exactly those four, so a reorder
+ *   landing between the last repaint and the tap surfaces as "please try
+ *   again" with a fresh rack instead of silently stacking different players.
+ *   Optional and only enforced when it arrives well-formed: a client running
+ *   cached JS from an earlier deploy (this is an installable PWA) omits it and
+ *   keeps the previous take-whoever-is-on-top behavior rather than breaking.
+ */
+export async function fillCourt(arenaId, courtId, expectedPlayerIds) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  const expected =
+    Array.isArray(expectedPlayerIds) &&
+    expectedPlayerIds.length === ON_DECK_SIZE &&
+    expectedPlayerIds.every((id) => typeof id === 'string' && id.length > 0)
+      ? expectedPlayerIds
+      : undefined;
 
   try {
     await prisma.$transaction(async (tx) => {
       await lockQueue(tx, arenaId);
-      await applyFillCourtTx(tx, arenaId, { courtId });
+      await applyFillCourtTx(tx, arenaId, { courtId, expected });
     });
   } catch (err) {
     if (err?.message === 'NOT_ENOUGH') {
@@ -879,6 +900,16 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
   const s1 = parseInt(score1, 10);
   const s2 = parseInt(score2, 10);
 
+  // The finish and the Silo-Buster mix share ONE transaction. Split across two
+  // commits (as they were), the finish's own NOTIFY pushed an intermediate
+  // board — four recycled to the back, rack not yet mixed — that every viewer
+  // rendered for the few ms until the mix committed. A manager tapping "Stack
+  // Next 4" against that frame queued behind the mix on the rack lock and then
+  // stacked the post-mix four, which is precisely the "it didn't follow the
+  // on-deck list" report. One commit means one NOTIFY and no observable
+  // intermediate state.
+  let mixed = false;
+  let attemptedMix = false;
   try {
     await prisma.$transaction(async (tx) => {
       await lockQueue(tx, arenaId);
@@ -886,6 +917,30 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
       // the match records the rules it was played under — the arena's target
       // can change later, and a correction must be judged by the old one.
       await applyEndMatchTx(tx, arenaId, { courtId, s1, s2, targetScore: target });
+
+      // Mix the whole rack on every finish (when enabled and more than one
+      // court's worth of players are waiting, so the next four can actually
+      // differ) — this stops the same group of four from locking together
+      // every round. Counted after the recycle, inside the tx, so the four
+      // who just finished are included exactly as before.
+      if (!autoMix) return;
+      const queuedCount = await tx.player.count({
+        where: { arenaId, leftAt: null, queueOrder: { not: null } },
+      });
+      if (queuedCount <= 4) return;
+      attemptedMix = true;
+      try {
+        mixed = await applyAutoMixTx(tx, arenaId);
+      } catch (err) {
+        // ARENA_GONE (concurrent delete) is the only known non-bug failure
+        // here, and it throws off a null read rather than a failed statement,
+        // so the transaction is still healthy and the finish still commits —
+        // preserving the previous "match is saved, mix skipped" outcome.
+        // Anything else rethrows and rolls the finish back with it: that is
+        // the cost of the single commit, and a rolled-back finish is safe to
+        // retry (the court is still playing, nothing was recorded).
+        if (err?.message !== 'ARENA_GONE') throw err;
+      }
     });
   } catch (err) {
     // Court was already finished/vacant (a concurrent or duplicate call won) — no-op.
@@ -893,39 +948,15 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
     throw err;
   }
 
-  // Decide whether to auto-mix (Silo-Buster) based on the other courts' state.
   const otherCourts = await prisma.court.findMany({
     where: { arenaId, id: { not: courtId } },
   });
   const otherPlaying = otherCourts.filter((c) => c.status === 'playing').length;
-  const queuedCount = await prisma.player.count({
-    where: { arenaId, leftAt: null, queueOrder: { not: null } },
-  });
 
   let notification = '';
-  // Mix the whole rack on every finish (when enabled and more than one court's
-  // worth of players are waiting, so the next four can actually differ) — this
-  // stops the same group of four from locking together every round.
-  if (autoMix && queuedCount > 4) {
-    // Auto-mix runs in its own transaction after the match-finish commit; if it
-    // bails (arena vanished, lock contention, etc.), skip the mix and still
-    // return a clean { state } to the client — the match is already saved.
-    let mixed = false;
-    try {
-      await prisma.$transaction(async (tx) => {
-        await lockQueue(tx, arenaId);
-        mixed = await applyAutoMixTx(tx, arenaId);
-      });
-    } catch (err) {
-      // ARENA_GONE (concurrent delete) is the only known non-bug failure here.
-      // Anything else: rethrow so it bubbles to error reporting — the match
-      // commit is unaffected either way.
-      if (err?.message !== 'ARENA_GONE') throw err;
-    }
-    if (mixed) {
-      notification = '⚡ Silo-Buster: Mixed the rack (longest-waiting up next) to keep matchups fresh and fair!';
-    }
-  } else if (otherPlaying > 0) {
+  if (mixed) {
+    notification = '⚡ Silo-Buster: Mixed the rack (longest-waiting up next) to keep matchups fresh and fair!';
+  } else if (!attemptedMix && otherPlaying > 0) {
     notification = '💡 Recommended: Wait for other courts to finish before stacking again, to allow a complete mix of player pools!';
   }
 

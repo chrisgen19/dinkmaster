@@ -1975,15 +1975,17 @@ describe('arena server actions — authorization', () => {
       expect(tx.match.create.mock.calls[0][0].data.ratingDelta).toBeNull();
     });
 
-    it('endMatch() degrades gracefully when the arena vanishes during auto-mix', async () => {
+    // The finish and the auto-mix share one transaction so viewers never see
+    // the recycled-but-unmixed rack (a manager stacking against that frame gets
+    // a different four than the rack showed). These two pin both halves of that
+    // arrangement: one commit, and a mix failure that still saves the match.
+    const finishTxMock = ({ queuedCount = 5, arena = { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true } } = {}) => {
       const slot = (playerId, team) => ({
         playerId,
         team,
         player: { id: playerId, firstName: playerId, lastName: null, rating: 1000 },
       });
-
-      // Match-finish tx (first $transaction call) — full happy path.
-      const finishTx = {
+      return {
         $executeRaw: vi.fn(),
         court: {
           updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -1995,36 +1997,57 @@ describe('arena server actions — authorization', () => {
         },
         player: {
           aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 0 } }),
+          count: vi.fn().mockResolvedValue(queuedCount),
+          findMany: vi.fn().mockResolvedValue([
+            { id: 'q1', gamesPlayed: 0, gamesOffset: 0, waitRounds: 3, skipBoosted: false },
+            { id: 'q2', gamesPlayed: 4, gamesOffset: 0, waitRounds: 0, skipBoosted: false },
+          ]),
           updateMany: vi.fn(),
           update: vi.fn(),
         },
         match: { create: vi.fn() },
+        arena: { findUnique: vi.fn().mockResolvedValue(arena) },
       };
+    };
 
-      // Auto-mix tx (second $transaction call) — the arena row is gone.
-      const mixTx = {
-        $executeRaw: vi.fn(),
-        arena: { findUnique: vi.fn().mockResolvedValue(null) },
-        player: { findMany: vi.fn(), update: vi.fn() },
-      };
-
-      let txCall = 0;
-      prisma.$transaction.mockImplementation(async (cb) => {
-        txCall += 1;
-        return cb(txCall === 1 ? finishTx : mixTx);
-      });
-      // Force the auto-mix branch (autoMix=true and queuedCount > 4).
+    it('endMatch() mixes the rack in the SAME transaction as the finish', async () => {
+      const tx = finishTxMock();
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
       prisma.court.findMany.mockResolvedValue([]);
-      prisma.player.count.mockResolvedValue(5);
 
       const result = await actions.endMatch(ARENA, 'c1', 11, 5, true);
 
-      // Match commit succeeded; mix bailed cleanly with no notification.
+      // One commit: two would publish an intermediate board over the realtime
+      // NOTIFY that a fill could then race against.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      // The mix renumbered the rack inside that same transaction — longest
+      // waiting (q1, protected band) ahead of the fresher q2.
+      expect(tx.player.update).toHaveBeenCalledWith({ where: { id: 'q1' }, data: { queueOrder: 1 } });
+      expect(tx.player.update).toHaveBeenCalledWith({ where: { id: 'q2' }, data: { queueOrder: 2 } });
+      expect(result.notification).toMatch(/Silo-Buster/);
+    });
+
+    it('endMatch() degrades gracefully when the arena vanishes during auto-mix', async () => {
+      // The arena row is gone by the time the mix reads it. That throws off a
+      // null read rather than a failed statement, so the transaction is still
+      // healthy and the finish must still commit.
+      const tx = finishTxMock({ arena: null });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+      prisma.court.findMany.mockResolvedValue([]);
+
+      const result = await actions.endMatch(ARENA, 'c1', 11, 5, true);
+
+      // Match recorded; mix bailed cleanly with no notification.
       expect(result.error).toBeUndefined();
       expect(result.state).toBeDefined();
       expect(result.notification).toBe('');
-      expect(mixTx.arena.findUnique).toHaveBeenCalled();
-      expect(mixTx.player.update).not.toHaveBeenCalled();
+      expect(tx.match.create).toHaveBeenCalled();
+      expect(tx.arena.findUnique).toHaveBeenCalled();
+      // The mix reads the queued set only after the arena row resolves, so a
+      // missing arena means it never got as far as reordering anyone. (The
+      // finish's own recycle writes queueOrder, so asserting on those writes
+      // would not distinguish the two.)
+      expect(tx.player.findMany).not.toHaveBeenCalled();
     });
 
     it('rejectJoinRequest() deletes the request', async () => {
@@ -2872,6 +2895,79 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
     expect(tx.match.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { arenaId: ARENA } }),
     );
+  });
+
+  // The on-deck guard. A fill used to name no players at all — it took
+  // whatever reached the front of the rack by the time the transaction ran, so
+  // any reorder between the manager's last repaint and their tap (an auto-mix
+  // on a finish, a sub-out jumping to #1, another manager's fill) stacked four
+  // players the manager never saw, and reported success.
+  describe('on-deck guard', () => {
+    const ON_DECK = ['p1', 'p2', 'p3', 'p4'];
+
+    it('stacks the four when the rack still starts with them', async () => {
+      const tx = makeTx();
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.fillCourt(ARENA, COURT, ON_DECK);
+
+      expect(result.error).toBeUndefined();
+      expect(tx.courtSlot.createMany).toHaveBeenCalled();
+    });
+
+    it('accepts the four in any order — the team split is decided server-side', async () => {
+      const tx = makeTx();
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.fillCourt(ARENA, COURT, ['p4', 'p2', 'p1', 'p3']);
+
+      expect(result.error).toBeUndefined();
+      expect(tx.courtSlot.createMany).toHaveBeenCalled();
+    });
+
+    it('refuses — and stacks nobody — when the rack reordered under the manager', async () => {
+      const tx = makeTx();
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      // p4 was mixed away and p9 took the last on-deck slot after this
+      // manager's screen was painted.
+      const result = await actions.fillCourt(ARENA, COURT, ['p1', 'p2', 'p3', 'p9']);
+
+      expect(result.error).toBe('The court or queue changed while loading. Please try again.');
+      // Refused before any write: no dequeue, no slots. (The court claim rolls
+      // back with the transaction.)
+      expect(tx.player.updateMany).not.toHaveBeenCalled();
+      expect(tx.courtSlot.createMany).not.toHaveBeenCalled();
+      // Fresh rack comes back so the manager can re-tap against the truth.
+      expect(result.state).toBeDefined();
+    });
+
+    it('falls back to the old behavior when no on-deck four is sent', async () => {
+      // A client running cached JS from an earlier deploy (installable PWA)
+      // omits the argument; it must still be able to stack a court.
+      const tx = makeTx();
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.fillCourt(ARENA, COURT);
+
+      expect(result.error).toBeUndefined();
+      expect(tx.courtSlot.createMany).toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a short list', ['p1', 'p2', 'p3']],
+      ['a non-array', 'p1,p2,p3,p4'],
+      ['non-string ids', ['p1', 'p2', 'p3', 42]],
+      ['blank ids', ['p1', 'p2', 'p3', '']],
+    ])('ignores a malformed on-deck list (%s) rather than refusing the fill', async (_label, expected) => {
+      const tx = makeTx();
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      const result = await actions.fillCourt(ARENA, COURT, expected);
+
+      expect(result.error).toBeUndefined();
+      expect(tx.courtSlot.createMany).toHaveBeenCalled();
+    });
   });
 
   it('records the exact bumped player ids on the court for cancelFill to reverse', async () => {

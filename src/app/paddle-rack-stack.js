@@ -130,7 +130,13 @@ export function PaddleRackStack({
         </div>
 
         {errorMsg && (
-          <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+          // role=alert so a refused action is announced, not just drawn: a
+          // rack-changed refusal on Stack is now an ordinary outcome, and the
+          // manager's attention is on the court they just tapped.
+          <div
+            role="alert"
+            className="mt-3 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700"
+          >
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{errorMsg}</span>
           </div>
