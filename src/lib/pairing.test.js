@@ -52,6 +52,19 @@ describe('recentResults', () => {
     expect(results.get('a')).toBeNull();
   });
 
+  it('is order-sensitive, which is why every caller must sort identically', () => {
+    // The reason `sessionRecentMatches` and `getState` both order by
+    // [createdAt desc, id desc]: this function keeps each player's FIRST hit
+    // walking newest-first, so two rows that share a `createdAt` — possible for
+    // matches synced from an older offline batch — give opposite answers
+    // depending on which the query returned first. In deck mode that is the
+    // difference between the winners deck and the losers deck.
+    const won = match(['a', 'x'], ['y', 'z']);
+    const lost = match(['y', 'z'], ['a', 'x']);
+    expect(recentResults([won, lost], ['a']).get('a')).toBe('W');
+    expect(recentResults([lost, won], ['a']).get('a')).toBe('L');
+  });
+
   it('skips tied matches rather than scoring them as a win', () => {
     const results = recentResults([match(['a', 'b'], ['c', 'd'], 9, 9)], ['a', 'c']);
     expect(results.get('a')).toBeNull();

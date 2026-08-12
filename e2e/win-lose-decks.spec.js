@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { registerAndSignIn } from './helpers';
+import { PASSWORD, registerAndSignIn } from './helpers';
 
 // E2E coverage for win-vs-win / lose-vs-lose decks.
 //
@@ -210,6 +210,39 @@ test.describe('win/lose decks', () => {
     expect(await won.count()).toBe(await lost.count());
     await expect(won.first()).toHaveText('W');
     await expect(lost.first()).toHaveText('L');
+  });
+
+  test('a board already open picks up the mode being toggled elsewhere', async ({ page, browser }) => {
+    // The setting decides which four this client names in `fillCourt`'s
+    // `expected` guard, so a board holding a stale value doesn't just look
+    // wrong — the server refuses every stack it sends. And because the refusal
+    // carries board state only, a client that couldn't learn the new value
+    // would retry into the same refusal forever. So the mode rides the board
+    // stream, and the Arena notify trigger covers its column.
+    const email = await registerAndSignIn(page);
+    await createArena(page, `Live Toggle ${Date.now()}`);
+    const arenaUrl = page.url();
+    await addWalkIns(page, ['Ana', 'Ben', 'Cai', 'Dev', 'Eve', 'Fay', 'Gus']);
+    await playAGame(page, 8);
+
+    // This board is showing the classic single group.
+    await expect(page.getByText('On deck · next court').first()).toBeVisible();
+    await expect(page.getByText('Winners · next court')).toHaveCount(0);
+
+    // A second manager turns win/lose decks on from Settings.
+    const ctx2 = await browser.newContext();
+    const page2 = await ctx2.newPage();
+    await page2.goto('/login');
+    await page2.getByPlaceholder('Email').fill(email);
+    await page2.getByPlaceholder('Password').fill(PASSWORD);
+    await page2.getByRole('button', { name: 'Sign in' }).click();
+    await expect(page2).toHaveURL('/arenas');
+    await enableDeckMode(page2, arenaUrl);
+    await ctx2.close();
+
+    // The first board repaints into deck mode on its own — no reload.
+    await expect(page.getByText('Winners · next court').first()).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('On deck · next court')).toHaveCount(0);
   });
 
   test('leaves the rack alone when the mode is off', async ({ page }) => {

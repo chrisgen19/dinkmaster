@@ -182,6 +182,16 @@ export default function Arena({
   // is up next and the offline engine forks from the same value. Always null
   // in an arena that isn't running `splitDeckByResult`.
   const [lastDeckFilled, setLastDeckFilled] = useState(initialState.lastDeckFilled ?? null);
+  // Whether the arena is running win/lose decks. Held as STATE, not read from
+  // `matchmakingProp`, because it decides which four this client names in
+  // `fillCourt`'s `expected` guard. A manager whose page still had the old
+  // value would send the wrong four and be refused — and, without this, would
+  // be refused identically on every retry until they reloaded, since the
+  // refusal's fresh state couldn't correct the prop. Seeded from the prop and
+  // resynced from every server payload, so the board self-heals.
+  const [splitDeckByResult, setSplitDeckByResult] = useState(
+    initialState.splitDeckByResult ?? matchmakingProp.splitDeckByResult ?? false,
+  );
   // Arena schedule (powers the "This Week" leaderboard window). Declared up
   // here, before `persistSnapshot`, so the offline snapshot captures the LIVE
   // schedule: `handleSaveSchedule` updates this state without a
@@ -275,11 +285,27 @@ export default function Arena({
     // The offline engine advances this itself on every local fill, so a local
     // board carries it just like the server's does.
     setLastDeckFilled(state.lastDeckFilled ?? null);
+    // Guarded like `offlineHold`: a sync response carries the server's value,
+    // but a purely local engine state may not, and absence must not read as
+    // "mode off" and silently collapse the rack to one group mid-session.
+    if ('splitDeckByResult' in state) setSplitDeckByResult(state.splitDeckByResult ?? false);
     // Sync responses arrive through this path too (applySyncedState); they
     // carry `offlineHold: null` after the server cleared it. Engine states
     // never have the key, so a live hold can't be wiped by local play.
     if ('offlineHold' in state) setOfflineHold(state.offlineHold ?? null);
   }, []);
+
+  // The matchmaking settings with the one live-streamed member overridden by
+  // its current value. Everything downstream that freezes settings — the
+  // IndexedDB snapshot the offline shell boots from, and the engine settings
+  // stamped onto a pending log — must capture what the board is ACTUALLY
+  // running, not what the page was served. A stale flag on a pending log is
+  // worse than a stale rack: it is hashed into the sync fingerprint, so the
+  // whole batch would come back as a divergence.
+  const liveMatchmaking = useMemo(
+    () => ({ ...matchmakingProp, splitDeckByResult }),
+    [matchmakingProp, splitDeckByResult],
+  );
 
   // Save the current board as this arena's IndexedDB snapshot: the offline
   // shell renders it, and an offline session replays its event log over it.
@@ -292,7 +318,7 @@ export default function Arena({
         canManage,
         viewerRole,
         viewerUserId,
-        matchmaking: matchmakingProp,
+        matchmaking: liveMatchmaking,
         matchDefaults,
         // Extra props the interactive board needs when the offline shell
         // mounts <Arena> from this snapshot (cold offline boot). Server-only
@@ -316,7 +342,7 @@ export default function Arena({
       canManage,
       viewerRole,
       viewerUserId,
-      matchmakingProp,
+      liveMatchmaking,
       matchDefaults,
       description,
       schedule,
@@ -362,7 +388,7 @@ export default function Arena({
     arenaId,
     canManage,
     offlineBoot,
-    settingsProps: { matchmaking: matchmakingProp, matchDefaults },
+    settingsProps: { matchmaking: liveMatchmaking, matchDefaults },
     getBoardState,
     applyLocalState,
     applySyncedState,
@@ -411,6 +437,7 @@ export default function Arena({
       // then sends `expected` for that wrong deck, which the server refuses —
       // a needless "the court or queue changed" for the manager.
       setLastDeckFilled(initialState.lastDeckFilled ?? null);
+      setSplitDeckByResult(initialState.splitDeckByResult ?? false);
       setOfflineHold(initialState.offlineHold ?? null);
     }
   }
@@ -629,7 +656,10 @@ export default function Arena({
 
   // The same map, but only when the arena runs decks — `null` here means the
   // classic single on-deck group.
-  const deckResults = matchmakingProp.splitDeckByResult ? rackResults : null;
+  // The LIVE mode, not the page prop: a toggle by another manager reaches this
+  // board through the state stream, and reading the prop here would keep the
+  // rack deriving its four the old way until a reload.
+  const deckResults = splitDeckByResult ? rackResults : null;
 
   // `null` also when nobody has won yet this session (see `hasTwoDecks`), which
   // is how game one looks.
@@ -773,6 +803,9 @@ export default function Arena({
     // Server-authoritative deck alternation pointer, so two managers watching
     // the same board agree on which deck is up next.
     setLastDeckFilled(state.lastDeckFilled ?? null);
+    // …and the mode itself, so a manager who toggles it mid-session doesn't
+    // leave every other open board sending the wrong `expected` four.
+    setSplitDeckByResult(state.splitDeckByResult ?? false);
     // Advisory hold rides every server payload; guarded so a local engine
     // state (which never carries the key) can't clear a live hold.
     if ('offlineHold' in state) {

@@ -63,6 +63,14 @@ export async function unbumpPartnership(tx, x, y) {
  * offline engine applies the same cutoff (see `board-engine.js`); match history
  * is not part of the sync fingerprint, so a one-sided change here would
  * silently diverge the two paths.
+ *
+ * The `id` tie-break matters for the same reason it does in `getState`: rows
+ * synced from an older offline batch can share a `createdAt`. `recentResults`
+ * keeps each player's FIRST hit walking newest-first, so on tied rows a
+ * different order can yield a different W/L — and therefore a different deck
+ * from the one the client displayed, rejecting its `expected` four. The client
+ * reads `getState`'s ordering and the offline engine reads the same array, so
+ * this query is the only one of the three that could disagree.
  */
 async function sessionRecentMatches(tx, arenaId, lastSessionResetAt) {
   const recent = await tx.match.findMany({
@@ -70,7 +78,7 @@ async function sessionRecentMatches(tx, arenaId, lastSessionResetAt) {
       arenaId,
       ...(lastSessionResetAt ? { createdAt: { gte: lastSessionResetAt } } : {}),
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: RECENT_MATCH_WINDOW,
     select: { score1: true, score2: true, players: { select: { playerId: true, team: true } } },
   });

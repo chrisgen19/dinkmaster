@@ -3081,6 +3081,24 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
     );
   });
 
+  it('breaks recent-match ties by id, exactly as getState does', async () => {
+    // `recentResults` keeps each player's FIRST hit walking newest-first, so
+    // two rows sharing a `createdAt` (possible for matches synced from an older
+    // offline batch — see the same tie-break in `getState`) must not be ordered
+    // differently here. The client derives its decks from getState's array and
+    // the offline engine reads that same array, so this query is the only one
+    // of the three that could drift — and a drift puts a player in a different
+    // deck, rejecting the client's `expected` four.
+    const tx = makeTx();
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.fillCourt(ARENA, COURT);
+
+    expect(tx.match.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }),
+    );
+  });
+
   // The on-deck guard. A fill used to name no players at all — it took
   // whatever reached the front of the rack by the time the transaction ran, so
   // any reorder between the manager's last repaint and their tap (an auto-mix

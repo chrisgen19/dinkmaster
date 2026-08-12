@@ -67,6 +67,15 @@ export async function getState(arenaId) {
         // rack UI names the deck that stacks next, and the offline engine has
         // to fork from the same value the server holds.
         lastDeckFilled: true,
+        // This one IS a setting, and the only matchmaking setting that rides
+        // the board stream. It has to, because it decides WHICH FOUR the client
+        // names in `fillCourt`'s `expected` guard: a client holding a stale
+        // value sends the wrong four, the server refuses, and — since the
+        // refusal response carries this state — it would otherwise never learn
+        // better and every retry would fail the same way. The other
+        // matchmaking settings only tint badges or steer server-side choices,
+        // so they stay on the page props.
+        splitDeckByResult: true,
       },
     }),
   ]);
@@ -157,6 +166,9 @@ export async function getState(arenaId) {
     // W -> L -> W alternation, so both the rack UI and the offline engine read
     // it. Always null for an arena not running `splitDeckByResult`.
     lastDeckFilled: arena?.lastDeckFilled ?? null,
+    // Whether the arena is running win/lose decks (see the select above for
+    // why this setting, alone among the matchmaking ones, ships with the board).
+    splitDeckByResult: arena?.splitDeckByResult ?? false,
     // Advisory "a manager is running the board offline" flag. Both columns
     // are always written together; require both so a half-cleared row can't
     // render a nameless banner. Freshness is judged client-side (a dead
