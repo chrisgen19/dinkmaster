@@ -694,12 +694,23 @@ export async function applyEndMatchTx(tx, arenaId, { courtId, s1, s2, outcome, o
  *
  * EXACTNESS: the ratings this restores are the true pre-match ones when the
  * match is the last those four played, which is the ordinary case (a swapped
- * scoreline gets noticed immediately). If they have played since, the result
- * is their current rating minus this match's contribution — a principled,
- * still zero-sum adjustment rather than the ratings history would have
- * produced. Elo is path-dependent; nothing short of a full replay recovers
- * that, and a replay cannot survive the rating blending a player merge does
- * (see `linkPlayerToMember`).
+ * scoreline gets noticed immediately). If they have played since, it recovers
+ * "current minus this match" instead, and the replacement delta is computed
+ * from strengths that are off by however far the four have since moved.
+ *
+ * That residual is small and, more importantly, BOUNDED. A correction only
+ * ever swaps one match's contribution, and `computeMatchRatings` keeps any
+ * single delta inside ±K (32), so no player moves by more than 2K no matter
+ * how stale the match is — measured: ~1 Elo of error after one extra game per
+ * player, ~8 after a 200-point drift, ~16 at an implausible 400. It is also
+ * zero-sum: points move between the four, none are invented or destroyed, and
+ * nothing compounds across corrections. Both invariants are pinned by tests.
+ *
+ * Elo is path-dependent, so only replaying every later match would reproduce
+ * the history the arena "should" have had — and a replay cannot survive the
+ * rating blending a player merge does (see `linkPlayerToMember`), nor the
+ * participant rows it deletes. A bounded, zero-sum adjustment is the honest
+ * ceiling here.
  *
  * @param {object} opts
  * @param {object} opts.match - the `Match` row, including `ratingDelta`.

@@ -495,6 +495,43 @@ describe('arena server actions — authorization', () => {
         );
       });
 
+      it('stays zero-sum and bounded when the four have played since', async () => {
+        // The reconstruction subtracts this match's delta from CURRENT ratings,
+        // so once the four have played on, it recovers "current minus this
+        // match" rather than the true pre-match ratings, and the replacement
+        // delta is computed from slightly-off strengths. Two invariants keep
+        // that honest, and both are asserted here rather than argued:
+        //
+        //   1. Zero-sum — the correction moves points between the four, never
+        //      invents or destroys them.
+        //   2. Bounded — a correction only ever swaps ONE match's contribution,
+        //      and any single delta is inside ±K (32), so no player can move by
+        //      more than 2K however stale the match is. Errors cannot compound
+        //      across corrections.
+        const drifted = [
+          { id: 'w1', rating: 1080 }, // won a lot since
+          { id: 'w2', rating: 1016 },
+          { id: 'l1', rating: 930 }, // lost a lot since
+          { id: 'l2', rating: 984 },
+        ];
+        const totalBefore = drifted.reduce((sum, p) => sum + p.rating, 0);
+        const tx = makeFlipTx({ players: drifted });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.updateMatchScore(ARENA, 'm1', 5, 11);
+
+        const written = tx.player.update.mock.calls.map((c) => ({
+          id: c[0].where.id,
+          rating: c[0].data.rating,
+        }));
+        expect(written).toHaveLength(4);
+        expect(written.reduce((sum, p) => sum + p.rating, 0)).toBe(totalBefore);
+        for (const p of written) {
+          const was = drifted.find((d) => d.id === p.id).rating;
+          expect(Math.abs(p.rating - was)).toBeLessThanOrEqual(64);
+        }
+      });
+
       it('refuses a flip on a match recorded before rating deltas were stored', async () => {
         // Null delta means the rating effect was never recorded and cannot be
         // recovered — refuse rather than approximate.
