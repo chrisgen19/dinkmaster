@@ -13,8 +13,12 @@ import { toMatch } from '@/lib/match-history';
  * Thin adapter over the shared <MatchHistory> component — converts arena's
  * `{team1, team2, score1, score2}` shape into the unified `Match` shape and
  * renders in `neutral` perspective.
+ *
+ * Managers additionally get a per-row correct-score affordance (`onEditMatch`,
+ * wired to the same dialog the finish flow uses). It's passed through as null
+ * for everyone else, which keeps the ledger read-only.
  */
-export function ArenaHistory({ matches, formatTimestamp, profileHrefFor = null }) {
+export function ArenaHistory({ matches, formatTimestamp, profileHrefFor = null, onEditMatch = null }) {
   const normalised = useMemo(() => matches.map((m) => toMatch(m)), [matches]);
 
   return (
@@ -32,6 +36,7 @@ export function ArenaHistory({ matches, formatTimestamp, profileHrefFor = null }
         // Roster badges link to player profiles. Snapshot ids whose player has
         // since left/been deleted resolve to null and stay plain text.
         profileHrefFor={profileHrefFor ? (p) => profileHrefFor(p?.id) : null}
+        onEditMatch={onEditMatch}
       />
     </div>
   );

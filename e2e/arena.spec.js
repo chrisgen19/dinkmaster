@@ -16,6 +16,24 @@ async function createArenaFromDirectory(page, arenaName) {
   await page.getByRole('button', { name: 'Create arena' }).click();
 }
 
+/**
+ * Add walk-ins through the Prep Roster modal, which checks each straight onto
+ * the rack. Waits for every row to land so chained adds can't race the write.
+ */
+async function addWalkIns(page, names) {
+  await page.getByRole('button', { name: 'Add', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Prep roster' });
+  // The footer bar shows search by default; "+ Walk-in" swaps it to the form,
+  // which then stays open across consecutive adds.
+  await dialog.getByRole('button', { name: '+ Walk-in' }).click();
+  for (const name of names) {
+    await dialog.getByPlaceholder('First name').fill(name);
+    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+    await expect(dialog.getByText(name, { exact: false })).toBeVisible();
+  }
+  await page.getByRole('button', { name: 'Close roster' }).click();
+}
+
 test.describe('arenas', () => {
   test('a signed-in user can create an arena and manage it', async ({ page }) => {
     await registerFreshUser(page);
@@ -116,5 +134,45 @@ test.describe('arenas', () => {
 
     // User B is now a member
     await expect(page.getByText(/You're a member of this arena/)).toBeVisible();
+  });
+
+  // Covers the correction round trip through the real `updateMatchScore`
+  // action: the History ledger's per-row pencil reopens the SAME dialog the
+  // finish flow uses, pre-filled, and a winner-preserving edit persists.
+  test('a manager can correct a recorded score from the History tab', async ({ page }) => {
+    await registerFreshUser(page);
+    await createArenaFromDirectory(page, `Correction Arena ${Date.now()}`);
+    await expect(page).toHaveURL(/\/arena\/.+/);
+
+    await addWalkIns(page, ['Ana', 'Ben', 'Cai']);
+    await page.getByRole('button', { name: /Stack Next 4 Paddles/ }).first().click();
+
+    await page.getByRole('button', { name: /Finish Game & Record Score/ }).first().click();
+    await page.getByRole('textbox', { name: 'Team A score' }).fill('11');
+    await page.getByRole('textbox', { name: 'Team B score' }).fill('5');
+    await page.getByRole('button', { name: 'Save Score' }).click();
+    await expect(page.getByText('4 in rack').first()).toBeVisible();
+
+    await page.getByRole('tab', { name: /Match Log/ }).click();
+    const ledger = page.getByRole('tabpanel', { name: /Match Log/ });
+    await expect(ledger.getByText('5', { exact: true })).toBeVisible();
+
+    // The dialog opens seeded with the recorded scoreline, not blank.
+    await ledger.getByRole('button', { name: /Correct score for/ }).first().click();
+    await expect(page.getByRole('textbox', { name: 'Team A score' })).toHaveValue('11');
+    await expect(page.getByRole('textbox', { name: 'Team B score' })).toHaveValue('5');
+
+    // Flipping the winner is refused in place; the dialog stays open.
+    await page.getByRole('textbox', { name: 'Team A score' }).fill('5');
+    await page.getByRole('textbox', { name: 'Team B score' }).fill('11');
+    await page.getByRole('button', { name: 'Save Correction' }).click();
+    await expect(page.getByRole('dialog').getByRole('alert')).toContainText(/changes who won/i);
+
+    // A winner-preserving correction lands in the ledger.
+    await page.getByRole('textbox', { name: 'Team A score' }).fill('11');
+    await page.getByRole('textbox', { name: 'Team B score' }).fill('9');
+    await page.getByRole('button', { name: 'Save Correction' }).click();
+    await expect(page.getByRole('dialog')).toBeHidden();
+    await expect(ledger.getByText('9', { exact: true })).toBeVisible();
   });
 });

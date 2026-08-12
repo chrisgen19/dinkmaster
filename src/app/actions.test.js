@@ -29,6 +29,7 @@ vi.mock('@/lib/prisma', () => ({
       update: vi.fn(),
     },
     court: { findMany: vi.fn() },
+    match: { findUnique: vi.fn(), updateMany: vi.fn() },
     player: { count: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
     joinRequest: { upsert: vi.fn(), deleteMany: vi.fn(), findUnique: vi.fn() },
     linkRequest: {
@@ -62,12 +63,13 @@ const PLAY = [
   ['cancelFill', () => actions.cancelFill(ARENA, 'c1')],
   ['editCourtLineup', () => actions.editCourtLineup(ARENA, 'c1', ['p1', 'p2'], ['p3', 'p4'])],
   ['endMatch', () => actions.endMatch(ARENA, 'c1', 11, 5, true)],
+  ['updateMatchScore', () => actions.updateMatchScore(ARENA, 'm1', 11, 5)],
   ['addCourt', () => actions.addCourt(ARENA)],
   ['removeCourt', () => actions.removeCourt(ARENA, 'c1')],
   ['resetArena', () => actions.resetArena(ARENA)],
   ['updateArenaGeneral', () => actions.updateArenaGeneral(ARENA, { name: 'New' })],
   ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
-  ['updateArenaMatchmaking', () => actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true })],
+  ['updateArenaMatchmaking', () => actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true })],
   ['updateArenaMatchDefaults', () => actions.updateArenaMatchDefaults(ARENA, { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false })],
   ['updateArenaSessions', () => actions.updateArenaSessions(ARENA, { autoResetOnSession: true })],
   ['prepareNextSession', () => actions.prepareNextSession(ARENA)],
@@ -346,6 +348,91 @@ describe('arena server actions — authorization', () => {
         const result = await actions.updateArenaMatchDefaults(ARENA, input);
         expect(result.error).toBeTruthy();
         expect(prisma.arena.updateMany).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('updateMatchScore()', () => {
+      // A recorded 11-5 win for Team A on this arena.
+      const MATCH = { id: 'm1', arenaId: ARENA, score1: 11, score2: 5 };
+
+      beforeEach(() => {
+        requireArenaManager.mockResolvedValue({
+          user: { id: 'u1' },
+          arena: { id: ARENA, ownerId: 'u1', targetScore: 11 },
+          role: ROLES.OWNER,
+        });
+        prisma.match.findUnique.mockResolvedValue(MATCH);
+        prisma.match.updateMany.mockResolvedValue({ count: 1 });
+      });
+
+      it('persists a winner-preserving correction', async () => {
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 8);
+        expect(result.error).toBeUndefined();
+        expect(prisma.match.updateMany).toHaveBeenCalledWith({
+          where: { id: 'm1', arenaId: ARENA },
+          data: { score1: 11, score2: 8 },
+        });
+      });
+
+      it('accepts numeric strings from the client', async () => {
+        await actions.updateMatchScore(ARENA, 'm1', '13', '11');
+        expect(prisma.match.updateMany).toHaveBeenCalledWith({
+          where: { id: 'm1', arenaId: ARENA },
+          data: { score1: 13, score2: 11 },
+        });
+      });
+
+      it('no-ops when the scoreline is unchanged', async () => {
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 5);
+        expect(result.error).toBeUndefined();
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('rejects a correction that flips the winner', async () => {
+        const result = await actions.updateMatchScore(ARENA, 'm1', 5, 11);
+        expect(result.error).toMatch(/changes who won/i);
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
+      });
+
+      // A legacy tie banked no win/loss and was rated as a draw, so every legal
+      // correction of it changes the outcome.
+      it('rejects any correction of a legacy tie record', async () => {
+        prisma.match.findUnique.mockResolvedValueOnce({ ...MATCH, score1: 9, score2: 9 });
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 9);
+        expect(result.error).toMatch(/changes who won/i);
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['a tie', 11, 11],
+        ['a winner below the target', 9, 5],
+        ['a margin under two', 11, 10],
+      ])('rejects %s and writes nothing', async (_label, s1, s2) => {
+        const result = await actions.updateMatchScore(ARENA, 'm1', s1, s2);
+        expect(result.error).toBeTruthy();
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('refuses a match id belonging to another arena', async () => {
+        prisma.match.findUnique.mockResolvedValueOnce({ ...MATCH, arenaId: 'other_arena' });
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 8);
+        expect(result.error).toMatch(/no longer exists/i);
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('reports a clean error when the match is gone', async () => {
+        prisma.match.findUnique.mockResolvedValueOnce(null);
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 8);
+        expect(result.error).toMatch(/no longer exists/i);
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
+      });
+
+      // The read and the write are separate statements: a delete landing
+      // between them is a count===0, not a thrown P2025.
+      it('reports a clean error when the match is deleted mid-correction', async () => {
+        prisma.match.updateMany.mockResolvedValueOnce({ count: 0 });
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 8);
+        expect(result.error).toMatch(/no longer exists/i);
       });
     });
 

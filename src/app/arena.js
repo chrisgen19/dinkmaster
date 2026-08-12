@@ -12,6 +12,7 @@ import {
   cancelFill,
   editCourtLineup,
   endMatch,
+  updateMatchScore,
   addCourt,
   removeCourt,
   requestToJoin,
@@ -33,7 +34,6 @@ import {
 } from './arena-offline-banner';
 import { OFFLINE_UNAVAILABLE_MESSAGE, holdExpiryDelay, isHoldActive } from './arena-offline-state';
 import { computeSessionStats } from '@/lib/session-stats';
-import { stepScore, validateMatchScore } from '@/lib/scoring';
 import { formatShortName, profileHref } from '@/lib/player-display';
 import { hasConfiguredSchedule, describeSchedule } from '@/lib/schedule-format';
 import { AuthStatus } from './auth-status';
@@ -48,6 +48,7 @@ import { ArenaScheduleModal } from './arena-schedule-modal';
 import { ArenaCourtsPanel } from './arena-courts-panel';
 import { CourtEditModal } from './court-edit-modal';
 import { SkipPickerModal } from './skip-picker-modal';
+import { ScoreEntryModal } from './score-entry-modal';
 import { ArenaThisWeek } from './arena-this-week';
 import { ArenaSessionPrepBanner } from './arena-session-prep-banner';
 import { ArenaPrepRosterModal } from './arena-prep-roster-modal';
@@ -66,11 +67,6 @@ const fullName = (p) => (p?.lastName ? `${p.firstName} ${p.lastName}` : p?.first
  * alongside their tests.
  */
 const shouldApplyServerState = createStateFreshnessGuard();
-
-/** Accept only digits or an empty string into a controlled score input. */
-const onScoreChange = (setter, raw) => {
-  if (raw === '' || /^\d+$/.test(raw)) setter(raw);
-};
 
 /**
  * Numeric badge for the Members tab in the arena nav. Counts unresolved
@@ -394,10 +390,11 @@ export default function Arena({
 
   const [scoreModalOpen, setScoreModalOpen] = useState(false);
   const [selectedCourtForScore, setSelectedCourtForScore] = useState(null);
-  // Score inputs are stored as strings so the field can be empty (placeholder-only)
-  // until the organizer types or steps a value. Parsed to numbers on save.
-  const [team1Score, setTeam1Score] = useState('');
-  const [team2Score, setTeam2Score] = useState('');
+  // The recorded match whose score is being corrected from the History tab
+  // (null = closed), plus a modal-scoped error so a server rejection (winner
+  // flip, vanished match) surfaces inside the dialog rather than behind it.
+  const [matchToCorrect, setMatchToCorrect] = useState(null);
+  const [correctionError, setCorrectionError] = useState('');
 
   // The court whose fill is pending cancellation, surfaced in a confirm modal
   // so a destructive "return to deck" can't fire on a stray click. Null = closed.
@@ -512,20 +509,12 @@ export default function Arena({
   const formatTimestamp = (iso) =>
     mounted ? new Date(iso).toLocaleString() : iso.replace('T', ' ').slice(0, 16);
 
-  // Escape closes the score-entry modal — conventional keyboard partner to the
-  // backdrop click and the ✕ button. Listener is only attached while the modal
-  // is open so we never see a stale court id on close.
-  useEffect(() => {
-    if (!scoreModalOpen) return undefined;
-    const onKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        setScoreModalOpen(false);
-        setSelectedCourtForScore(null);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [scoreModalOpen]);
+  // Roster shapes for <ScoreEntryModal>. A live court carries slot ids that
+  // resolve against the current players; a recorded match carries its own
+  // name snapshots (which survive the player's deletion). Both keep the id so
+  // the modal's list items get a stable React key, not an array index.
+  const resolveLiveSlot = (id) => ({ id, ...formatShortName(players.find((p) => p.id === id)) });
+  const resolveSnapshotPlayer = (p) => ({ id: p.id, ...formatShortName(p) });
 
   // Escape closes the cancel-fill confirm modal too (keyboard partner to the
   // backdrop click and the "Keep Playing" button). Suppressed while the action
@@ -975,9 +964,42 @@ export default function Arena({
   const handleTriggerScoreModal = (court) => {
     if (!canManage) return;
     setSelectedCourtForScore(court);
-    setTeam1Score('');
-    setTeam2Score('');
     setScoreModalOpen(true);
+  };
+
+  // Open the same score dialog against an already-recorded match (History tab,
+  // managers only). `match` is the normalised shape <MatchHistory> renders.
+  const handleRequestCorrectScore = (match) => {
+    if (!canManage) return;
+    setCorrectionError('');
+    setMatchToCorrect(match);
+  };
+
+  // Commit a correction. Mirrors the lineup editor's race handling: the dialog
+  // stays open on a rejection (winner flip, vanished match) so the manager sees
+  // the reason against the scoreline they typed, and closes on success.
+  const handleConfirmCorrectScore = (score1, score2) => {
+    if (!matchToCorrect) return;
+    const matchId = matchToCorrect.id;
+    startTransition(async () => {
+      try {
+        const result = await updateMatchScore(arenaId, matchId, score1, score2);
+        if (result?.error) {
+          if (result.state) applyResult({ state: result.state });
+          setCorrectionError(result.error);
+          return;
+        }
+        applyResult(result);
+        setCorrectionError('');
+        setMatchToCorrect(null);
+      } catch {
+        // Transport failure — same reasoning as `run()`: nothing was written,
+        // so asking the manager to retry is safe. The message lands inside the
+        // dialog (not the page banner, which the backdrop would cover).
+        setCorrectionError('Connection problem: that correction was not saved. Please try again.');
+        offline.notifyActionFailed();
+      }
+    });
   };
 
   // Open the confirm modal for a court's fill cancellation (manager-only).
@@ -1643,6 +1665,10 @@ export default function Arena({
               matches={matchHistory}
               formatTimestamp={formatTimestamp}
               profileHrefFor={playerProfileHrefFor}
+              // Corrections go through a server action, and the offline board
+              // engine has no edit command — so the affordance is hidden while
+              // the board is running offline.
+              onEditMatch={canManage && !offline.offlineActive ? handleRequestCorrectScore : null}
             />
           )}
 
@@ -1828,250 +1854,51 @@ export default function Arena({
         />
       )}
 
-      {/* Score Entry Modal — matches the CourtCard's visual language: slate-900
-          court tile in the header, emerald = Team A, sky = Team B, stacked
-          player names per side, a small slate VS pivot, then a stepper-equipped
-          score row. Fields start empty (placeholder-only); Save is disabled
-          until both contain a non-negative integer. */}
-      {scoreModalOpen && selectedCourtForScore && (() => {
-        const courtBadge =
-          selectedCourtForScore.name?.match(/\d+/)?.[0]
-          ?? selectedCourtForScore.name?.charAt(0)
-          ?? '?';
-        // Carry the player id along with the formatted name so the list items
-        // get a stable React key (not the array index).
-        const resolveSlot = (id) => ({ id, ...formatShortName(players.find((p) => p.id === id)) });
-        const t1 = selectedCourtForScore.team1.map(resolveSlot);
-        const t2 = selectedCourtForScore.team2.map(resolveSlot);
-        const validation = validateMatchScore(team1Score, team2Score, matchDefaults.targetScore);
-        const canSubmit = validation.ok;
-        const closeModal = () => {
-          setScoreModalOpen(false);
-          setSelectedCourtForScore(null);
-        };
-        const submit = () => {
-          if (!canSubmit) return;
-          handleEndMatchWithScore(
-            selectedCourtForScore.id,
-            parseInt(team1Score, 10),
-            parseInt(team2Score, 10),
-          );
-        };
-        const onKeyDownSubmit = (e) => {
-          if (e.key === 'Enter' && canSubmit) {
-            e.preventDefault();
-            submit();
-          }
-        };
-        return (
-          <div
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) closeModal();
-            }}
-          >
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="score-modal-title"
-              className="bg-white rounded-2xl border border-slate-200 max-w-md w-full shadow-xl animate-scale-up overflow-hidden"
-            >
-              {/* Header */}
-              <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 bg-gradient-to-r from-slate-50/80 to-white">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div
-                    aria-hidden="true"
-                    className="shrink-0 w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center font-extrabold text-sm shadow-sm"
-                  >
-                    {courtBadge}
-                  </div>
-                  <div className="min-w-0">
-                    <h3 id="score-modal-title" className="font-extrabold text-slate-900 text-sm truncate">
-                      {selectedCourtForScore.name}
-                    </h3>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 mt-0.5">
-                      Record final score
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={closeModal}
-                  aria-label="Close"
-                  className="shrink-0 w-7 h-7 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition"
-                >
-                  ✕
-                </button>
-              </div>
+      {/* Score entry — the SAME dialog for both scorelines the arena writes:
+          finishing a live court (empty fields) and correcting a recorded match
+          from the History tab (pre-filled). See score-entry-modal.js. */}
+      {scoreModalOpen && selectedCourtForScore && (
+        <ScoreEntryModal
+          courtName={selectedCourtForScore.name}
+          subtitle="Record final score"
+          // Carry the player id along with the formatted name so the list items
+          // get a stable React key (not the array index).
+          team1={selectedCourtForScore.team1.map(resolveLiveSlot)}
+          team2={selectedCourtForScore.team2.map(resolveLiveSlot)}
+          targetScore={matchDefaults.targetScore}
+          submitLabel="Save Score"
+          onSubmit={(s1, s2) => handleEndMatchWithScore(selectedCourtForScore.id, s1, s2)}
+          onClose={() => {
+            setScoreModalOpen(false);
+            setSelectedCourtForScore(null);
+          }}
+        />
+      )}
 
-              {/* Body */}
-              <div className="px-5 py-5">
-                {/* Identity row — TEAM A | VS | TEAM B (mirrors the card) */}
-                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-                  <div className="min-w-0">
-                    <div className="text-[9px] font-extrabold uppercase tracking-[0.18em] text-emerald-600 mb-1.5">
-                      Team A
-                    </div>
-                    <ul className="space-y-1">
-                      {t1.map((p) => (
-                        <li
-                          key={p.id}
-                          className="text-sm font-bold text-slate-800 truncate leading-tight"
-                          title={p.full}
-                        >
-                          {p.display}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <span
-                    aria-hidden="true"
-                    className="shrink-0 inline-flex w-9 h-9 rounded-full bg-slate-100 text-slate-500 items-center justify-center text-[10px] font-black tracking-[0.18em]"
-                  >
-                    VS
-                  </span>
-                  <div className="min-w-0 text-right">
-                    <div className="text-[9px] font-extrabold uppercase tracking-[0.18em] text-sky-600 mb-1.5">
-                      Team B
-                    </div>
-                    <ul className="space-y-1">
-                      {t2.map((p) => (
-                        <li
-                          key={p.id}
-                          className="text-sm font-bold text-slate-800 truncate leading-tight"
-                          title={p.full}
-                        >
-                          {p.display}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-
-                {/* Score row — stepper buttons flanking each input */}
-                <div className="grid grid-cols-2 gap-3 mt-5">
-                  <div className="flex items-stretch gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setTeam1Score(stepScore(team1Score, -1))}
-                      aria-label="Decrease Team A score"
-                      className="shrink-0 w-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 text-emerald-700 font-extrabold text-lg flex items-center justify-center transition"
-                    >
-                      −
-                    </button>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      value={team1Score}
-                      onChange={(e) => onScoreChange(setTeam1Score, e.target.value)}
-                      onKeyDown={onKeyDownSubmit}
-                      placeholder="0"
-                      aria-label="Team A score"
-                      className="flex-1 min-w-0 text-center bg-white border-2 border-emerald-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 rounded-xl py-3 text-2xl font-extrabold text-slate-800 placeholder:text-slate-300 outline-none transition"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setTeam1Score(stepScore(team1Score, 1))}
-                      aria-label="Increase Team A score"
-                      className="shrink-0 w-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 text-emerald-700 font-extrabold text-lg flex items-center justify-center transition"
-                    >
-                      +
-                    </button>
-                  </div>
-                  <div className="flex items-stretch gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setTeam2Score(stepScore(team2Score, -1))}
-                      aria-label="Decrease Team B score"
-                      className="shrink-0 w-9 rounded-xl bg-sky-50 hover:bg-sky-100 active:bg-sky-200 text-sky-700 font-extrabold text-lg flex items-center justify-center transition"
-                    >
-                      −
-                    </button>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      value={team2Score}
-                      onChange={(e) => onScoreChange(setTeam2Score, e.target.value)}
-                      onKeyDown={onKeyDownSubmit}
-                      placeholder="0"
-                      aria-label="Team B score"
-                      className="flex-1 min-w-0 text-center bg-white border-2 border-sky-200 focus:border-sky-500 focus:ring-4 focus:ring-sky-500/15 rounded-xl py-3 text-2xl font-extrabold text-slate-800 placeholder:text-slate-300 outline-none transition"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setTeam2Score(stepScore(team2Score, 1))}
-                      aria-label="Increase Team B score"
-                      className="shrink-0 w-9 rounded-xl bg-sky-50 hover:bg-sky-100 active:bg-sky-200 text-sky-700 font-extrabold text-lg flex items-center justify-center transition"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-
-                {/* Hint while typing; red error once both scores are filled but
-                    the scoreline is illegal (tie / target / win-by-2). */}
-                <div className="mt-4">
-                  {validation.complete && !validation.ok ? (
-                    <div
-                      role="alert"
-                      className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-[11px] font-semibold flex items-center gap-2"
-                    >
-                      <svg
-                        className="w-3.5 h-3.5 shrink-0"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <circle cx="12" cy="12" r="10" />
-                        <line x1="12" y1="8" x2="12" y2="12" />
-                        <line x1="12" y1="16" x2="12.01" y2="16" />
-                      </svg>
-                      <span>{validation.reason}</span>
-                    </div>
-                  ) : (
-                    <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200/70 text-slate-500 text-[11px] flex items-center justify-center gap-1.5">
-                      <span className="font-bold text-slate-700">
-                        First to {matchDefaults.targetScore}
-                      </span>
-                      <span className="text-slate-300" aria-hidden="true">·</span>
-                      <span>Win by 2</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Footer */}
-              <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/40 flex gap-2.5">
-                <button
-                  type="button"
-                  onClick={closeModal}
-                  className="flex-1 py-2.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={submit}
-                  disabled={!canSubmit}
-                  className={`flex-1 py-2.5 text-[11px] font-extrabold uppercase tracking-[0.14em] rounded-xl transition ${
-                    canSubmit
-                      ? 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm shadow-emerald-700/20'
-                      : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  }`}
-                >
-                  Save Score
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {matchToCorrect && (
+        <ScoreEntryModal
+          // Re-seed the inputs when the manager switches to another row.
+          key={matchToCorrect.id}
+          courtName={matchToCorrect.courtName}
+          subtitle="Correct recorded score"
+          // Rosters come from the match's own name snapshots, so a correction
+          // still lists the four who played even after someone has left.
+          team1={matchToCorrect.teams.a.players.map(resolveSnapshotPlayer)}
+          team2={matchToCorrect.teams.b.players.map(resolveSnapshotPlayer)}
+          initialScore1={String(matchToCorrect.teams.a.score)}
+          initialScore2={String(matchToCorrect.teams.b.score)}
+          targetScore={matchDefaults.targetScore}
+          submitLabel="Save Correction"
+          isPending={isPending}
+          error={correctionError}
+          onSubmit={handleConfirmCorrectScore}
+          onClose={() => {
+            if (isPending) return; // don't dismiss mid-flight
+            setMatchToCorrect(null);
+            setCorrectionError('');
+          }}
+        />
+      )}
 
       {/* Tailwind Animations Setup */}
       <style>{`
