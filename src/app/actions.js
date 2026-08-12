@@ -880,7 +880,10 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
   try {
     await prisma.$transaction(async (tx) => {
       await lockQueue(tx, arenaId);
-      await applyEndMatchTx(tx, arenaId, { courtId, s1, s2 });
+      // `target` is the value this scoreline was just validated against, so
+      // the match records the rules it was played under — the arena's target
+      // can change later, and a correction must be judged by the old one.
+      await applyEndMatchTx(tx, arenaId, { courtId, s1, s2, targetScore: target });
     });
   } catch (err) {
     // Court was already finished/vacant (a concurrent or duplicate call won) — no-op.
@@ -988,7 +991,9 @@ export async function updateMatchScore(arenaId, matchId, score1, score2) {
   // arenaId also closes the read-then-write gap above.
   const updated = await prisma.match.updateMany({
     where: { id: matchId, arenaId },
-    data: { score1: s1, score2: s2 },
+    // `editedAt` marks the row as corrected after the fact. Nothing reads it
+    // yet; it's what a future "edited" chip in the ledger keys off.
+    data: { score1: s1, score2: s2, editedAt: new Date() },
   });
   if (updated.count === 0) {
     return { error: 'That match no longer exists.', state: await getState(arenaId) };
