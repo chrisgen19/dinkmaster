@@ -577,8 +577,13 @@ export async function applyEditCourtLineupTx(tx, arenaId, { courtId, team1Ids, t
  * @param {string|Date} [opts.occurredAt] - when the match actually finished;
  *   written as `Match.createdAt` on offline replay so leaderboards/session
  *   stats key off court time, not sync time. Absent online (DB default now()).
+ * @param {number} [opts.targetScore] - the target the scoreline was validated
+ *   against, persisted as `Match.targetScore` so a later correction is judged
+ *   by the rules this game was played under rather than the arena's current
+ *   setting. Callers pass the SAME value they validated with; omitted leaves
+ *   the column null ("unknown").
  */
-export async function applyEndMatchTx(tx, arenaId, { courtId, s1, s2, outcome, occurredAt }) {
+export async function applyEndMatchTx(tx, arenaId, { courtId, s1, s2, outcome, occurredAt, targetScore }) {
   const team1Won = s1 > s2;
   const team2Won = s2 > s1;
 
@@ -612,12 +617,33 @@ export async function applyEndMatchTx(tx, arenaId, { courtId, s1, s2, outcome, o
     ? outcome.recycleOrder.map((playerId) => slots.find((s) => s.playerId === playerId))
     : shuffle(slots);
 
+  // Elo is computed BEFORE the match row so its delta can be stored on it. A
+  // filled court is always two players per team; guard anyway so a malformed
+  // court can't crash a finish — it just records no delta (null = unknown).
+  let next = null;
+  let ratingDelta = null;
+  if (team1.length === 2 && team2.length === 2) {
+    next = computeMatchRatings({
+      team1: [team1[0].player.rating, team1[1].player.rating],
+      team2: [team2[0].player.rating, team2[1].player.rating],
+      outcome: team1Won ? 1 : team2Won ? 2 : 0,
+    });
+    // Zero-sum with a fixed K, and both teammates share their team's move, so
+    // team 1's swing is the whole story: team 2 moved by exactly its negative.
+    // One integer therefore makes this match's rating effect reversible.
+    ratingDelta = next.team1[0] - team1[0].player.rating;
+  }
+
   await tx.match.create({
     data: {
       arenaId,
       courtName: court.name,
       score1: s1,
       score2: s2,
+      ratingDelta,
+      // Null when the caller didn't say; readers fall back to the arena's
+      // current target rather than treating the absence as a value.
+      targetScore: targetScore ?? null,
       ...(occurredAt ? { createdAt: occurredAt } : {}),
       players: {
         create: slots.map((s) => ({
@@ -637,15 +663,8 @@ export async function applyEndMatchTx(tx, arenaId, { courtId, s1, s2, outcome, o
     await tx.player.updateMany({ where: { id: { in: losers } }, data: { losses: { increment: 1 } } });
   }
 
-  // Update Elo skill ratings (Phase 6). A filled court is always two
-  // players per team; guard anyway so a malformed court can't crash a finish.
-  if (team1.length === 2 && team2.length === 2) {
-    const outcomeCode = team1Won ? 1 : team2Won ? 2 : 0;
-    const next = computeMatchRatings({
-      team1: [team1[0].player.rating, team1[1].player.rating],
-      team2: [team2[0].player.rating, team2[1].player.rating],
-      outcome: outcomeCode,
-    });
+  // Persist the ratings computed above (Phase 6).
+  if (next) {
     await tx.player.update({ where: { id: team1[0].playerId }, data: { rating: next.team1[0] } });
     await tx.player.update({ where: { id: team1[1].playerId }, data: { rating: next.team1[1] } });
     await tx.player.update({ where: { id: team2[0].playerId }, data: { rating: next.team2[0] } });
@@ -1026,6 +1045,10 @@ export async function applyEventTx(tx, arenaId, settings, event, { occurredAt })
         s2: parseInt(payload.score2, 10),
         outcome: { recycleOrder: event.outcome?.recycleOrder },
         occurredAt,
+        // The batch's own snapshot — the same target this scoreline was just
+        // validated against, so a replayed match records the rules it was
+        // played under offline, not the arena's setting at sync time.
+        targetScore: settings.targetScore,
       });
       if (payload.autoMix && event.outcome?.mixedOrder) {
         await applyAutoMixTx(tx, arenaId, { outcome: { mixedOrder: event.outcome.mixedOrder } });

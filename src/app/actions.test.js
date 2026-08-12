@@ -380,7 +380,8 @@ describe('arena server actions — authorization', () => {
         expect(result.error).toBeUndefined();
         expect(prisma.match.updateMany).toHaveBeenCalledWith({
           where: { id: 'm1', arenaId: ARENA },
-          data: { score1: 11, score2: 8 },
+          // `editedAt` stamps the row as corrected after the fact.
+          data: { score1: 11, score2: 8, editedAt: expect.any(Date) },
         });
       });
 
@@ -388,7 +389,8 @@ describe('arena server actions — authorization', () => {
         await actions.updateMatchScore(ARENA, 'm1', '13', '11');
         expect(prisma.match.updateMany).toHaveBeenCalledWith({
           where: { id: 'm1', arenaId: ARENA },
-          data: { score1: 13, score2: 11 },
+          // `editedAt` stamps the row as corrected after the fact.
+          data: { score1: 13, score2: 11, editedAt: expect.any(Date) },
         });
       });
 
@@ -843,6 +845,11 @@ describe('arena server actions — authorization', () => {
         expect(created.createdAt.getTime()).toBeLessThanOrEqual(Date.now());
         expect(created.score1).toBe(11);
         expect(created.score2).toBe(7);
+        // Provenance comes from the BATCH's settings snapshot, i.e. the target
+        // this scoreline was validated against offline — not whatever the
+        // arena is set to at sync time.
+        expect(created.targetScore).toBe(11);
+        expect(created.ratingDelta).toBeGreaterThan(0); // team 1 won 11-7
       });
 
       it('gives each synced match a distinct createdAt even when the clock is ahead', async () => {
@@ -1424,6 +1431,93 @@ describe('arena server actions — authorization', () => {
       expect(ratingFor('w2')).toBeGreaterThan(1000);
       expect(ratingFor('l1')).toBeLessThan(1000);
       expect(ratingFor('l2')).toBeLessThan(1000);
+    });
+
+    it('endMatch() records the match provenance the correction path needs', async () => {
+      // `ratingDelta` is team 1's swing; zero-sum and shared by teammates, so
+      // it is the whole rating effect of this match in one integer. Asserted
+      // against the ratings actually written, not a hard-coded K, so the two
+      // can't drift apart. `targetScore` pins the rules the game was played
+      // under, since the arena's target can change afterwards.
+      const slot = (playerId, team) => ({
+        playerId,
+        team,
+        player: { id: playerId, firstName: playerId, lastName: null, rating: 1000 },
+      });
+      const tx = {
+        $executeRaw: vi.fn(),
+        court: {
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
+        },
+        courtSlot: {
+          findMany: vi
+            .fn()
+            .mockResolvedValue([slot('w1', 1), slot('w2', 1), slot('l1', 2), slot('l2', 2)]),
+          deleteMany: vi.fn(),
+        },
+        player: {
+          aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 0 } }),
+          updateMany: vi.fn(),
+          update: vi.fn(),
+        },
+        match: { create: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+      prisma.court.findMany.mockResolvedValue([]);
+      prisma.player.count.mockResolvedValue(0);
+      requireArenaManager.mockResolvedValue({
+        user: { id: 'u1' },
+        arena: { id: ARENA, ownerId: 'u1', targetScore: 15 },
+        role: ROLES.OWNER,
+      });
+
+      await actions.endMatch(ARENA, 'c1', 15, 5, false);
+
+      const { data } = tx.match.create.mock.calls[0][0];
+      const ratingFor = (id) =>
+        tx.player.update.mock.calls.find((c) => c[0].where.id === id && 'rating' in c[0].data)[0]
+          .data.rating;
+      expect(data.ratingDelta).toBe(ratingFor('w1') - 1000);
+      expect(data.ratingDelta).toBe(1000 - ratingFor('l1')); // zero-sum
+      expect(data.ratingDelta).toBeGreaterThan(0); // team 1 won
+      // The target the score was validated against, not the default.
+      expect(data.targetScore).toBe(15);
+      expect(data.editedAt).toBeUndefined(); // a fresh match is not an edit
+    });
+
+    it('endMatch() records no delta when the court is not two-a-side', async () => {
+      // Malformed court: the Elo guard skips, so there is nothing to reverse
+      // later and the column stays null ("unknown") rather than 0 ("no swing").
+      const slot = (playerId, team) => ({
+        playerId,
+        team,
+        player: { id: playerId, firstName: playerId, lastName: null, rating: 1000 },
+      });
+      const tx = {
+        $executeRaw: vi.fn(),
+        court: {
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
+        },
+        courtSlot: {
+          findMany: vi.fn().mockResolvedValue([slot('w1', 1), slot('l1', 2), slot('l2', 2)]),
+          deleteMany: vi.fn(),
+        },
+        player: {
+          aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 0 } }),
+          updateMany: vi.fn(),
+          update: vi.fn(),
+        },
+        match: { create: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+      prisma.court.findMany.mockResolvedValue([]);
+      prisma.player.count.mockResolvedValue(0);
+
+      await actions.endMatch(ARENA, 'c1', 11, 5, false);
+
+      expect(tx.match.create.mock.calls[0][0].data.ratingDelta).toBeNull();
     });
 
     it('endMatch() degrades gracefully when the arena vanishes during auto-mix', async () => {

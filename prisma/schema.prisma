@@ -312,6 +312,23 @@ model Match {
   score2    Int
   createdAt DateTime @default(now())
 
+  // Provenance, all nullable because they only exist for matches recorded
+  // after this migration — a null means "unknown", never a real value, and
+  // every reader falls back rather than assuming.
+  //
+  // The Elo points team 1 gained (negative if they lost); team 2 moved by
+  // exactly the negative, since `computeMatchRatings` is zero-sum with a
+  // fixed K. Persisting it makes a match's entire rating effect reversible
+  // from one integer, which is what a correction that flips the winner needs.
+  ratingDelta Int?
+  // The arena's target score WHEN THIS MATCH WAS PLAYED. A manager can change
+  // the arena target later, and a historical correction must be judged by the
+  // rules the game was actually played under.
+  targetScore Int?
+  // Set when a manager corrects the scoreline after the fact. Null = never
+  // edited.
+  editedAt DateTime?
+
   arena   Arena         @relation(fields: [arenaId], references: [id], onDelete: Cascade)
   players MatchPlayer[]
 
