@@ -718,12 +718,19 @@ describe('arena server actions — authorization', () => {
         { id: 'l2', rating: 984 },
       ];
 
-      const makeTx = ({ removed = 1 } = {}) => ({
+      // The tx double re-reads the match and the newest id under the lock, so
+      // each test can stage what a concurrent action committed while this
+      // delete queued for that lock.
+      const makeTx = ({ removed = 1, fresh = MATCH, newestId = 'm1' } = {}) => ({
         $executeRaw: vi.fn(),
         matchPlayer: { findMany: vi.fn().mockResolvedValue(SNAPSHOTS) },
         player: { findMany: vi.fn().mockResolvedValue(RATED), update: vi.fn(), updateMany: vi.fn() },
         partnership: { updateMany: vi.fn() },
-        match: { deleteMany: vi.fn().mockResolvedValue({ count: removed }) },
+        match: {
+          findUnique: vi.fn().mockResolvedValue(fresh),
+          findFirst: vi.fn().mockResolvedValue(newestId ? { id: newestId } : null),
+          deleteMany: vi.fn().mockResolvedValue({ count: removed }),
+        },
       });
 
       beforeEach(() => {
@@ -776,8 +783,10 @@ describe('arena server actions — authorization', () => {
       });
 
       it('refuses a match recorded before rating deltas were stored', async () => {
+        // Staged on the re-read as well as the pre-lock read: the row fetched
+        // under the lock is the one the reversal actually uses.
         prisma.match.findUnique.mockResolvedValue({ ...MATCH, ratingDelta: null });
-        const tx = makeTx();
+        const tx = makeTx({ fresh: { ...MATCH, ratingDelta: null } });
         prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
         const result = await actions.deleteMatch(ARENA, 'm1');
@@ -791,6 +800,44 @@ describe('arena server actions — authorization', () => {
         const result = await actions.deleteMatch(ARENA, 'm1');
         expect(result.error).toMatch(/no longer exists/i);
         expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('refuses when a finish commits while the delete waits for the lock', async () => {
+        // The pre-lock check passed, but `endMatch` got the queue lock first
+        // and recorded a newer match. Deleting this one would now reverse a
+        // delta the newer match's ratings were computed from.
+        const tx = makeTx({ newestId: 'm-raced' });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.deleteMatch(ARENA, 'm1');
+        expect(result.error).toMatch(/only the most recent match/i);
+        expect(tx.player.update).not.toHaveBeenCalled();
+        expect(tx.match.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it('reverses the re-read delta, not the one read before the lock', async () => {
+        // A winner-flipping correction committed in between, replacing +16
+        // with -16. Reversing the stale value would move all four the wrong
+        // way; the row re-read under the lock is the one that counts.
+        const tx = makeTx({ fresh: { ...MATCH, score1: 5, score2: 11, ratingDelta: -16 } });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.deleteMatch(ARENA, 'm1');
+
+        // Backing out -16 lifts team 1 from 1016 to 1032 — using the stale
+        // +16 would have dropped them to 1000.
+        const ratingFor = (id) => tx.player.update.mock.calls.find((c) => c[0].where.id === id)[0].data.rating;
+        expect(ratingFor('w1')).toBe(1032);
+        expect(ratingFor('l1')).toBe(968);
+      });
+
+      it('reports a clean error when the match vanished while waiting for the lock', async () => {
+        const tx = makeTx({ fresh: null });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.deleteMatch(ARENA, 'm1');
+        expect(result.error).toMatch(/already removed/i);
+        expect(tx.player.update).not.toHaveBeenCalled();
       });
 
       it('reports a clean error when the row vanished mid-delete', async () => {
