@@ -50,6 +50,7 @@ import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
 import { MAX_TARGET_SCORE, MAX_LEADERBOARD_SIZE } from '@/lib/match-defaults';
 import { boardFingerprint } from '@/lib/board-fingerprint';
 import * as actions from '@/app/actions';
+import { applyMatchDeletionTx } from '@/lib/board-apply';
 
 const ARENA = 'arena_test';
 const ERR = 'denied';
@@ -728,7 +729,7 @@ describe('arena server actions — authorization', () => {
       // The tx double re-reads the match and the newest id under the lock, so
       // each test can stage what a concurrent action committed while this
       // delete queued for that lock.
-      const makeTx = ({ removed = 1, fresh = MATCH, newestId = 'm1', lastSessionResetAt = null } = {}) => ({
+      const makeTx = ({ removed = 1, fresh = MATCH, lastSessionResetAt = null } = {}) => ({
         $executeRaw: vi.fn(),
         matchPlayer: { findMany: vi.fn().mockResolvedValue(SNAPSHOTS) },
         player: { findMany: vi.fn().mockResolvedValue(RATED), update: vi.fn(), updateMany: vi.fn() },
@@ -736,7 +737,6 @@ describe('arena server actions — authorization', () => {
         arena: { findUnique: vi.fn().mockResolvedValue({ lastSessionResetAt }) },
         match: {
           findUnique: vi.fn().mockResolvedValue(fresh),
-          findFirst: vi.fn().mockResolvedValue(newestId ? { id: newestId } : null),
           deleteMany: vi.fn().mockResolvedValue({ count: removed }),
         },
       });
@@ -748,7 +748,6 @@ describe('arena server actions — authorization', () => {
           role: ROLES.OWNER,
         });
         prisma.match.findUnique.mockResolvedValue(MATCH);
-        prisma.match.findFirst.mockResolvedValue({ id: 'm1' }); // it IS the newest
       });
 
       it('undoes the finish and the fill, then removes the row', async () => {
@@ -780,14 +779,47 @@ describe('arena server actions — authorization', () => {
         expect(tx.match.deleteMany).toHaveBeenCalledWith({ where: { id: 'm1', arenaId: ARENA } });
       });
 
-      it('refuses anything but the arena\'s most recent match', async () => {
-        prisma.match.findFirst.mockResolvedValue({ id: 'm-newer' });
+      it('deletes a match that later games have followed', async () => {
+        // The point of scoping to the session rather than the newest row: a
+        // duplicate spotted at the end of the night, several games later, is
+        // the case that actually happens.
         const tx = makeTx();
         prisma.$transaction.mockImplementation(async (cb) => cb(tx));
 
         const result = await actions.deleteMatch(ARENA, 'm1');
-        expect(result.error).toMatch(/only the most recent match/i);
+        expect(result.error).toBeUndefined();
+        expect(tx.match.deleteMany).toHaveBeenCalledWith({ where: { id: 'm1', arenaId: ARENA } });
+      });
+
+      it('refuses a match from a previous session', async () => {
+        // Before the boundary its partnership contribution was already wiped
+        // by the reset, so the reversal can't be unwound cleanly.
+        requireArenaManager.mockResolvedValue({
+          user: { id: 'u1' },
+          arena: {
+            id: ARENA,
+            ownerId: 'u1',
+            targetScore: 11,
+            lastSessionResetAt: new Date('2026-08-03T00:00:00.000Z'),
+          },
+          role: ROLES.OWNER,
+        });
+
+        const result = await actions.deleteMatch(ARENA, 'm1');
+        expect(result.error).toMatch(/earlier session/i);
         expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('refuses when a session reset commits while the delete waits for the lock', async () => {
+        // `prepareNextSession` takes the same queue lock, so it can close the
+        // session between the fast-path check and the reversal.
+        const tx = makeTx({ lastSessionResetAt: new Date('2026-08-03T00:00:00.000Z') });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.deleteMatch(ARENA, 'm1');
+        expect(result.error).toMatch(/earlier session/i);
+        expect(tx.player.update).not.toHaveBeenCalled();
+        expect(tx.match.deleteMany).not.toHaveBeenCalled();
       });
 
       it('refuses a match recorded before rating deltas were stored', async () => {
@@ -810,26 +842,6 @@ describe('arena server actions — authorization', () => {
         expect(prisma.$transaction).not.toHaveBeenCalled();
       });
 
-      it('leaves partnerships alone for a match from a previous session', async () => {
-        // `prepareNextSession` wipes Partnership but keeps Match rows, so a
-        // pre-reset match has no contribution left in the current ledger. If
-        // the same pair has since been stacked this session, unbumping would
-        // eat THAT fill's count and tell matchmaking they've partnered one
-        // time fewer than they have. `gamesPlayed` is cumulative, so it still
-        // comes back out.
-        const tx = makeTx({ lastSessionResetAt: new Date('2026-08-03T00:00:00.000Z') });
-        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
-
-        const result = await actions.deleteMatch(ARENA, 'm1');
-        expect(result.error).toBeUndefined();
-        expect(tx.partnership.updateMany).not.toHaveBeenCalled();
-        expect(tx.player.updateMany).toHaveBeenCalledWith({
-          where: { id: { in: [...TEAM1, ...TEAM2] }, arenaId: ARENA, gamesPlayed: { gt: 0 } },
-          data: { gamesPlayed: { decrement: 1 } },
-        });
-        expect(tx.match.deleteMany).toHaveBeenCalled();
-      });
-
       it('unbumps partnerships for a match played since the last reset', async () => {
         const tx = makeTx({ lastSessionResetAt: new Date('2026-07-27T00:00:00.000Z') });
         prisma.$transaction.mockImplementation(async (cb) => cb(tx));
@@ -838,17 +850,23 @@ describe('arena server actions — authorization', () => {
         expect(tx.partnership.updateMany).toHaveBeenCalledTimes(2);
       });
 
-      it('refuses when a finish commits while the delete waits for the lock', async () => {
-        // The pre-lock check passed, but `endMatch` got the queue lock first
-        // and recorded a newer match. Deleting this one would now reverse a
-        // delta the newer match's ratings were computed from.
-        const tx = makeTx({ newestId: 'm-raced' });
-        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+      // `deleteMatch` refuses a pre-reset match outright, so the helper's own
+      // guard is defence in depth for any future caller — tested directly
+      // rather than left as unreachable code nobody checks.
+      it('applyMatchDeletionTx leaves partnerships alone across a session reset', async () => {
+        // A reset wipes Partnership but keeps Match rows, so a pre-reset match
+        // has no contribution left in the current ledger. Unbumping would eat
+        // a count THIS session's fills recorded. `gamesPlayed` is cumulative,
+        // so it still comes back out.
+        const tx = makeTx({ lastSessionResetAt: new Date('2026-08-03T00:00:00.000Z') });
+        await applyMatchDeletionTx(tx, ARENA, { match: MATCH });
 
-        const result = await actions.deleteMatch(ARENA, 'm1');
-        expect(result.error).toMatch(/only the most recent match/i);
-        expect(tx.player.update).not.toHaveBeenCalled();
-        expect(tx.match.deleteMany).not.toHaveBeenCalled();
+        expect(tx.partnership.updateMany).not.toHaveBeenCalled();
+        expect(tx.player.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: [...TEAM1, ...TEAM2] }, arenaId: ARENA, gamesPlayed: { gt: 0 } },
+          data: { gamesPlayed: { decrement: 1 } },
+        });
+        expect(tx.match.deleteMany).toHaveBeenCalled();
       });
 
       it('reverses the re-read delta, not the one read before the lock', async () => {

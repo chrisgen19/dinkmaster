@@ -1708,6 +1708,10 @@ export default function Arena({
               // the board is running offline.
               onEditMatch={canManage && !offline.offlineActive ? handleRequestCorrectScore : null}
               onDeleteMatch={canManage && !offline.offlineActive ? handleRequestDeleteMatch : null}
+              // Deletion is scoped to the current session, so the affordance
+              // stops where that session does rather than baiting a rejection
+              // on last week's rows.
+              deletableFrom={lastSessionResetAt}
             />
           )}
 
@@ -1932,6 +1936,17 @@ export default function Arena({
                 <span className="font-semibold">This can&apos;t be undone</span>, and the match
                 can&apos;t be re-recorded. To fix a wrong score, correct it instead.
               </p>
+              {/* Only the newest match reverses exactly; after that, ratings are
+                  adjusted by this match's own swing rather than recomputed from
+                  the history that would have been. Say so rather than let a
+                  manager infer precision that isn't there. */}
+              {matchHistory[0]?.id !== matchToDelete.id && (
+                <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                  Games have been played since. Skill ratings will be adjusted by this match&apos;s
+                  own result rather than recalculated, so they may land a point or two from where
+                  they would have been.
+                </p>
+              )}
               {deleteError && (
                 <div
                   role="alert"

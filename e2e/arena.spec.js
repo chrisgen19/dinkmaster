@@ -262,8 +262,9 @@ test.describe('arenas', () => {
   // Deleting a match must unwind everything it counted for, not just remove
   // the row. Two matches are played so the rating stays visible after the
   // delete (a player with no games shows "—"), which lets the test assert the
-  // rating returns to exactly its value before the deleted match.
-  test('a manager can delete the most recent match', async ({ page }) => {
+  // rating returns to exactly its value before the deleted match. Both rows
+  // are from this session, so both offer deletion.
+  test('a manager can delete a match from the current session', async ({ page }) => {
     await registerFreshUser(page);
     await createArenaFromDirectory(page, `Delete Arena ${Date.now()}`);
     await expect(page).toHaveURL(/\/arena\/.+/);
@@ -289,11 +290,11 @@ test.describe('arenas', () => {
     await page.getByRole('tab', { name: /Match Log/ }).click();
     const ledger = page.getByRole('tabpanel', { name: /Match Log/ });
     await expect(ledger.locator('article')).toHaveCount(2);
-    // Offered on the newest row only — the one whose rating effect can be
-    // undone exactly.
-    await expect(ledger.getByRole('button', { name: /Delete match on/ })).toHaveCount(1);
+    // Offered on every row from this session, not just the newest — deleting
+    // the duplicate you spotted three games ago is the case that happens.
+    await expect(ledger.getByRole('button', { name: /Delete match on/ })).toHaveCount(2);
 
-    await ledger.getByRole('button', { name: /Delete match on/ }).click();
+    await ledger.getByRole('button', { name: /Delete match on/ }).first().click();
     const confirm = page.getByRole('alertdialog');
     // The dialog names the match it is about to remove.
     await expect(confirm).toContainText('11');

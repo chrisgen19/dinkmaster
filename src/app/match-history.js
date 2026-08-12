@@ -59,11 +59,11 @@ export function MatchHistory({
   // /profile, /p, /u and My Stats never pass it; the arena History tab passes
   // it for managers only.
   onEditMatch = null,
-  // Optional: same contract for deleting a match. Paired with
-  // `deletableMatchId` because deletion is allowed on ONE row only (the
-  // arena's most recent), so the affordance must not appear on the rest.
+  // Optional: same contract for deleting a match. Paired with `deletableFrom`
+  // (an ISO timestamp, or null) because deletion is scoped to the current
+  // session — the affordance must not appear on rows the server would refuse.
   onDeleteMatch = null,
-  deletableMatchId = null,
+  deletableFrom = null,
 }) {
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'wins' | 'losses'
 
@@ -163,7 +163,9 @@ export function MatchHistory({
                         profileHrefFor={profileHrefFor}
                         subjectName={subjectName}
                         onEditMatch={onEditMatch}
-                        onDeleteMatch={m.id === deletableMatchId ? onDeleteMatch : null}
+                        onDeleteMatch={
+                          !deletableFrom || m.timestamp >= deletableFrom ? onDeleteMatch : null
+                        }
                       />
                     </li>
                   ))}
@@ -410,10 +412,10 @@ function MatchRow({ match, perspective, formatTime, profileHrefFor = null, subje
               </svg>
             </button>
           )}
-          {/* Delete is offered on the newest row only (the caller decides via
-              `deletableMatchId`), because that's the only one whose rating
-              effect can be undone exactly. Rose on hover, not by default —
-              it's destructive, but it shouldn't shout from every row. */}
+          {/* Offered on rows from the current session (the caller decides via
+              `deletableFrom`); older ones are refused server-side, so showing
+              the button there would only bait a rejection. Rose on hover, not
+              by default — it's destructive, but it shouldn't shout. */}
           {onDeleteMatch && (
             <button
               type="button"
