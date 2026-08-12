@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { e2eDatabaseUrl } from './e2e/e2e-database.js';
 
 // Let context.route() intercept requests issued BY the service worker.
 // Without this, aborting/offlining page requests leaves SW-initiated fetches
@@ -14,11 +15,15 @@ process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = '1';
  * server can never exercise precache, the offline fallback shell, or
  * anything SW-driven. Slower to boot (full build), so it's a separate
  * config with its own script: `pnpm test:e2e:offline`.
+ *
+ * Shares the dev-server config's throwaway database and global setup, so
+ * neither suite writes to the database you develop against.
  */
 export default defineConfig({
   testDir: './e2e',
   // Only the offline specs; the dev-server config ignores this same glob.
   testMatch: '**/offline-*.spec.js',
+  globalSetup: './e2e/global-setup.js',
   timeout: 60_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,
@@ -38,6 +43,11 @@ export default defineConfig({
     // sign-up/sign-in calls as cross-origin.
     command: 'pnpm build && PORT=3021 BETTER_AUTH_URL=http://localhost:3021 pnpm start',
     url: 'http://localhost:3021',
+    // Its OWN e2e database, not the development one and not the dev-server
+    // suite's — global setup empties whichever database it prepares, so a
+    // shared one would let a concurrent run wipe this one mid-test. `pnpm
+    // start` runs `migrate deploy` against it too, a no-op after setup.
+    env: { DATABASE_URL: e2eDatabaseUrl('e2e_offline') },
     // Never reuse a server here, unlike the dev config. This command REBUILDS
     // into .next, so a leftover server from an interrupted run would keep
     // serving a precache manifest whose hashed chunks the new build just

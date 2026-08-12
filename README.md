@@ -76,7 +76,7 @@ Both thresholds are **per-arena settings** (`Arena.starveThreshold` / `Arena.eme
 | `pnpm db:studio` | Open Prisma Studio |
 | `pnpm test` | Run Vitest unit/integration tests |
 | `pnpm test:watch` | Vitest in watch mode |
-| `pnpm test:e2e` | Run Playwright e2e tests (starts a dev server) |
+| `pnpm test:e2e` | Run Playwright e2e tests (starts its own dev server on 3022, against a throwaway database) |
 | `pnpm test:e2e:offline` | Run the offline/PWA e2e specs against a production build (service worker is disabled in dev) |
 | `pnpm pwa:icons` | Regenerate the PWA icon set from `public/icons/icon-source.png` |
 
@@ -84,7 +84,9 @@ Both thresholds are **per-arena settings** (`Arena.starveThreshold` / `Arena.eme
 
 - **Vitest** — unit/integration tests co-located as `src/**/*.test.js`. `src/app/actions.test.js` verifies every mutating Server Action is auth-gated (Prisma and the session helper are mocked, so no database is needed).
 - **Playwright** — e2e specs in `e2e/`. `e2e/auth.spec.js` covers the `/register` and `/login` happy and failure paths against a real dev server and database. First run needs the browser: `pnpm exec playwright install chromium`.
-- **Offline/PWA e2e**: `e2e/offline-session.spec.js` runs via a separate config (`pnpm test:e2e:offline`) that builds and starts a **production** server, because the service worker is disabled under `pnpm dev`. It covers the full offline round trip (run offline, reload into the fallback shell, reconnect, sync), the flaky-network hold notice, and divergence resolution. It uses its own port (3021) and never reuses a running server, so it can't attach to a stale dev server or a leftover build. The default `pnpm test:e2e` ignores these specs.
+- **e2e never touches your development database.** Both configs run against a throwaway one, derived from `DATABASE_URL` by suffixing the name (`dinkmaster_e2e` for `pnpm test:e2e`, `dinkmaster_e2e_offline` for the offline config, so the two can run at once); set `E2E_DATABASE_URL` to point elsewhere. `e2e/global-setup.js` creates it on first run, migrates it, and **empties it before every run**, so the suite can never be slowed by its own history. A failed run leaves its rows behind for inspection — they're cleared on the way in, not on the way out.
+- **Ports are deliberately separate**: `pnpm dev` owns 3020, `pnpm test:e2e` starts its own server on 3022, and the offline config uses 3021. Neither suite reuses a running server. A reused dev server would hold the *development* database connection and whatever modules it compiled before your last edit, so the run would either write to the wrong database or test stale code — both of which look like product bugs rather than setup mistakes.
+- **Offline/PWA e2e**: `e2e/offline-session.spec.js` runs via a separate config (`pnpm test:e2e:offline`) that builds and starts a **production** server, because the service worker is disabled under `pnpm dev`. It covers the full offline round trip (run offline, reload into the fallback shell, reconnect, sync), the flaky-network hold notice, and divergence resolution. It uses its own port (3021) and never reuses a running server, so it can't attach to a stale dev server or a leftover build, and it shares the throwaway e2e database described above. The default `pnpm test:e2e` ignores these specs.
 
 ## Progressive Web App (PWA)
 
