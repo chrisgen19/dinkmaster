@@ -103,9 +103,27 @@ export function canonicalBoardString(state, settings) {
   // hash: replaying a batch that forked from "winners went last" onto a server
   // that says "losers went last" alternates the wrong way.
   const deckMode = settings.splitDeckByResult === true;
-  const rules = deckMode
+  const withDeck = deckMode
     ? `${withPairing}|d1${state.lastDeckFilled ? `|k${state.lastDeckFilled}` : ''}`
     : withPairing;
+
+  // Organizer pins decide WHICH FOUR a deck stacks — they beat the natural
+  // W/L split for their slot — so a device that forked from a differently
+  // pinned board would replay a different court. Hashed here rather than as a
+  // per-player field for the reason spelled out above: appending to the player
+  // line would change the hash of every unchanged board and report a phantom
+  // divergence for every offline session in flight across the deploy. Absence
+  // encodes "nothing pinned", which is every pre-feature board.
+  //
+  // `locked` rides along because it decides whether a challenge exists at all,
+  // and `resolveDeckChallenge` replays against that.
+  const pins = deckMode
+    ? [...state.players]
+        .filter((p) => p.draftedDeck === 'W' || p.draftedDeck === 'L')
+        .sort((a, b) => (a.id < b.id ? -1 : 1))
+        .map((p) => `${p.id}:${p.draftedDeck}${bit(p.draftedLocked)}`)
+    : [];
+  const rules = pins.length > 0 ? `${withDeck}|n${pins.join(',')}` : withDeck;
 
   return `p:${players}\nq:${queue}\nc:${courts}\nh:${partnerships}\ns:${rules}`;
 }

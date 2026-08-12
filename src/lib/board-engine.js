@@ -1,6 +1,16 @@
 import { ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
 import { bestMatchups, rankMatchups, recentResults } from '@/lib/pairing';
-import { DECK_LOSE, DECK_WIN, bucketFor, deckOf, nextDeck, splitDecks } from '@/lib/decks';
+import {
+  DECK_LOSE,
+  DECK_WIN,
+  assembleDeck,
+  bucketFor,
+  deckChallenge,
+  deckOf,
+  nextDeck,
+  pinnedIn,
+  splitDecks,
+} from '@/lib/decks';
 import { RATING_BASELINE, computeMatchRatings } from '@/lib/rating';
 import { validateMatchScore } from '@/lib/scoring';
 import { diffLineup, validateLineup } from '@/lib/court-lineup';
@@ -41,6 +51,9 @@ export const OFFLINE_COMMANDS = [
   'editCourtLineup',
   'endMatch',
   'skipPlayer',
+  'pinToDeck',
+  'unpinFromDeck',
+  'resolveDeckChallenge',
 ];
 
 // User-facing failure copy, kept identical to the messages the online server
@@ -55,6 +68,25 @@ const MSG_EDIT_QUEUE_CHANGED = 'A chosen player is no longer available — the r
 const MSG_EDIT_INVALID_LINEUP = 'Pick exactly four different players, two per team.';
 const MSG_REPLACEMENT_GONE = 'That replacement is no longer available. Pick again.';
 const MSG_REPLACEMENT_ON_DECK = 'That player is already on deck — pick a waiting paddle.';
+const MSG_PIN_INVALID = 'That paddle can no longer be added to this deck. Please try again.';
+
+/** Retiring a pin always clears both columns. Mirrors `CLEAR_PIN` server-side. */
+const CLEAR_PIN = { draftedDeck: null, draftedLocked: false };
+
+/**
+ * The organizer's deck pins, in the map `@/lib/decks` consumes. Read off the
+ * player rows so an offline board assembles its decks exactly as the server
+ * would, and a synced replay lands on the same four.
+ */
+function pinsOf(state) {
+  const pins = new Map();
+  for (const p of state.players ?? []) {
+    if (p.draftedDeck === DECK_WIN || p.draftedDeck === DECK_LOSE) {
+      pins.set(p.id, { deck: p.draftedDeck, locked: Boolean(p.draftedLocked) });
+    }
+  }
+  return pins;
+}
 
 const defaultMakeId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 
@@ -209,11 +241,23 @@ function applyFillCourt(state, settings, event) {
   filled.forEach((id) => {
     const p = playerById(state, id);
     patches[id] = { gamesPlayed: p.gamesPlayed + 1, waitRounds: 0, skipBoosted: false };
+    // Only touch the pin columns on a paddle that actually carries a pin, so
+    // an unpinned board's player rows keep the exact shape they arrived with.
+    if (p.draftedDeck) patches[id] = { ...patches[id], ...CLEAR_PIN };
   });
   remaining.forEach((id) => {
     const p = playerById(state, id);
     patches[id] = { waitRounds: p.waitRounds + 1 };
   });
+  // Retire the stacked deck's remaining pins, and ONLY that deck's — the other
+  // deck's placements are still unspent. Server twin in `applyFillCourtTx`.
+  if (deckMode && outcome.deck) {
+    remaining.forEach((id) => {
+      if (playerById(state, id)?.draftedDeck === outcome.deck) {
+        patches[id] = { ...patches[id], ...CLEAR_PIN };
+      }
+    });
+  }
 
   // Slot snapshots let cancelFill restore the exact pre-fill rack state.
   const snapshotFor = (id) => ({
@@ -637,6 +681,78 @@ function sameMembers(a, b) {
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * Pin a racked paddle into a short win/lose deck. Deterministic, so the event
+ * carries no outcome; validated here exactly as `applyPinToDeckTx` validates
+ * it server-side, so a replayed batch reaches the same board.
+ */
+function applyPinToDeck(state, settings, event) {
+  const { playerId, deck } = event.payload;
+  if (settings?.splitDeckByResult !== true) return { error: MSG_PIN_INVALID };
+  if (deck !== DECK_WIN && deck !== DECK_LOSE) return { error: MSG_PIN_INVALID };
+  if (!state.queue.includes(playerId)) return { error: MSG_PIN_INVALID };
+
+  const pins = pinsOf(state);
+  const decks = splitDecks(state.queue, sessionResults(state, state.queue));
+  const onDeck = new Set([
+    ...assembleDeck(DECK_WIN, state.queue, decks, pins).four,
+    ...assembleDeck(DECK_LOSE, state.queue, decks, pins).four,
+  ]);
+  if (onDeck.has(playerId)) return { error: MSG_PIN_INVALID };
+  if (assembleDeck(deck, state.queue, decks, pins).four.length >= ON_DECK_SIZE) {
+    return { error: MSG_PIN_INVALID };
+  }
+
+  return {
+    state: {
+      ...state,
+      players: patchPlayers(state.players, {
+        [playerId]: { draftedDeck: deck, draftedLocked: false },
+      }),
+    },
+    changed: true,
+  };
+}
+
+/** Take a hand-placed paddle back out of its deck. Always legal, idempotent. */
+function applyUnpinFromDeck(state, event) {
+  const { playerId } = event.payload;
+  if (!playerById(state, playerId)?.draftedDeck) return { state, changed: false };
+  return {
+    state: { ...state, players: patchPlayers(state.players, { [playerId]: { ...CLEAR_PIN } }) },
+    changed: true,
+  };
+}
+
+/**
+ * Answer the pin-vs-winner contest: `yieldIds` are unpinned, everything still
+ * pinned in that deck is locked so the question isn't re-asked. Mirrors
+ * `applyResolveDeckChallengeTx`.
+ */
+function applyResolveDeckChallenge(state, settings, event) {
+  const { deck, yieldIds } = event.payload;
+  if (settings?.splitDeckByResult !== true) return { state, changed: false };
+  const ids = Array.isArray(yieldIds) ? yieldIds : [];
+
+  const pins = pinsOf(state);
+  const decks = splitDecks(state.queue, sessionResults(state, state.queue));
+  const challenge = deckChallenge(deck, state.queue, decks, pins);
+  // A stale answer is dropped rather than errored: the contest it referred to
+  // is already gone, so there is nothing left to get wrong.
+  if (!challenge) return { state, changed: false };
+  const offered = new Set(challenge.pins);
+  if (ids.length > challenge.challengers.length || !ids.every((id) => offered.has(id))) {
+    return { state, changed: false };
+  }
+
+  const patches = {};
+  for (const id of ids) patches[id] = { ...CLEAR_PIN };
+  for (const id of pinnedIn(deck, state.queue, pins)) {
+    if (!ids.includes(id)) patches[id] = { draftedLocked: true };
+  }
+  return { state: { ...state, players: patchPlayers(state.players, patches) }, changed: true };
+}
+
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -669,6 +785,12 @@ export function applyEvent(state, settings, event) {
       return applyEndMatch(state, settings, event);
     case 'skipPlayer':
       return applySkipPlayer(state, settings, event);
+    case 'pinToDeck':
+      return applyPinToDeck(state, settings, event);
+    case 'unpinFromDeck':
+      return applyUnpinFromDeck(state, event);
+    case 'resolveDeckChallenge':
+      return applyResolveDeckChallenge(state, settings, event);
     default:
       return { error: `Unknown offline event type: ${event.type}` };
   }
@@ -756,7 +878,7 @@ export function resolveCommand(state, settings, command, opts = {}) {
       const picked =
         manual ??
         (deckMode
-          ? nextDeck(state.queue, results, state.lastDeckFilled ?? null)
+          ? nextDeck(state.queue, results, state.lastDeckFilled ?? null, pinsOf(state))
           : { deck: null, players: state.queue.slice(0, 4) });
       const filled = picked.players;
       const ranked = rankMatchups(filled, {
@@ -845,6 +967,25 @@ export function resolveCommand(state, settings, command, opts = {}) {
           replacementId: command.replacementId ?? null,
           isManager: Boolean(command.isManager),
         },
+        outcome: null,
+      };
+      break;
+    // The three deck-pin commands are fully deterministic — the organizer names
+    // the paddle and the deck — so none of them records an outcome.
+    case 'pinToDeck':
+      event = {
+        ...base,
+        payload: { playerId: command.playerId, deck: command.deck },
+        outcome: null,
+      };
+      break;
+    case 'unpinFromDeck':
+      event = { ...base, payload: { playerId: command.playerId }, outcome: null };
+      break;
+    case 'resolveDeckChallenge':
+      event = {
+        ...base,
+        payload: { deck: command.deck, yieldIds: command.yieldIds ?? [] },
         outcome: null,
       };
       break;

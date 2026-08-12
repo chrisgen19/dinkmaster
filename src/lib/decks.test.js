@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   DECK_LOSE,
   DECK_WIN,
+  assembleDeck,
   bucketFor,
+  deckChallenge,
   deckOf,
   hasTwoDecks,
   nextDeck,
@@ -158,5 +160,134 @@ describe('hasTwoDecks', () => {
 
   it('is true as soon as a recent winner is racked', () => {
     expect(hasTwoDecks(splitDecks(rack(6), res({ r3: 'W' })))).toBe(true);
+  });
+});
+
+/**
+ * Pins map from a compact spec: `{ x: 'W', y: 'L!' }`, where a trailing `!`
+ * marks the pin LOCKED (the organizer was asked and chose to keep it).
+ */
+const pin = (spec = {}) =>
+  new Map(
+    Object.entries(spec).map(([id, v]) => [
+      id,
+      { deck: v.replace('!', ''), locked: v.endsWith('!') },
+    ]),
+  );
+
+describe('assembleDeck', () => {
+  it('seats the organizer pin ahead of natural members', () => {
+    // 3 winners + a pinned loser. The pin must not be the one that falls off.
+    const queue = ['w1', 'w2', 'w3', 'x', 'l1'];
+    const decks = splitDecks(queue, res({ w1: 'W', w2: 'W', w3: 'W', x: 'L', l1: 'L' }));
+    const { four } = assembleDeck(DECK_WIN, queue, decks, pin({ x: 'W' }));
+    expect(four).toEqual(['x', 'w1', 'w2', 'w3']);
+  });
+
+  it('drops a fourth natural winner rather than the pin', () => {
+    const queue = ['w1', 'w2', 'w3', 'x', 'w4'];
+    const decks = splitDecks(queue, res({ w1: 'W', w2: 'W', w3: 'W', x: 'L', w4: 'W' }));
+    const { four } = assembleDeck(DECK_WIN, queue, decks, pin({ x: 'W' }));
+    expect(four).toEqual(['x', 'w1', 'w2', 'w3']);
+    expect(four).not.toContain('w4');
+  });
+
+  it('does not let a paddle pinned to one deck also fill the other', () => {
+    const queue = ['w1', 'x', 'l1', 'l2', 'l3', 'l4'];
+    const decks = splitDecks(queue, res({ w1: 'W', x: 'L', l1: 'L', l2: 'L', l3: 'L', l4: 'L' }));
+    const pins = pin({ x: 'W' });
+    expect(assembleDeck(DECK_WIN, queue, decks, pins).four).toEqual(['x', 'w1']);
+    // x is a natural loser but is claimed by the winners deck, so the losers
+    // deck fills from l1..l4 instead of leaving a hole where x sat.
+    expect(assembleDeck(DECK_LOSE, queue, decks, pins).four).toEqual(['l1', 'l2', 'l3', 'l4']);
+  });
+
+  it('ignores a pin for a paddle who has left the rack', () => {
+    const queue = ['w1', 'w2'];
+    const decks = splitDecks(queue, res({ w1: 'W', w2: 'W' }));
+    expect(assembleDeck(DECK_WIN, queue, decks, pin({ gone: 'W' })).four).toEqual(['w1', 'w2']);
+  });
+
+  it('is the plain front four when nothing is pinned', () => {
+    const queue = rack(6);
+    const decks = splitDecks(queue, res({ r1: 'W', r2: 'W', r3: 'W', r4: 'W', r5: 'W' }));
+    expect(assembleDeck(DECK_WIN, queue, decks, new Map()).four).toEqual(['r1', 'r2', 'r3', 'r4']);
+  });
+});
+
+describe('deckChallenge', () => {
+  /** Build queue+decks for a winners bucket of `w` and a pinned-in set. */
+  const setup = (winners, others) => {
+    const queue = [...winners, ...others];
+    const spec = Object.fromEntries([
+      ...winners.map((id) => [id, 'W']),
+      ...others.map((id) => [id, 'L']),
+    ]);
+    return { queue, decks: splitDecks(queue, res(spec)) };
+  };
+
+  it('is null while the pin displaces nobody', () => {
+    // S1 before the game ends: 3 winners + 1 pin exactly fills the deck.
+    const { queue, decks } = setup(['w1', 'w2', 'w3'], ['x', 'l1']);
+    expect(deckChallenge(DECK_WIN, queue, decks, pin({ x: 'W' }))).toBeNull();
+  });
+
+  it('offers one winner against one pin (S1)', () => {
+    const { queue, decks } = setup(['w1', 'w2', 'w3', 'w4'], ['x']);
+    expect(deckChallenge(DECK_WIN, queue, decks, pin({ x: 'W' }))).toEqual({
+      deck: DECK_WIN,
+      challengers: ['w4'],
+      pins: ['x'],
+    });
+  });
+
+  it('offers two winners against two pins when a game returns both (S3)', () => {
+    const { queue, decks } = setup(['w1', 'w2', 'w3', 'w4'], ['x', 'y']);
+    expect(deckChallenge(DECK_WIN, queue, decks, pin({ x: 'W', y: 'W' }))).toEqual({
+      deck: DECK_WIN,
+      challengers: ['w3', 'w4'],
+      pins: ['x', 'y'],
+    });
+  });
+
+  it('offers two winners against three pins, leaving the organizer to choose (S5)', () => {
+    const { queue, decks } = setup(['w1', 'w2', 'w3'], ['x', 'y', 'z']);
+    expect(deckChallenge(DECK_WIN, queue, decks, pin({ x: 'W', y: 'W', z: 'W' }))).toEqual({
+      deck: DECK_WIN,
+      challengers: ['w2', 'w3'],
+      pins: ['x', 'y', 'z'],
+    });
+  });
+
+  it('never offers more winners than there are pins able to yield', () => {
+    // Two winners displaced, but only one pin is still unlocked.
+    const { queue, decks } = setup(['w1', 'w2', 'w3', 'w4'], ['x', 'y']);
+    const challenge = deckChallenge(DECK_WIN, queue, decks, pin({ x: 'W', y: 'W!' }));
+    expect(challenge).toEqual({ deck: DECK_WIN, challengers: ['w3'], pins: ['x'] });
+  });
+
+  it('is null once every pin in the deck is locked', () => {
+    const { queue, decks } = setup(['w1', 'w2', 'w3', 'w4'], ['x']);
+    expect(deckChallenge(DECK_WIN, queue, decks, pin({ x: 'W!' }))).toBeNull();
+  });
+
+  it('is null when nothing is pinned, however the bucket grows', () => {
+    const { queue, decks } = setup(['w1', 'w2', 'w3', 'w4', 'w5'], ['l1']);
+    expect(deckChallenge(DECK_WIN, queue, decks, new Map())).toBeNull();
+  });
+
+  it('reports the losers deck the same way', () => {
+    // The same finished game returns two losers, which can contest a pin in
+    // the other deck at the very same moment.
+    const queue = ['l1', 'l2', 'l3', 'l4', 'x', 'w1'];
+    const decks = splitDecks(
+      queue,
+      res({ l1: 'L', l2: 'L', l3: 'L', l4: 'L', x: 'W', w1: 'W' }),
+    );
+    expect(deckChallenge(DECK_LOSE, queue, decks, pin({ x: 'L' }))).toEqual({
+      deck: DECK_LOSE,
+      challengers: ['l4'],
+      pins: ['x'],
+    });
   });
 });

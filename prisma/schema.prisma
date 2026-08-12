@@ -260,6 +260,15 @@ model Player {
   // top priority on return". The next auto-mix sorts them above the emergency
   // band, then clears the flag. See `Arena.skipRestoresPriority`.
   skipBoosted Boolean  @default(false)
+  // Win/lose decks: the organizer hand-placed this paddle into a deck that was
+  // short of four ("W" | "L" | null). AUTHORITATIVE over the natural W/L
+  // split — a real winner turning up does not silently take the slot back, it
+  // raises a challenge the organizer answers (see `deckChallenge` in
+  // src/lib/decks.js). Cleared when the deck stacks or the paddle leaves the
+  // rack. `draftedLocked` records "keep my pick" so the same question is not
+  // re-asked every time another winner lands.
+  draftedDeck   String?
+  draftedLocked Boolean @default(false)
   rating      Int      @default(1000) // Elo skill rating (Phase 6); displayed DUPR-style. Per-arena.
   leftAt      DateTime? // null = active; set = the member left/was removed (row kept for history)
 

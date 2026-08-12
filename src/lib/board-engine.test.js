@@ -82,6 +82,9 @@ describe('OFFLINE_COMMANDS', () => {
       'editCourtLineup',
       'endMatch',
       'skipPlayer',
+      'pinToDeck',
+      'unpinFromDeck',
+      'resolveDeckChallenge',
     ]);
   });
 });

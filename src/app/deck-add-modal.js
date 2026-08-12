@@ -15,10 +15,11 @@ import { PlayerSearchField } from './player-search-field';
  * deck. Topping up a short deck must not break a group that was ready to play
  * to patch one that wasn't; that would just move the hole.
  *
- * The pick is a CLIENT-SIDE staging choice held by the arena page until the
- * deck is stacked: nobody's recorded result changes, and abandoning it (or a
- * reload) simply drops it. The server re-validates every id against the live
- * rack under the queue lock.
+ * The pick is written to the board, not staged locally: every manager's rack
+ * assembles the same four and a reload can't quietly undo a placement. Nobody's
+ * recorded result changes — a pin only decides who goes on court next. The
+ * server re-validates the id against the live rack under the queue lock, and
+ * the pin retires when its deck stacks or the paddle leaves the rack.
  *
  * Chrome and conventions match {@link SkipPickerModal} — portal, Esc-to-close,
  * iOS scroll lock, name search, selection held locally and confirmed by the

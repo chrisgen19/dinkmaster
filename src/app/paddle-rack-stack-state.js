@@ -7,7 +7,7 @@
 // from here, while the single source of truth lives in @/lib/matchmaking
 // (shared with the fillCourt / skipPlayer server actions).
 import { ON_DECK_SIZE } from '@/lib/matchmaking';
-import { DECK_LOSE, DECK_WIN } from '@/lib/decks';
+import { DECK_LOSE, DECK_WIN, assembleDeck } from '@/lib/decks';
 import { profileHref } from '@/lib/player-display';
 
 export { ON_DECK_SIZE };
@@ -98,34 +98,22 @@ export function deriveRackRow(
 }
 
 /**
- * Drop hand-added paddles who are no longer on the rack.
+ * Build the pins map `@/lib/decks` consumes from the player rows getState
+ * ships. Pins are board state now, not client staging, so there is nothing to
+ * prune here: `pinnedIn` ignores a pin for anyone off the rack, and the server
+ * clears the row outright the moment a paddle is stacked or checked out.
  *
- * A draft is staging for ONE stack, but the ids live in client state, and
- * nothing about a player going onto a court removes them. Left alone, a paddle
- * added to the winners deck plays their game and then reappears in that deck —
- * still flagged "Added" — the moment they return to the rack, as though the
- * organizer had picked them a second time. Same for a paddle taken off the
- * rack entirely.
- *
- * Note this deliberately does NOT clear a draft merely because some other four
- * went on court: those paddles are still racked and the organizer's staging
- * still stands, and since they didn't play, their W/L hasn't changed either.
- *
- * Returns the SAME object when nothing needs dropping, so callers can use it as
- * a render-time state adjustment without looping.
- *
- * @param {{W: string[], L: string[]}} drafted
- * @param {string[]} queue - the current rack
- * @returns {{W: string[], L: string[]}}
+ * @param {Array<{id:string, draftedDeck?:'W'|'L'|null, draftedLocked?:boolean}>} players
+ * @returns {Map<string, {deck:'W'|'L', locked:boolean}>}
  */
-export function pruneDrafted(drafted, queue) {
-  const racked = new Set(queue);
-  const stale = (ids) => ids.some((id) => !racked.has(id));
-  if (!stale(drafted.W) && !stale(drafted.L)) return drafted;
-  return {
-    W: drafted.W.filter((id) => racked.has(id)),
-    L: drafted.L.filter((id) => racked.has(id)),
-  };
+export function pinsFromPlayers(players) {
+  const pins = new Map();
+  for (const p of players ?? []) {
+    if (p?.draftedDeck === DECK_WIN || p?.draftedDeck === DECK_LOSE) {
+      pins.set(p.id, { deck: p.draftedDeck, locked: Boolean(p.draftedLocked) });
+    }
+  }
+  return pins;
 }
 
 /**
@@ -145,12 +133,18 @@ export function pruneDrafted(drafted, queue) {
  * watching it fill is how a manager knows the next stack is coming. Empty
  * sections are dropped.
  *
- * A short deck can also be topped up by hand (`drafted`): the organizer picks
+ * A short deck can also be topped up by hand (`pins`): the organizer picks
  * anyone still racked to fill its empty slots, so a session with only two
- * recent winners can still send a "winners" court out. Drafted paddles are
- * shown in the deck they were added to and removed from wherever they came
- * from, so nobody appears twice. The draft is a CLIENT-SIDE staging choice for
- * one stack — it never changes anyone's recorded result.
+ * recent winners can still send a "winners" court out. Pinned paddles are
+ * shown in the deck they were placed in and removed from wherever they came
+ * from, so nobody appears twice. A pin never changes anyone's recorded result;
+ * it only decides which four go on court next.
+ *
+ * Pins WIN their slot. When a real winner turns up and the deck is full of
+ * hand-placed paddles, the winner waits and the organizer is asked (see
+ * `deckChallenge`) rather than the rack quietly swapping them in. Rows are
+ * drawn in true rack order regardless of how the four were assembled, so the
+ * position badges still read as a countdown.
  *
  * @param {string[]} queue - rack order, index 0 = front
  * @param {object} [opts]
@@ -161,17 +155,16 @@ export function pruneDrafted(drafted, queue) {
  * @param {Map<string, 'W'|'L'|null>} [opts.results] - each player's most recent
  *   result (from `recentResults`), surfaced per row as `lastResult` for the
  *   W/L chip. Independent of deck mode — every arena shows it.
- * @param {{W: string[], L: string[]}} [opts.drafted] - player ids hand-added to
- *   each deck, in the order they were picked
- * @returns {Array<{key:string, label:string, deck:'W'|'L'|null, accent:boolean, isNext:boolean, short:number, canStack:boolean, rows:Array<{playerId:string, rackIndex:number, bucketIndex:number, bucketLength:number, lastResult:'W'|'L'|null, isDrafted:boolean}>}>}
+ * @param {Map<string, {deck:'W'|'L', locked:boolean}>} [opts.pins] - the
+ *   organizer's hand placements, from `pinsFromPlayers`
+ * @returns {Array<{key:string, label:string, deck:'W'|'L'|null, accent:boolean, isNext:boolean, short:number, canStack:boolean, rows:Array<{playerId:string, rackIndex:number, bucketIndex:number, bucketLength:number, lastResult:'W'|'L'|null, isPinned:boolean}>}>}
  */
 export function buildRackSections(
   queue,
-  { decks = null, nextDeck = null, results = null, drafted = null } = {},
+  { decks = null, nextDeck = null, results = null, pins = null } = {},
 ) {
   const rackIndexOf = new Map(queue.map((id, i) => [id, i]));
-  const draftedIn = (deck) => (drafted?.[deck] ?? []).filter((id) => rackIndexOf.has(id));
-  const row = (playerId, bucket, isDrafted = false) => ({
+  const row = (playerId, bucket, isPinned = false) => ({
     playerId,
     rackIndex: rackIndexOf.get(playerId),
     bucketIndex: bucket.indexOf(playerId),
@@ -179,7 +172,7 @@ export function buildRackSections(
     // `null` for a player with no game this session — no chip, rather than a
     // chip that says "nothing yet".
     lastResult: results?.get(playerId) ?? null,
-    isDrafted,
+    isPinned,
   });
   const section = (key, label, rows, opts = {}) => ({
     key,
@@ -205,39 +198,38 @@ export function buildRackSections(
     ];
   }
 
-  // Each deck's four = its natural members, then whoever was drafted into it,
-  // capped at a court. A drafted paddle is claimed by exactly one deck, so it
-  // can't also appear in its natural spot or in Waiting.
-  const claimed = new Set([...draftedIn(DECK_WIN), ...draftedIn(DECK_LOSE)]);
-  const deckFour = (deck) => {
-    const natural = (deck === DECK_WIN ? decks.winnersDeck : decks.losersDeck).filter(
-      (id) => !claimed.has(id),
-    );
-    return [...natural, ...draftedIn(deck)].slice(0, ON_DECK_SIZE);
-  };
-  const winnersFour = deckFour(DECK_WIN);
-  const losersFour = deckFour(DECK_LOSE);
+  // Each deck's four = the organizer's pins, then natural members filling what
+  // is left (see `assembleDeck`). A pinned paddle is claimed by exactly one
+  // deck, so it can't also appear in its natural spot or in Waiting.
+  const pinnedIn = (deck) => queue.filter((id) => pins?.get(id)?.deck === deck);
+  const winnersFour = assembleDeck(DECK_WIN, queue, decks, pins).four;
+  const losersFour = assembleDeck(DECK_LOSE, queue, decks, pins).four;
 
   const onDeckIds = new Set([...winnersFour, ...losersFour]);
   const waiting = queue.filter((id) => !onDeckIds.has(id));
   // A waiting paddle's bucket is still its OWN deck — that's what decides
   // whether it can skip and who would replace it.
   const bucketOf = (id) => (decks.winners.includes(id) ? decks.winners : decks.losers);
-  const isDrafted = (id, deck) => draftedIn(deck).includes(id);
 
   const deckSection = (deck, key, label, four) =>
     section(
       key,
       label,
-      four.map((id) => {
-        // A drafted paddle is measured against the ASSEMBLED four, not their
-        // natural bucket: they are on deck now (so the row reads as on-deck,
-        // which is what a manager sees), and a four-long bucket means they
-        // can't skip — the organizer takes them back out with the row's ✕
-        // instead, which is the reversal that actually makes sense here.
-        const drafted = isDrafted(id, deck);
-        return row(id, drafted ? four : bucketOf(id), drafted);
-      }),
+      // Drawn in rack order, not selection order: `assembleDeck` puts pins
+      // first because they win their slots, but a manager reading the position
+      // badges is counting down the real rack, so #7 must not be listed above
+      // #1 just because #7 was hand-placed.
+      [...four]
+        .sort((a, b) => rackIndexOf.get(a) - rackIndexOf.get(b))
+        .map((id, i, sorted) => {
+          // A pinned paddle is measured against the ASSEMBLED four, not their
+          // natural bucket: they are on deck now (so the row reads as on-deck,
+          // which is what a manager sees), and a four-long bucket means they
+          // can't skip — the organizer takes them back out with the row's ✕
+          // instead, which is the reversal that actually makes sense here.
+          const pinned = pins?.get(id)?.deck === deck;
+          return row(id, pinned ? sorted : bucketOf(id), pinned);
+        }),
       {
         deck,
         accent: true,
@@ -247,7 +239,7 @@ export function buildRackSections(
         // reached four on its own is stacked from the court card, on the
         // rotation's turn. Without this every full deck would sprout a button
         // that bypasses the alternation.
-        canStack: four.length === ON_DECK_SIZE && draftedIn(deck).length > 0,
+        canStack: four.length === ON_DECK_SIZE && pinnedIn(deck).length > 0,
       },
     );
 

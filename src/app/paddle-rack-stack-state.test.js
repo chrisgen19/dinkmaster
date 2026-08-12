@@ -5,7 +5,7 @@ import {
   fullName,
   initials,
   ON_DECK_SIZE,
-  pruneDrafted,
+  pinsFromPlayers,
 } from './paddle-rack-stack-state';
 import { splitDecks } from '@/lib/decks';
 
@@ -199,34 +199,32 @@ describe('deriveRackRow — win/lose decks', () => {
   });
 });
 
-describe('pruneDrafted', () => {
-  it('forgets a hand-added paddle once they leave the rack', () => {
-    // The reported bug: a paddle added to the winners deck goes on court, the
-    // game ends, they return — and drop straight back into that deck flagged
-    // "Added", as though the organizer picked them a second time. Dropping the
-    // id when they leave is what stops it coming back with them.
-    const drafted = { W: ['ben', 'ana'], L: [] };
-    expect(pruneDrafted(drafted, ['ana', 'cai'])).toEqual({ W: ['ana'], L: [] });
+/** Pins map for `deck`, from a list of ids. `id!` marks the pin locked. */
+const pinned = (deck, ids) =>
+  new Map(
+    ids.map((raw) => [
+      raw.replace('!', ''),
+      { deck, locked: raw.endsWith('!') },
+    ]),
+  );
+
+describe('pinsFromPlayers', () => {
+  it('keeps only real pins and carries the lock through', () => {
+    const pins = pinsFromPlayers([
+      { id: 'a', draftedDeck: 'W', draftedLocked: true },
+      { id: 'b', draftedDeck: 'L' },
+      { id: 'c', draftedDeck: null },
+      { id: 'd' },
+      { id: 'e', draftedDeck: 'w' },
+    ]);
+    expect([...pins.keys()]).toEqual(['a', 'b']);
+    expect(pins.get('a')).toEqual({ deck: 'W', locked: true });
+    expect(pins.get('b')).toEqual({ deck: 'L', locked: false });
   });
 
-  it('prunes both decks', () => {
-    const drafted = { W: ['gone-w'], L: ['gone-l', 'here'] };
-    expect(pruneDrafted(drafted, ['here'])).toEqual({ W: [], L: ['here'] });
-  });
-
-  it('returns the SAME object when nothing is stale', () => {
-    // Identity matters: the caller adjusts state during render, so a fresh
-    // object every time would loop forever.
-    const drafted = { W: ['ana'], L: ['ben'] };
-    expect(pruneDrafted(drafted, ['ana', 'ben', 'cai'])).toBe(drafted);
-    expect(pruneDrafted({ W: [], L: [] }, [])).not.toBeUndefined();
-  });
-
-  it('keeps a draft when some OTHER four went on court', () => {
-    // Those paddles are still racked, so the organizer's staging still stands —
-    // and since they didn't play, their W/L hasn't changed either.
-    const drafted = { W: ['ben'], L: [] };
-    expect(pruneDrafted(drafted, ['ben', 'cai', 'dev'])).toBe(drafted);
+  it('is empty for a board that has never pinned anyone', () => {
+    expect(pinsFromPlayers([{ id: 'a' }]).size).toBe(0);
+    expect(pinsFromPlayers(undefined).size).toBe(0);
   });
 });
 
@@ -291,18 +289,18 @@ describe('buildRackSections', () => {
     it('fills the empty slots with the drafted paddles', () => {
       const [winners] = buildRackSections(six, {
         decks: sixDecks,
-        drafted: { W: ['l3', 'l4'] },
+        pins: pinned('W', ['l3', 'l4']),
       });
       expect(winners.rows.map((r) => r.playerId)).toEqual(['w1', 'w2', 'l3', 'l4']);
       expect(winners.short).toBe(0);
-      expect(winners.rows.map((r) => r.isDrafted)).toEqual([false, false, true, true]);
+      expect(winners.rows.map((r) => r.isPinned)).toEqual([false, false, true, true]);
     });
 
     it('takes the drafted paddles out of the deck they came from', () => {
       // l3 and l4 were in the losers deck; they must not appear twice.
       const [winners, losers] = buildRackSections(six, {
         decks: sixDecks,
-        drafted: { W: ['l3', 'l4'] },
+        pins: pinned('W', ['l3', 'l4']),
       });
       expect(losers.rows.map((r) => r.playerId)).toEqual(['l1', 'l2']);
       const everyone = [...winners.rows, ...losers.rows].map((r) => r.playerId);
@@ -312,7 +310,7 @@ describe('buildRackSections', () => {
     it('takes them out of Waiting too', () => {
       const eight = [...six, 'l5', 'l6'];
       const decks = splitDecks(eight, new Map(eight.map((id) => [id, id[0] === 'w' ? 'W' : 'L'])));
-      const sections = buildRackSections(eight, { decks, drafted: { W: ['l5', 'l6'] } });
+      const sections = buildRackSections(eight, { decks, pins: pinned('W', ['l5', 'l6']) });
       const waiting = sections.find((s) => s.key === 'waiting');
       expect(waiting).toBeUndefined();
     });
@@ -321,12 +319,38 @@ describe('buildRackSections', () => {
       const short = buildRackSections(six, { decks: sixDecks })[0];
       expect(short.canStack).toBe(false);
 
-      const partly = buildRackSections(six, { decks: sixDecks, drafted: { W: ['l3'] } })[0];
+      const partly = buildRackSections(six, { decks: sixDecks, pins: pinned('W', ['l3']) })[0];
       expect(partly.short).toBe(1);
       expect(partly.canStack).toBe(false);
 
-      const full = buildRackSections(six, { decks: sixDecks, drafted: { W: ['l3', 'l4'] } })[0];
+      const full = buildRackSections(six, { decks: sixDecks, pins: pinned('W', ['l3', 'l4']) })[0];
       expect(full.canStack).toBe(true);
+    });
+
+    it('keeps the pin and drops the fourth natural winner instead', () => {
+      // THE reported bug. A paddle hand-added to the winners deck vanished to
+      // Waiting the moment a real fourth winner turned up, because the old
+      // assembly listed naturals first and sliced the pin off the end. The
+      // winner waits; the organizer is asked (see `deckChallenge`).
+      const seven = ['w1', 'w2', 'w3', 'x', 'w4', 'l1', 'l2'];
+      const decks = splitDecks(
+        seven,
+        new Map([
+          ['w1', 'W'], ['w2', 'W'], ['w3', 'W'], ['w4', 'W'],
+          ['x', 'L'], ['l1', 'L'], ['l2', 'L'],
+        ]),
+      );
+      const [winners] = buildRackSections(seven, { decks, pins: pinned('W', ['x']) });
+      expect(winners.rows.map((r) => r.playerId)).toContain('x');
+      expect(winners.rows.map((r) => r.playerId)).not.toContain('w4');
+    });
+
+    it('draws a deck in true rack order, not the order it was assembled', () => {
+      // `assembleDeck` puts pins first because they win their slots, but the
+      // position badge counts down the real rack — #7 must not be listed above
+      // #1 just because #7 was hand-placed.
+      const [winners] = buildRackSections(six, { decks: sixDecks, pins: pinned('W', ['l4', 'l3']) });
+      expect(winners.rows.map((r) => r.rackIndex)).toEqual([0, 2, 4, 5]);
     });
 
     it('leaves a naturally full deck alone — that one stacks from the court', () => {
@@ -346,7 +370,7 @@ describe('buildRackSections', () => {
       // paddle.
       const [winners] = buildRackSections(six, {
         decks: sixDecks,
-        drafted: { W: ['l3', 'l4'] },
+        pins: pinned('W', ['l3', 'l4']),
       });
       const [, , third, fourth] = winners.rows;
       expect(third).toMatchObject({ playerId: 'l3', bucketIndex: 2, bucketLength: 4 });
@@ -356,7 +380,7 @@ describe('buildRackSections', () => {
     it('caps a deck at four however many are drafted', () => {
       const [winners] = buildRackSections(six, {
         decks: sixDecks,
-        drafted: { W: ['l1', 'l2', 'l3', 'l4'] },
+        pins: pinned('W', ['l1', 'l2', 'l3', 'l4']),
       });
       expect(winners.rows).toHaveLength(4);
     });
@@ -366,7 +390,7 @@ describe('buildRackSections', () => {
       // repaint; the slot just goes back to empty.
       const [winners] = buildRackSections(six, {
         decks: sixDecks,
-        drafted: { W: ['gone', 'l3'] },
+        pins: pinned('W', ['gone', 'l3']),
       });
       expect(winners.rows.map((r) => r.playerId)).toEqual(['w1', 'w2', 'l3']);
       expect(winners.short).toBe(1);

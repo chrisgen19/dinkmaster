@@ -54,7 +54,7 @@ function GroupLabel({ children, accent = false, className = '', trailing = null 
  * @param {{winners:string[],losers:string[],winnersDeck:string[],losersDeck:string[]}|null} props.decks - win/lose decks from `splitDecks`; null = the classic single on-deck group
  * @param {'W'|'L'|null} props.nextDeck - which deck stacks onto the next open court
  * @param {Map<string, 'W'|'L'|null>|null} props.results - how each racked player's last game went, for the W/L chip
- * @param {{W: string[], L: string[]}|null} props.drafted - paddles hand-added to each deck, staged for the next stack
+ * @param {Map<string, {deck:'W'|'L', locked:boolean}>|null} props.pins - the organizer's hand placements (board state, from `pinsFromPlayers`)
  * @param {(deck: 'W'|'L') => void} props.onAddToDeck - open the picker for an empty slot
  * @param {(deck: 'W'|'L', playerId: string) => void} props.onRemoveFromDeck - take a hand-added paddle back out
  * @param {(deck: 'W'|'L', playerIds: string[]) => void} props.onStackDeck - send a hand-completed deck to the first open court
@@ -79,7 +79,7 @@ export function PaddleRackStack({
   decks = null,
   nextDeck = null,
   results = null,
-  drafted = null,
+  pins = null,
   onAddToDeck,
   onRemoveFromDeck,
   onStackDeck,
@@ -116,7 +116,7 @@ export function PaddleRackStack({
   // Rows are grouped, not flat: one on-deck group classically, or a winners
   // and a losers deck when the arena runs `splitDeckByResult`. Each row carries
   // its true rack position, so the badge keeps counting the real rack.
-  const sections = buildRackSections(queue, { decks, nextDeck, results, drafted });
+  const sections = buildRackSections(queue, { decks, nextDeck, results, pins });
 
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -234,7 +234,7 @@ export function PaddleRackStack({
                 {section.label}
               </GroupLabel>
 
-              {section.rows.map(({ playerId, rackIndex, bucketIndex, bucketLength, lastResult, isDrafted }) => {
+              {section.rows.map(({ playerId, rackIndex, bucketIndex, bucketLength, lastResult, isPinned }) => {
             const player = players.find((p) => p.id === playerId);
             if (!player) return null;
 
@@ -344,7 +344,7 @@ export function PaddleRackStack({
                             You
                           </span>
                         )}
-                        {isDrafted && (
+                        {isPinned && (
                           // Hand-added to this deck for the next stack only —
                           // marked so it's clear this paddle isn't here on
                           // their own result, and so it can be taken back out.

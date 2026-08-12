@@ -1,6 +1,16 @@
 import { ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
 import { RECENT_MATCH_WINDOW, bestMatchups, rankMatchups, recentResults } from '@/lib/pairing';
-import { DECK_LOSE, DECK_WIN, bucketFor, deckOf, nextDeck, splitDecks } from '@/lib/decks';
+import {
+  DECK_LOSE,
+  DECK_WIN,
+  assembleDeck,
+  bucketFor,
+  deckChallenge,
+  deckOf,
+  nextDeck,
+  pinnedIn,
+  splitDecks,
+} from '@/lib/decks';
 import { computeMatchRatings } from '@/lib/rating';
 import { validateMatchScore } from '@/lib/scoring';
 import { diffLineup, validateLineup } from '@/lib/court-lineup';
@@ -171,6 +181,164 @@ export async function addArenaPlayer(tx, arenaId, { id, userId = null, firstName
 }
 
 /**
+ * Retiring a deck pin always clears BOTH columns. A lock without a pin is
+ * state the `Player_draftedLocked_requires_deck_chk` constraint refuses, and
+ * would otherwise silently suppress the next organizer's first challenge.
+ */
+const CLEAR_PIN = { draftedDeck: null, draftedLocked: false };
+
+/**
+ * Read an arena's deck pins as the map `src/lib/decks.js` consumes.
+ *
+ * Reads under whatever lock the caller holds, so a pin written by a concurrent
+ * request can't land between the rack read and the deck assembly.
+ *
+ * @returns {Promise<Map<string, {deck:'W'|'L', locked:boolean}>>}
+ */
+export async function readDeckPins(tx, arenaId) {
+  const rows = await tx.player.findMany({
+    where: { arenaId, leftAt: null, draftedDeck: { not: null } },
+    select: { id: true, draftedDeck: true, draftedLocked: true },
+  });
+  return new Map(rows.map((r) => [r.id, { deck: r.draftedDeck, locked: r.draftedLocked }]));
+}
+
+/**
+ * Pin a racked paddle into one of the win/lose decks, so a deck short of four
+ * can still send a court out.
+ *
+ * Refuses (`PIN_INVALID`) rather than silently no-op'ing when the paddle isn't
+ * racked or the deck is already at four, because both mean the organizer was
+ * looking at a board that has since moved and their tap would land somewhere
+ * they didn't intend. The pool the picker offers is WAITING paddles only —
+ * topping up a short deck must not break a group that was ready to play to
+ * patch one that wasn't — and that is re-derived here rather than trusted.
+ *
+ * @param {object} opts
+ * @param {string} opts.playerId
+ * @param {'W'|'L'} opts.deck
+ */
+export async function applyPinToDeckTx(tx, arenaId, { playerId, deck }) {
+  if (deck !== DECK_WIN && deck !== DECK_LOSE) throw new Error('PIN_INVALID');
+
+  const arena = await tx.arena.findUnique({
+    where: { id: arenaId },
+    select: { splitDeckByResult: true, lastSessionResetAt: true },
+  });
+  if (!arena?.splitDeckByResult) throw new Error('PIN_INVALID');
+
+  const queued = await tx.player.findMany({
+    where: { arenaId, leftAt: null, queueOrder: { not: null } },
+    orderBy: { queueOrder: 'asc' },
+    select: { id: true },
+  });
+  const rack = queued.map((p) => p.id);
+  if (!rack.includes(playerId)) throw new Error('PIN_INVALID');
+
+  const pins = await readDeckPins(tx, arenaId);
+  const decks = splitDecks(
+    rack,
+    recentResults(await sessionRecentMatches(tx, arenaId, arena.lastSessionResetAt), rack),
+  );
+
+  // Already on deck somewhere — either deck's four — means there is nothing to
+  // top up with this paddle.
+  const onDeck = new Set([
+    ...assembleDeck(DECK_WIN, rack, decks, pins).four,
+    ...assembleDeck(DECK_LOSE, rack, decks, pins).four,
+  ]);
+  if (onDeck.has(playerId)) throw new Error('PIN_INVALID');
+  if (assembleDeck(deck, rack, decks, pins).four.length >= ON_DECK_SIZE) {
+    throw new Error('PIN_INVALID');
+  }
+
+  // A fresh pin is never locked: the organizer hasn't been asked anything yet.
+  await tx.player.updateMany({
+    where: { id: playerId, arenaId, leftAt: null },
+    data: { draftedDeck: deck, draftedLocked: false },
+  });
+}
+
+/**
+ * Take a hand-placed paddle back out of its deck. Idempotent, and needs no
+ * validation beyond arena scope: removing a pin can only ever return the board
+ * to its natural derivation, which is always a legal state.
+ */
+export async function applyUnpinFromDeckTx(tx, arenaId, { playerId }) {
+  await tx.player.updateMany({
+    where: { id: playerId, arenaId, leftAt: null, draftedDeck: { not: null } },
+    data: CLEAR_PIN,
+  });
+}
+
+/**
+ * Answer the contest between a deck's pins and the natural members those pins
+ * displaced (see `deckChallenge` in src/lib/decks.js).
+ *
+ * `yieldIds` are the pins the organizer gave up; they are unpinned and the
+ * challengers take those slots by ordinary derivation. Everything still pinned
+ * is LOCKED, which is what stops the same question being re-asked every time
+ * another game returns a winner. An empty `yieldIds` is the "keep my picks"
+ * answer and locks the lot.
+ *
+ * Re-derives the challenge under the lock and refuses (`CHALLENGE_STALE`) if
+ * the board has moved on: the organizer is answering a question about four
+ * specific paddles, and a stale answer would unpin someone over a contest that
+ * no longer exists.
+ *
+ * @param {object} opts
+ * @param {'W'|'L'} opts.deck
+ * @param {string[]} opts.yieldIds - pinned paddles to give up, possibly empty
+ */
+export async function applyResolveDeckChallengeTx(tx, arenaId, { deck, yieldIds }) {
+  if (deck !== DECK_WIN && deck !== DECK_LOSE) throw new Error('CHALLENGE_STALE');
+  const ids = Array.isArray(yieldIds) ? yieldIds : [];
+
+  const arena = await tx.arena.findUnique({
+    where: { id: arenaId },
+    select: { splitDeckByResult: true, lastSessionResetAt: true },
+  });
+  if (!arena?.splitDeckByResult) throw new Error('CHALLENGE_STALE');
+
+  const queued = await tx.player.findMany({
+    where: { arenaId, leftAt: null, queueOrder: { not: null } },
+    orderBy: { queueOrder: 'asc' },
+    select: { id: true },
+  });
+  const rack = queued.map((p) => p.id);
+  const pins = await readDeckPins(tx, arenaId);
+  const decks = splitDecks(
+    rack,
+    recentResults(await sessionRecentMatches(tx, arenaId, arena.lastSessionResetAt), rack),
+  );
+
+  const challenge = deckChallenge(deck, rack, decks, pins);
+  if (!challenge) throw new Error('CHALLENGE_STALE');
+  // Every id must be a pin this challenge actually offered, and the organizer
+  // cannot free more slots than there are winners to seat in them.
+  const offered = new Set(challenge.pins);
+  if (ids.length > challenge.challengers.length || !ids.every((id) => offered.has(id))) {
+    throw new Error('CHALLENGE_STALE');
+  }
+
+  if (ids.length > 0) {
+    await tx.player.updateMany({
+      where: { id: { in: ids }, arenaId, leftAt: null, draftedDeck: deck },
+      data: CLEAR_PIN,
+    });
+  }
+  // Lock whatever the organizer kept — including pins they never yielded in an
+  // earlier round, which are already locked and unaffected.
+  const kept = pinnedIn(deck, rack, pins).filter((id) => !ids.includes(id));
+  if (kept.length > 0) {
+    await tx.player.updateMany({
+      where: { id: { in: kept }, arenaId, leftAt: null, draftedDeck: deck },
+      data: { draftedLocked: true },
+    });
+  }
+}
+
+/**
  * Shuffle the waiting rack. Returns whether anything actually moved (a queue
  * of fewer than two paddles is a no-op).
  *
@@ -265,10 +433,28 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome, expected
     where: { arenaId, leftAt: null, queueOrder: { not: null } },
     orderBy: { queueOrder: 'asc' },
     // `rating` feeds the closer-rated tie-break in the team split below.
-    select: { id: true, queueOrder: true, waitRounds: true, rating: true },
+    // The pin columns ride along rather than costing a second query: a pin on
+    // someone off the rack is inert anyway, so the racked rows are the whole
+    // input `assembleDeck` needs.
+    select: {
+      id: true,
+      queueOrder: true,
+      waitRounds: true,
+      rating: true,
+      draftedDeck: true,
+      draftedLocked: true,
+    },
   });
   if (queued.length < ON_DECK_SIZE) throw new Error('NOT_ENOUGH');
   const rack = queued.map((p) => p.id);
+  // The organizer's pins, derived from the rows just read rather than a second
+  // query: a pin on someone off the rack is inert, so the racked rows are the
+  // whole input `assembleDeck` needs.
+  const pins = new Map(
+    queued
+      .filter((p) => p.draftedDeck === DECK_WIN || p.draftedDeck === DECK_LOSE)
+      .map((p) => [p.id, { deck: p.draftedDeck, locked: p.draftedLocked }]),
+  );
 
   // Recent results drive BOTH the deck split and the balanced team split, so
   // one query serves both. A replayed outcome already records the four AND the
@@ -305,7 +491,10 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome, expected
     // the same deck go out twice running.
     deck = manual.deck;
   } else if (deckMode && !outcome) {
-    const picked = nextDeck(rack, recentResults(recentMatches, rack), prevDeck);
+    // Pins ride into the selection so the automatic stack sends the four the
+    // organizer assembled, not the four the natural split would have picked.
+    // Read under the same lock as the rack.
+    const picked = nextDeck(rack, recentResults(recentMatches, rack), prevDeck, pins);
     deck = picked.deck;
     players = picked.players;
   } else {
@@ -364,12 +553,34 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome, expected
 
   // Remove exactly these four from the rack; bail if any slipped away meanwhile.
   // Clear `skipBoosted` too — once a paddle is actually playing, the
-  // "Next in Line" stamp has served its purpose.
+  // "Next in Line" stamp has served its purpose. Same for a deck pin: the
+  // organizer placed them for a stack, and this is that stack.
   const dequeued = await tx.player.updateMany({
     where: { id: { in: players }, queueOrder: { not: null } },
-    data: { gamesPlayed: { increment: 1 }, queueOrder: null, waitRounds: 0, skipBoosted: false },
+    data: {
+      gamesPlayed: { increment: 1 },
+      queueOrder: null,
+      waitRounds: 0,
+      skipBoosted: false,
+      ...CLEAR_PIN,
+    },
   });
   if (dequeued.count !== ON_DECK_SIZE) throw new Error('QUEUE_CHANGED');
+
+  // Retire the rest of the stacked deck's pins. Usually a no-op — pins are
+  // seated first, so they were all in the four just dequeued — but the
+  // classic-fallback fill (`deck: null`) and a replayed outcome can stack a
+  // four that leaves one behind, and a pin whose stack has happened must not
+  // linger into the next one.
+  //
+  // Deliberately scoped to the deck that filled. The OTHER deck's pins are
+  // still valid: those paddles are all still racked, none of them played, so
+  // nothing about the organizer's placement has been spent. Clearing both was
+  // the bug that made a hand-added winner jump decks when the losers stacked.
+  const strandedPins = deckMode && deck ? pinnedIn(deck, rack, pins).filter((id) => !players.includes(id)) : [];
+  if (strandedPins.length > 0) {
+    await tx.player.updateMany({ where: { id: { in: strandedPins } }, data: CLEAR_PIN });
+  }
 
   // Everyone still waiting in this arena was skipped this round. Capture
   // exactly who gets the +1 (the four are already dequeued, so excluded) and
@@ -632,7 +843,13 @@ export async function applyEditCourtLineupTx(tx, arenaId, { courtId, team1Ids, t
     // Dequeue them onto the court (same accounting as fillCourt's dequeue).
     await tx.player.updateMany({
       where: { id: { in: diff.added } },
-      data: { gamesPlayed: { increment: 1 }, queueOrder: null, waitRounds: 0, skipBoosted: false },
+      data: {
+        gamesPlayed: { increment: 1 },
+        queueOrder: null,
+        waitRounds: 0,
+        skipBoosted: false,
+        ...CLEAR_PIN,
+      },
     });
     const addedSet = new Set(diff.added);
     if ((court.fillBumpedPlayerIds ?? []).some((id) => addedSet.has(id))) {
@@ -1163,7 +1380,7 @@ export async function applyCheckInTx(tx, arenaId, { playerId }) {
 export async function applyCheckOutTx(tx, arenaId, { playerId }) {
   await tx.player.updateMany({
     where: { id: playerId, arenaId, leftAt: null, queueOrder: { not: null } },
-    data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
+    data: { queueOrder: null, waitRounds: 0, skipBoosted: false, ...CLEAR_PIN },
   });
 }
 
@@ -1473,6 +1690,33 @@ export async function applyEventTx(tx, arenaId, settings, event, { occurredAt })
       // The client validated the pick when it recorded the event, so a gone
       // replacement here means the board diverged from the batch's base.
       if (replacementError) throw new Error('OUTCOME_MISMATCH');
+      return;
+    }
+    // Deck pins replay as themselves — the organizer named the paddle and the
+    // deck, so there is no nondeterministic choice to reproduce. A pin the
+    // server would now refuse (the paddle stacked while the device was away)
+    // is dropped rather than failing the batch: the divergence fingerprint is
+    // what catches a genuinely different board, and a spent pin is harmless.
+    case 'pinToDeck': {
+      try {
+        await applyPinToDeckTx(tx, arenaId, { playerId: payload.playerId, deck: payload.deck });
+      } catch (err) {
+        if (err?.message !== 'PIN_INVALID') throw err;
+      }
+      return;
+    }
+    case 'unpinFromDeck':
+      await applyUnpinFromDeckTx(tx, arenaId, { playerId: payload.playerId });
+      return;
+    case 'resolveDeckChallenge': {
+      try {
+        await applyResolveDeckChallengeTx(tx, arenaId, {
+          deck: payload.deck,
+          yieldIds: payload.yieldIds ?? [],
+        });
+      } catch (err) {
+        if (err?.message !== 'CHALLENGE_STALE') throw err;
+      }
       return;
     }
     default:

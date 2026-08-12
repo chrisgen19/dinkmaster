@@ -8,7 +8,7 @@ import { nextStateStamp } from '@/lib/state-freshness';
  * @param {string} arenaId - the arena whose players/courts/matches to read
  * @returns {Promise<{
  *   fetchedAt: number,
- *   players: Array<{id:string,userId:string|null,firstName:string,lastName:string|null,gamesPlayed:number,wins:number,losses:number,waitRounds:number,rating:number,skipBoosted:boolean,gamesOffset:number}>,
+ *   players: Array<{id:string,userId:string|null,firstName:string,lastName:string|null,gamesPlayed:number,wins:number,losses:number,waitRounds:number,rating:number,skipBoosted:boolean,gamesOffset:number,draftedDeck:'W'|'L'|null,draftedLocked:boolean}>,
  *   queue: string[],
  *   courts: Array<{id:string,name:string,status:string,team1:string[],team2:string[],fillBumpedPlayerIds:string[],slots:Array<{playerId:string,team:number,prevQueueOrder:number|null,prevWaitRounds:number|null}>}>,
  *   matchHistory: Array<{id:string,courtName:string,team1:Array<{id:string,firstName:string,lastName:string|null}>,team2:Array<{id:string,firstName:string,lastName:string|null}>,score1:number,score2:number,timestamp:string}>,
@@ -156,6 +156,12 @@ export async function getState(arenaId) {
       // Needed by the offline board engine: check-in re-anchors gamesOffset to
       // the group average, and auto-mix sorts by gamesPlayed + gamesOffset.
       gamesOffset: p.gamesOffset,
+      // Organizer's deck pin, and whether they have already answered a
+      // challenge for it. Board state, so every manager's rack assembles the
+      // same four and a reload doesn't quietly undo a hand placement. Always
+      // null/false for an arena not running `splitDeckByResult`.
+      draftedDeck: p.draftedDeck ?? null,
+      draftedLocked: p.draftedLocked ?? false,
     })),
     queue,
     courts: courtState,

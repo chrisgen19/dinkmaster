@@ -1157,7 +1157,7 @@ describe('arena server actions — authorization', () => {
         // The checkOut applied through the shared board-apply path.
         expect(tx.player.updateMany).toHaveBeenCalledWith({
           where: { id: 'e', arenaId: ARENA, leftAt: null, queueOrder: { not: null } },
-          data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
+          data: { queueOrder: null, waitRounds: 0, skipBoosted: false, draftedDeck: null, draftedLocked: false },
         });
         expect(tx.offlineSyncBatch.create).toHaveBeenCalledWith({
           data: {
@@ -1252,7 +1252,7 @@ describe('arena server actions — authorization', () => {
         expect(tx.player.updateMany).toHaveBeenCalledTimes(1);
         expect(tx.player.updateMany).toHaveBeenCalledWith({
           where: { id: 'e', arenaId: ARENA, leftAt: null, queueOrder: { not: null } },
-          data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
+          data: { queueOrder: null, waitRounds: 0, skipBoosted: false, draftedDeck: null, draftedLocked: false },
         });
       });
 
@@ -1473,7 +1473,7 @@ describe('arena server actions — authorization', () => {
         // and any pending skip-boost cleared.
         expect(tx.player.updateMany).toHaveBeenCalledWith({
           where: { arenaId: ARENA, leftAt: null },
-          data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
+          data: { queueOrder: null, waitRounds: 0, skipBoosted: false, draftedDeck: null, draftedLocked: false },
         });
         // Reset stamped via updateMany (count-guarded) so a concurrent delete
         // is a clean error, not an uncaught P2025.
@@ -1517,7 +1517,13 @@ describe('arena server actions — authorization', () => {
         expect(tx.courtSlot.deleteMany).not.toHaveBeenCalled();
         // The player update sets only queue/wait/boost fields — never wins/losses/rating/gamesPlayed.
         const data = tx.player.updateMany.mock.calls[0][0].data;
-        expect(data).toEqual({ queueOrder: null, waitRounds: 0, skipBoosted: false });
+        expect(data).toEqual({
+          queueOrder: null,
+          waitRounds: 0,
+          skipBoosted: false,
+          draftedDeck: null,
+          draftedLocked: false,
+        });
       });
     });
 
@@ -1591,7 +1597,7 @@ describe('arena server actions — authorization', () => {
         // the rack (or on a court) matches zero rows — a safe no-op.
         expect(tx.player.updateMany).toHaveBeenCalledWith({
           where: { id: 'p1', arenaId: ARENA, leftAt: null, queueOrder: { not: null } },
-          data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
+          data: { queueOrder: null, waitRounds: 0, skipBoosted: false, draftedDeck: null, draftedLocked: false },
         });
       });
     });
@@ -3774,7 +3780,14 @@ describe('editCourtLineup() — manual partner swap / substitution', () => {
     // Incoming dequeued exactly like fillCourt (game credited, pulled off rack).
     expect(tx.player.updateMany).toHaveBeenCalledWith({
       where: { id: { in: ['p5'] } },
-      data: { gamesPlayed: { increment: 1 }, queueOrder: null, waitRounds: 0, skipBoosted: false },
+      data: {
+        gamesPlayed: { increment: 1 },
+        queueOrder: null,
+        waitRounds: 0,
+        skipBoosted: false,
+        draftedDeck: null,
+        draftedLocked: false,
+      },
     });
     // Outgoing loses its game credit (floored).
     expect(tx.player.updateMany).toHaveBeenCalledWith({

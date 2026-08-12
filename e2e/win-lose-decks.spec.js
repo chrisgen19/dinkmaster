@@ -165,12 +165,12 @@ test.describe('win/lose decks', () => {
     await expect(page.getByRole('button', { name: /Finish Game & Record Score/ }).first()).toBeVisible();
   });
 
-  test('a hand-added paddle does not stay added across the next game', async ({ page }) => {
-    // An add stages the NEXT stack. The bug: a paddle added to a deck that
-    // never reached four — so never grew its own "Stack these 4" button —
-    // stayed flagged "Added" through every later game, because only that
-    // button cleared the staging. The organizer picked once and it looked like
-    // it kept re-picking itself.
+  test('a hand-added paddle survives another deck stacking, and a reload', async ({ page }) => {
+    // A pin is the organizer's placement, not a hint. It used to be client
+    // state cleared by ANY fill, so stacking the losers deck silently threw
+    // away a paddle hand-added to the winners deck — it dropped back to
+    // Waiting and, once the four losers left the rack, resurfaced in the
+    // Losers deck. It looked exactly like the board overruling the organizer.
     await registerAndSignIn(page);
     await createArena(page, `Sticky ${Date.now()}`);
     const arenaUrl = page.url();
@@ -187,20 +187,54 @@ test.describe('win/lose decks', () => {
     await dialog.getByRole('button', { name: 'Add to deck' }).click();
     await expect(dialog).toHaveCount(0);
 
-    await expect(page.getByRole('button', { name: /Remove .* from this deck/ }).first()).toBeVisible();
+    const pinBadge = page.getByRole('button', { name: /Remove .* from this deck/ });
+    await expect(pinBadge.first()).toBeVisible();
     await expect(page.getByText('needs 1 more').first()).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Stack the winners deck/ })).toHaveCount(0);
 
-    // Stack the next court the ordinary way, from the court card. That button
-    // sends the AUTOMATIC four and ignores the staging entirely — so the
-    // staging is spent, and must not survive into the next game.
+    // Stack the next court the ordinary way, from the court card — which on
+    // this board's alternation takes the OTHER deck. The pin must not care.
     await page.getByRole('button', { name: /^Stack /, exact: false }).first().click();
     await expect(page.getByText('4 in rack').first()).toBeVisible();
+    await expect(pinBadge).toHaveCount(1);
 
-    // Asserted here, before the game is scored: once results land, deck
-    // membership shifts on its own and would mask the flag for the wrong
-    // reason. The added paddle is still racked — only the staging is gone.
-    await expect(page.getByRole('button', { name: /Remove .* from this deck/ })).toHaveCount(0);
+    // And it is board state, so it is still there after a reload — the old
+    // client-side draft evaporated here.
+    await page.reload();
+    await expect(pinBadge).toHaveCount(1);
+  });
+
+  test('asks before giving a hand-added slot to a real winner', async ({ page }) => {
+    // The rack must never swap a pinned paddle out on its own. When a finished
+    // game returns a winner who would otherwise be on deck, the organizer is
+    // asked which pin (if any) yields.
+    await registerAndSignIn(page);
+    await createArena(page, `Challenge ${Date.now()}`);
+    const arenaUrl = page.url();
+
+    await addWalkIns(page, ['Ana', 'Ben', 'Cai', 'Dev', 'Eve', 'Fay', 'Gus']);
+    await enableDeckMode(page, arenaUrl);
+    await playAGame(page, 8);
+
+    await page.getByRole('button', { name: 'Add a paddle to the winners deck' }).first().click();
+    const dialog = page.getByRole('dialog', { name: 'Add to Winners' });
+    await dialog.getByRole('listitem').first().getByRole('button').click();
+    await dialog.getByRole('button', { name: 'Add to deck' }).click();
+    await expect(dialog).toHaveCount(0);
+
+    // A second game returns two more winners, who now contest the pin.
+    await playAGame(page, 8);
+
+    const challenge = page.getByRole('dialog', { name: /available/ });
+    await expect(challenge).toBeVisible();
+
+    // Keeping the pick leaves the deck exactly as the organizer built it, and
+    // does not ask again after the next game.
+    await challenge.getByRole('button', { name: /^Keep/ }).click();
+    await expect(challenge).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Remove .* from this deck/ })).toHaveCount(1);
+
+    await playAGame(page, 8);
+    await expect(page.getByRole('dialog', { name: /available/ })).toHaveCount(0);
   });
 
   test('never offers a paddle who is already on the other deck', async ({ page }) => {

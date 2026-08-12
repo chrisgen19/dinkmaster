@@ -32,8 +32,11 @@ import {
   applyFillCourtTx,
   applyMatchDeletionTx,
   applyMatchReversalTx,
+  applyPinToDeckTx,
+  applyResolveDeckChallengeTx,
   applyShuffleQueueTx,
   applySkipPlayerTx,
+  applyUnpinFromDeckTx,
   bumpPartnership,
   groupAverageMetric,
   lockQueue,
@@ -129,7 +132,15 @@ async function removeArenaMember(tx, arenaId, userId) {
     // kept so the user's record survives and a rejoin reclaims it.
     await tx.player.update({
       where: { id: player.id },
-      data: { leftAt: new Date(), queueOrder: null, waitRounds: 0, skipBoosted: false },
+      data: {
+        leftAt: new Date(),
+        queueOrder: null,
+        waitRounds: 0,
+        skipBoosted: false,
+        // A pin dies with the paddle's place on the rack.
+        draftedDeck: null,
+        draftedLocked: false,
+      },
     });
   }
   await tx.arenaMembership.deleteMany({
@@ -776,6 +787,85 @@ export async function fillCourt(arenaId, courtId, expectedPlayerIds, manualFour)
 }
 
 /**
+ * Pin a racked paddle into a short win/lose deck, so a "winners" court can go
+ * out with only two recent winners on the rack. Manager-only.
+ *
+ * The pin is board state, not a client hint: every manager's rack assembles
+ * the same four, and it survives a reload. It is also AUTHORITATIVE — a real
+ * winner arriving later does not take the slot back on their own; that raises
+ * a challenge for the organizer to answer (see {@link resolveDeckChallenge}).
+ */
+export async function pinToDeck(arenaId, playerId, deck) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockQueue(tx, arenaId);
+      await applyPinToDeckTx(tx, arenaId, { playerId, deck });
+    });
+  } catch (err) {
+    if (err?.message === 'PIN_INVALID') {
+      return {
+        error: 'That paddle can no longer be added to this deck. Please try again.',
+        state: await getState(arenaId),
+      };
+    }
+    throw err;
+  }
+
+  return { state: await getState(arenaId) };
+}
+
+/**
+ * Take a hand-placed paddle back out of its deck (the row's ✕). Manager-only.
+ * Idempotent: unpinning only ever returns the deck to its natural derivation.
+ */
+export async function unpinFromDeck(arenaId, playerId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+    await applyUnpinFromDeckTx(tx, arenaId, { playerId });
+  });
+
+  return { state: await getState(arenaId) };
+}
+
+/**
+ * Answer the contest between a deck's pins and the natural members they
+ * displaced: `yieldIds` are the pins the organizer gave up (empty = keep them
+ * all). Manager-only.
+ *
+ * Everything still pinned afterwards is locked, so the same question is not
+ * re-asked each time another finished game returns a winner.
+ */
+export async function resolveDeckChallenge(arenaId, deck, yieldIds) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  const ids = Array.isArray(yieldIds)
+    ? yieldIds.filter((id) => typeof id === 'string' && id.length > 0)
+    : [];
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockQueue(tx, arenaId);
+      await applyResolveDeckChallengeTx(tx, arenaId, { deck, yieldIds: ids });
+    });
+  } catch (err) {
+    // The rack moved while the modal was open — another manager stacked the
+    // deck, the winner got skipped, the pin was removed. Repaint and let the
+    // question re-derive rather than acting on an answer to a stale board.
+    if (err?.message === 'CHALLENGE_STALE') return { state: await getState(arenaId) };
+    throw err;
+  }
+
+  return { state: await getState(arenaId) };
+}
+
+/**
  * Cancel a live court's fill: send its four players back to the FRONT of the
  * rack in their original relative order and undo every side effect of
  * {@link fillCourt}, WITHOUT recording a match or touching wins/losses/Elo.
@@ -1377,7 +1467,16 @@ export async function prepareNextSession(arenaId) {
     await tx.partnership.deleteMany({ where: { arenaId } });
     await tx.player.updateMany({
       where: { arenaId, leftAt: null },
-      data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
+      data: {
+        queueOrder: null,
+        waitRounds: 0,
+        skipBoosted: false,
+        // A new session empties the rack, so last session's deck placements go
+        // with it — otherwise a pin would silently hold a slot on a board full
+        // of players who have not played yet.
+        draftedDeck: null,
+        draftedLocked: false,
+      },
     });
     const updated = await tx.arena.updateMany({
       where: { id: arenaId },

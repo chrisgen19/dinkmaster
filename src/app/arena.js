@@ -9,6 +9,9 @@ import {
   skipPlayer,
   shuffleQueue,
   fillCourt,
+  pinToDeck,
+  resolveDeckChallenge,
+  unpinFromDeck,
   cancelFill,
   editCourtLineup,
   endMatch,
@@ -21,7 +24,16 @@ import {
   prepareNextSession,
 } from './actions';
 import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT, ON_DECK_SIZE } from '@/lib/matchmaking';
-import { bucketFor, deckOf, hasTwoDecks, nextDeck, splitDecks } from '@/lib/decks';
+import {
+  DECK_LOSE,
+  DECK_WIN,
+  bucketFor,
+  deckChallenge,
+  deckOf,
+  hasTwoDecks,
+  nextDeck,
+  splitDecks,
+} from '@/lib/decks';
 import { recentResults } from '@/lib/pairing';
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE, DEFAULT_SHOW_PARTNERSHIP_MATRIX } from '@/lib/match-defaults';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
@@ -52,7 +64,8 @@ import { ArenaCourtsPanel } from './arena-courts-panel';
 import { CourtEditModal } from './court-edit-modal';
 import { SkipPickerModal } from './skip-picker-modal';
 import { DeckAddModal } from './deck-add-modal';
-import { buildRackSections, pruneDrafted } from './paddle-rack-stack-state';
+import { DeckChallengeModal } from './deck-challenge-modal';
+import { buildRackSections, pinsFromPlayers } from './paddle-rack-stack-state';
 import { ScoreEntryModal } from './score-entry-modal';
 import { ArenaThisWeek } from './arena-this-week';
 import { ArenaSessionPrepBanner } from './arena-session-prep-banner';
@@ -476,31 +489,11 @@ export default function Arena({
   // page-level banner would be hidden behind the modal's backdrop.
   const [skipPickerSkippedId, setSkipPickerSkippedId] = useState(null);
   const [skipPickerError, setSkipPickerError] = useState('');
-  // Paddles the organizer has hand-added to a short win/lose deck, staged for
-  // the next stack. Deliberately client-side and un-persisted: it is a staging
-  // choice about ONE fill, not a fact about the player, so it never changes
-  // anyone's recorded result and a reload simply drops it. Which deck's picker
-  // is open (`deckPickerFor`) is null when closed.
-  const [drafted, setDrafted] = useState({ W: [], L: [] });
+  // Which deck's add-picker is open; null when closed. The placements
+  // themselves are no longer client state — they live on the player rows and
+  // arrive with every board payload, so both managers' racks assemble the same
+  // four and a reload can't quietly undo one.
   const [deckPickerFor, setDeckPickerFor] = useState(null);
-
-  // React 19 "adjust state during render" pattern, as used for the rack's
-  // expanded row: forget anyone who has left the rack, so a hand-added paddle
-  // can't be pulled onto a court and then reappear in that deck — still
-  // flagged "Added" — when the game ends. Safe from loops: `pruneDrafted`
-  // returns the same object when there is nothing to drop, so the next render
-  // skips this branch.
-  const prunedDrafted = pruneDrafted(drafted, queue);
-  if (prunedDrafted !== drafted) setDrafted(prunedDrafted);
-
-  /**
-   * Forget every hand-added paddle. An add stages the NEXT stack, so once ANY
-   * stack happens that opportunity has passed — otherwise a player added to a
-   * deck that never reached four (so never grew its own "Stack these 4"
-   * button) stayed flagged "Added" through every subsequent game, looking as
-   * though the organizer kept re-picking them.
-   */
-  const clearDrafts = () => setDrafted({ W: [], L: [] });
 
   const [activeTab, setActiveTab] = useState('courts');
 
@@ -687,15 +680,36 @@ export default function Arena({
     return hasTwoDecks(split) ? split : null;
   }, [deckResults, queue]);
 
+  // The organizer's hand placements, straight off the board payload rather
+  // than local state — so the deck a manager assembled survives a reload and
+  // shows up identically on a co-organizer's board.
+  const pins = useMemo(() => pinsFromPlayers(players), [players]);
+
+  // The contest a pin has created: a paddle who belongs in this deck by result
+  // but has no slot, because a hand-placed paddle holds it. Derived from board
+  // state rather than fired by the score-record action, so it is correct
+  // whatever caused it (a game finishing here, another manager's fill, a
+  // sub-out) and self-heals if the challenger is gone by the time it renders.
+  //
+  // One deck at a time: a single finished game returns two winners AND two
+  // losers, so both decks can be contested at the same instant. Winners first,
+  // then the losers prompt re-derives on the next render.
+  const challenge = useMemo(() => {
+    if (!decks || !canManage) return null;
+    return (
+      deckChallenge(DECK_WIN, queue, decks, pins) ?? deckChallenge(DECK_LOSE, queue, decks, pins)
+    );
+  }, [decks, queue, pins, canManage]);
+
   // The four that stack next, and which deck they came from. Recomputed from
   // the same rule as the server so the `expected` guard on `fillCourt` carries
   // the manager's real claim about who they were looking at.
   const upNext = useMemo(
     () =>
       deckResults
-        ? nextDeck(queue, deckResults, lastDeckFilled)
+        ? nextDeck(queue, deckResults, lastDeckFilled, pins)
         : { deck: null, players: queue.slice(0, ON_DECK_SIZE) },
-    [deckResults, queue, lastDeckFilled],
+    [deckResults, queue, lastDeckFilled, pins],
   );
 
   // The deck to NAME in the UI. Only once the rack is actually drawn as two
@@ -712,12 +726,12 @@ export default function Arena({
   const deckAddCandidates = useMemo(() => {
     if (!deckPickerFor || !decks) return [];
     const onDeck = new Set(
-      buildRackSections(queue, { decks, drafted })
+      buildRackSections(queue, { decks, pins })
         .filter((s) => s.deck)
         .flatMap((s) => s.rows.map((r) => r.playerId)),
     );
     return queue.filter((id) => !onDeck.has(id));
-  }, [deckPickerFor, decks, drafted, queue]);
+  }, [deckPickerFor, decks, pins, queue]);
 
   // The pool a skipped paddle's replacement must come from — its own deck when
   // the arena runs them, otherwise the whole rack. Mirrors the bucket
@@ -1026,9 +1040,6 @@ export default function Arena({
 
   const handleFillCourt = (courtId) => {
     if (!canManage) return;
-    // This button stacks the AUTOMATIC four, ignoring any staging — so the
-    // staging is spent either way and must not linger into the next game.
-    clearDrafts();
     if (offline.offlineActive) return runLocalCommand({ type: 'fillCourt', courtId });
     // Send the four THIS render is showing as up next — the top of the rack,
     // or the front of whichever deck the alternation has reached — so the
@@ -1054,22 +1065,34 @@ export default function Arena({
   const handleConfirmDeckAdd = (playerId) => {
     const deck = deckPickerFor;
     if (!deck || !playerId) return;
-    setDrafted((prev) => {
-      // A paddle belongs to at most one deck, so adding to one removes it from
-      // the other — the rack must never show the same person twice.
-      const other = deck === 'W' ? 'L' : 'W';
-      return {
-        ...prev,
-        [deck]: prev[deck].includes(playerId) ? prev[deck] : [...prev[deck], playerId],
-        [other]: prev[other].filter((id) => id !== playerId),
-      };
-    });
     setDeckPickerFor(null);
+    // A pin is board state, so it goes to the server: every manager's rack
+    // assembles the same four, and a reload doesn't quietly undo a placement
+    // the organizer made. The server re-derives eligibility under the queue
+    // lock (still racked, deck still short, not already on deck elsewhere).
+    if (offline.offlineActive) {
+      return runLocalCommand({ type: 'pinToDeck', playerId, deck });
+    }
+    run(() => pinToDeck(arenaId, playerId, deck));
   };
 
   const handleRemoveFromDeck = (deck, playerId) => {
     if (!canManage) return;
-    setDrafted((prev) => ({ ...prev, [deck]: prev[deck].filter((id) => id !== playerId) }));
+    if (offline.offlineActive) return runLocalCommand({ type: 'unpinFromDeck', playerId });
+    run(() => unpinFromDeck(arenaId, playerId));
+  };
+
+  /**
+   * Answer the pin-vs-winner contest. `yieldIds` are the pins the organizer
+   * gave up; an empty array is "keep my picks", which locks them so the same
+   * question isn't re-asked after every subsequent game.
+   */
+  const handleResolveDeckChallenge = (yieldIds) => {
+    if (!canManage || !challenge) return;
+    if (offline.offlineActive) {
+      return runLocalCommand({ type: 'resolveDeckChallenge', deck: challenge.deck, yieldIds });
+    }
+    run(() => resolveDeckChallenge(arenaId, challenge.deck, yieldIds));
   };
 
   const handleStackDeck = (deck, playerIds) => {
@@ -1082,9 +1105,9 @@ export default function Arena({
       setErrorMsg('No open court to stack onto. Finish a game first.');
       return;
     }
-    // Clear ALL staging, not just this deck's: the stack these were staged for
-    // has happened, and a refused fill repaints the rack from the server anyway.
-    clearDrafts();
+    // The server retires this deck's pins as part of the fill, and leaves the
+    // other deck's alone — those paddles are still racked and none of them
+    // played, so nothing about that placement has been spent.
     if (offline.offlineActive) {
       return runLocalCommand({
         type: 'fillCourt',
@@ -1804,7 +1827,7 @@ export default function Arena({
             decks={decks}
             nextDeck={upNextLabel}
             results={rackResults}
-            drafted={drafted}
+            pins={pins}
             onAddToDeck={handleAddToDeck}
             onRemoveFromDeck={handleRemoveFromDeck}
             onStackDeck={handleStackDeck}
@@ -2013,7 +2036,7 @@ export default function Arena({
             decks={decks}
             nextDeck={upNextLabel}
             results={rackResults}
-            drafted={drafted}
+            pins={pins}
             onAddToDeck={handleAddToDeck}
             onRemoveFromDeck={handleRemoveFromDeck}
             onStackDeck={handleStackDeck}
@@ -2147,9 +2170,24 @@ export default function Arena({
         />
       )}
 
+      {/* The pin-vs-winner contest. Rendered ahead of the add picker: if a
+          challenge is open the organizer answers that before staging more,
+          otherwise the two dialogs would stack on top of each other. */}
+      {mounted && challenge && (
+        <DeckChallengeModal
+          key={`${challenge.deck}:${challenge.pins.join(',')}:${challenge.challengers.join(',')}`}
+          deck={challenge.deck}
+          challengers={challenge.challengers}
+          pins={challenge.pins}
+          players={displayPlayers}
+          isPending={isPending}
+          onResolve={handleResolveDeckChallenge}
+        />
+      )}
+
       {/* Add-to-deck picker: fills an empty slot on a short win/lose deck.
-          Purely client-side staging until the deck is stacked. */}
-      {mounted && deckPickerFor && decks && (
+          The placement is written to the board, not staged locally. */}
+      {mounted && !challenge && deckPickerFor && decks && (
         <DeckAddModal
           deck={deckPickerFor}
           players={displayPlayers}
