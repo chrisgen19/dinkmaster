@@ -832,6 +832,22 @@ export async function applyMatchReversalTx(tx, arenaId, { match, rescore }) {
  * touches the rack or the courts: the four went back to the rack when the
  * match finished and may be mid-game elsewhere by now.
  *
+ * KNOWN LIMITS (tracked in #167). Both come from the same gap: a `Match`
+ * records WHEN it was played, not where it sits in the chain of mutations
+ * that produced the current ratings and partnership counts.
+ *
+ *   - A participant whose rating was BLENDED by `linkPlayerToMember` after
+ *     this match no longer holds a rating this delta can be subtracted from.
+ *     Blending a one-game 1016 row into a nine-game 1000 row gives 1002;
+ *     deleting the match then lands on 986 instead of the 1000 it should.
+ *     The roster check can't see it — the merge only drops a `MatchPlayer`
+ *     row when BOTH players were in the same match. Bounded by the delta.
+ *   - The partnership guard below compares the match's FINISH time to the
+ *     session boundary, but the bump it reverses happened at FILL time.
+ *     `prepareNextSession` leaves live courts playing, so a fill from before
+ *     a reset can finish after it — its bump already wiped, yet the match
+ *     reads as this session's. Costs one pairing count.
+ *
  * @param {object} opts
  * @param {object} opts.match - the `Match` row, including `ratingDelta`.
  * @throws {Error} `NO_RATING_DELTA` / `INCOMPLETE_ROSTER` — see
