@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { e2eDatabaseUrl, databaseName } from './e2e-database.js';
 
 /**
@@ -12,9 +12,22 @@ import { e2eDatabaseUrl, databaseName } from './e2e-database.js';
  */
 
 const DEV = 'postgres://user:pw@localhost:5432/dinkmaster';
+const TOUCHED = ['DATABASE_URL', 'E2E_DATABASE_URL', 'E2E_OFFLINE_DATABASE_URL'];
+
+/**
+ * Stop `.env` from repopulating what a test just deleted.
+ *
+ * `e2eDatabaseUrl` loads `.env` on every call — deliberately, so an override
+ * written there works — and a normal checkout has `DATABASE_URL` in it. So
+ * `delete process.env.DATABASE_URL` alone does NOT produce an unconfigured
+ * environment: the next call reads it straight back off disk.
+ */
+function withoutDotEnv() {
+  vi.spyOn(process, 'loadEnvFile').mockImplementation(() => {});
+}
 
 describe('e2eDatabaseUrl()', () => {
-  const saved = { ...process.env };
+  const saved = Object.fromEntries(TOUCHED.map((k) => [k, process.env[k]]));
 
   beforeEach(() => {
     delete process.env.E2E_DATABASE_URL;
@@ -23,7 +36,16 @@ describe('e2eDatabaseUrl()', () => {
   });
 
   afterEach(() => {
-    process.env = { ...saved };
+    // Restored key by key, NOT by reassigning `process.env`. Assigning to it
+    // replaces Node's live environment object with a plain one, after which
+    // `process.loadEnvFile` writes stop showing up in `process.env` — which
+    // silently made the two tests below pass for the wrong reason, and only
+    // when the whole file ran in order.
+    for (const key of TOUCHED) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+    vi.restoreAllMocks();
   });
 
   it('suffixes the development database name', () => {
@@ -78,6 +100,7 @@ describe('e2eDatabaseUrl()', () => {
     });
 
     it('does not block when there is no development database to compare against', () => {
+      withoutDotEnv();
       delete process.env.DATABASE_URL;
       process.env.E2E_DATABASE_URL = 'postgres://user:pw@localhost:5432/anything';
       expect(() => e2eDatabaseUrl()).not.toThrow();
@@ -85,6 +108,7 @@ describe('e2eDatabaseUrl()', () => {
   });
 
   it('explains itself when nothing is configured', () => {
+    withoutDotEnv();
     delete process.env.DATABASE_URL;
     expect(() => e2eDatabaseUrl()).toThrow(/DATABASE_URL/);
   });
