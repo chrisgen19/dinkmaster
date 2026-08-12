@@ -24,6 +24,10 @@ export default defineConfig({
   // Only the offline specs; the dev-server config ignores this same glob.
   testMatch: '**/offline-*.spec.js',
   globalSetup: './e2e/global-setup.js',
+  // Same reasoning as the dev-server config: `trace: 'on-first-retry'` below
+  // is dead config without a retry, and these specs are the ones whose
+  // failures are hardest to reconstruct after the fact.
+  retries: 1,
   timeout: 60_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,
@@ -47,7 +51,19 @@ export default defineConfig({
     // suite's — global setup empties whichever database it prepares, so a
     // shared one would let a concurrent run wipe this one mid-test. `pnpm
     // start` runs `migrate deploy` against it too, a no-op after setup.
-    env: { DATABASE_URL: e2eDatabaseUrl('e2e_offline') },
+    // Its own override var too, so pointing one suite elsewhere can't
+    // silently collapse both onto the same database.
+    env: {
+      DATABASE_URL: e2eDatabaseUrl({
+        suffix: 'e2e_offline',
+        overrideVar: 'E2E_OFFLINE_DATABASE_URL',
+      }),
+      // Its own build directory too, so this config's production build can't
+      // overwrite the `.next` your dev server is serving from — which used to
+      // mean an offline run left `pnpm dev` handing out chunks the build had
+      // just deleted.
+      NEXT_DIST_DIR: '.next-e2e-offline',
+    },
     // Never reuse a server here, unlike the dev config. This command REBUILDS
     // into .next, so a leftover server from an interrupted run would keep
     // serving a precache manifest whose hashed chunks the new build just

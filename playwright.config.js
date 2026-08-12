@@ -15,11 +15,12 @@ export default defineConfig({
   // disabled in dev) and run via playwright.offline.config.js instead.
   testIgnore: '**/offline-*.spec.js',
   globalSetup: './e2e/global-setup.js',
-  // 60s, not 30: this config never reuses a running server (see below), so the
-  // first spec to touch a route pays `next dev`'s on-demand compilation. The
-  // old 30s budget left almost no headroom for that once a spec did any real
-  // work, which is how a slow directory page turned into a "flaky" suite.
-  timeout: 60_000,
+  // 90s, not the old 30s. This config never reuses a running server and builds
+  // into its own directory (see below), so the first run after a fresh
+  // checkout compiles every route from cold — measured, that pushed the
+  // heaviest specs past a 60s budget while a `pnpm dev` server competed for
+  // the machine. Later runs reuse `.next-e2e` and finish well inside it.
+  timeout: 90_000,
   // Generous expect timeout: the first navigation to a route in `next dev`
   // triggers on-demand compilation, which can exceed the 5s default.
   expect: { timeout: 15_000 },
@@ -52,6 +53,12 @@ export default defineConfig({
     env: {
       DATABASE_URL: e2eDatabaseUrl(),
       BETTER_AUTH_URL: 'http://localhost:3022',
+      // Its own build directory, which is what actually lets this server
+      // coexist with `pnpm dev`: Next refuses a second `next dev` for the
+      // same project directory whatever port it is given. Also keeps the two
+      // compilation caches apart, so neither can serve the other's stale
+      // modules. See `distDir` in next.config.mjs.
+      NEXT_DIST_DIR: '.next-e2e',
     },
   },
 });
