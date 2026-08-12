@@ -682,6 +682,131 @@ export async function applyEndMatchTx(tx, arenaId, { courtId, s1, s2, outcome, o
 }
 
 /**
+ * Undo a recorded match's effect on its four participants' records, then
+ * (optionally) re-apply it under a new outcome. The reversal half is what a
+ * winner-flipping correction and a match deletion both need.
+ *
+ * Elo comes back out via the stored `Match.ratingDelta`:
+ * `computeMatchRatings` is zero-sum with a fixed K and both teammates share
+ * their team's move, so subtracting the delta from team 1 and adding it to
+ * team 2 is the exact inverse of the finish — integer arithmetic, no rounding
+ * drift, no replay.
+ *
+ * EXACTNESS: the ratings this restores are the true pre-match ones when the
+ * match is the last those four played, which is the ordinary case (a swapped
+ * scoreline gets noticed immediately). If they have played since, the result
+ * is their current rating minus this match's contribution — a principled,
+ * still zero-sum adjustment rather than the ratings history would have
+ * produced. Elo is path-dependent; nothing short of a full replay recovers
+ * that, and a replay cannot survive the rating blending a player merge does
+ * (see `linkPlayerToMember`).
+ *
+ * @param {object} opts
+ * @param {object} opts.match - the `Match` row, including `ratingDelta`.
+ * @param {{s1: number, s2: number}} [opts.rescore] - the corrected scoreline.
+ *   Omitted reverses only, leaving the four as if the match never counted.
+ * @returns {Promise<{ratingDelta: number|null}>} the delta now in force
+ *   (`null` when the match was reversed and not re-applied).
+ * @throws {Error} `NO_RATING_DELTA` when the match predates the column, so its
+ *   Elo effect was never recorded and cannot be recovered.
+ * @throws {Error} `INCOMPLETE_ROSTER` when the snapshot no longer resolves to
+ *   two live players a side — a merge can delete a duplicate participant row
+ *   (see `linkPlayerToMember`), and reversing a partial roster would move some
+ *   ratings and not others.
+ */
+export async function applyMatchReversalTx(tx, arenaId, { match, rescore }) {
+  if (match.ratingDelta === null || match.ratingDelta === undefined) {
+    throw new Error('NO_RATING_DELTA');
+  }
+
+  const snapshots = await tx.matchPlayer.findMany({
+    where: { matchId: match.id },
+    select: { playerId: true, team: true },
+  });
+  const ids = snapshots.map((mp) => mp.playerId);
+  // Departed players keep their row (`leftAt` set), so they still reverse
+  // correctly; only a genuinely missing row breaks the arithmetic.
+  const players = await tx.player.findMany({
+    where: { id: { in: ids }, arenaId },
+    select: { id: true, rating: true },
+  });
+  const ratingOf = new Map(players.map((p) => [p.id, p.rating]));
+
+  const team1 = snapshots.filter((mp) => mp.team === 1).map((mp) => mp.playerId);
+  const team2 = snapshots.filter((mp) => mp.team === 2).map((mp) => mp.playerId);
+  if (team1.length !== 2 || team2.length !== 2 || players.length !== 4) {
+    throw new Error('INCOMPLETE_ROSTER');
+  }
+
+  // Back out this match's swing to recover the ratings it was computed from.
+  const before = new Map([
+    ...team1.map((id) => [id, ratingOf.get(id) - match.ratingDelta]),
+    ...team2.map((id) => [id, ratingOf.get(id) + match.ratingDelta]),
+  ]);
+
+  let nextDelta = null;
+  if (rescore) {
+    const next = computeMatchRatings({
+      team1: [before.get(team1[0]), before.get(team1[1])],
+      team2: [before.get(team2[0]), before.get(team2[1])],
+      outcome: rescore.s1 > rescore.s2 ? 1 : rescore.s2 > rescore.s1 ? 2 : 0,
+    });
+    nextDelta = next.team1[0] - before.get(team1[0]);
+  }
+
+  for (const id of team1) {
+    await tx.player.update({
+      where: { id },
+      data: { rating: before.get(id) + (nextDelta ?? 0) },
+    });
+  }
+  for (const id of team2) {
+    await tx.player.update({
+      where: { id },
+      data: { rating: before.get(id) - (nextDelta ?? 0) },
+    });
+  }
+
+  // Win/loss counters. The finish banked one apiece only for a decided match,
+  // so a reversal of a (legacy) tie has nothing to take back. Decrements are
+  // guarded by `gt: 0` — the same defence `applyCancelFillTx` uses — so a
+  // counter that was already reconciled by hand can't go negative.
+  const oldWinners = match.score1 > match.score2 ? team1 : match.score2 > match.score1 ? team2 : null;
+  const oldLosers = oldWinners === null ? null : oldWinners === team1 ? team2 : team1;
+  if (oldWinners) {
+    await tx.player.updateMany({
+      where: { id: { in: oldWinners }, wins: { gt: 0 } },
+      data: { wins: { decrement: 1 } },
+    });
+    await tx.player.updateMany({
+      where: { id: { in: oldLosers }, losses: { gt: 0 } },
+      data: { losses: { decrement: 1 } },
+    });
+  }
+
+  const newWinners = !rescore
+    ? null
+    : rescore.s1 > rescore.s2
+      ? team1
+      : rescore.s2 > rescore.s1
+        ? team2
+        : null;
+  if (newWinners) {
+    const newLosers = newWinners === team1 ? team2 : team1;
+    await tx.player.updateMany({
+      where: { id: { in: newWinners } },
+      data: { wins: { increment: 1 } },
+    });
+    await tx.player.updateMany({
+      where: { id: { in: newLosers } },
+      data: { losses: { increment: 1 } },
+    });
+  }
+
+  return { ratingDelta: nextDelta };
+}
+
+/**
  * Silo-Buster auto-mix: re-sort the whole waiting rack by fairness band, wait,
  * games, then a random tie-break, and consume any `skipBoosted` flags.
  * Returns whether anything was mixed. Throws `ARENA_GONE` when the arena was

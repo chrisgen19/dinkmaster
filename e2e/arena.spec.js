@@ -49,6 +49,22 @@ async function teamNames(page, label) {
   return (await list.locator('li').allInnerTexts()).map((s) => s.trim());
 }
 
+/**
+ * The viewer's own DUPR rating for this arena, read from the My Stats tab.
+ *
+ * Coupled to arena-mystats.js: the "This arena · DUPR" tile renders its label
+ * above the value, so the value is the eyebrow's next sibling. Everyone starts
+ * at 1000 Elo, which maps to 3.500.
+ */
+async function myDupr(page) {
+  await page.getByRole('tab', { name: /My Stats/ }).click();
+  const value = page
+    .locator('xpath=//p[normalize-space(text())="This arena · DUPR"]/following-sibling::p[1]')
+    .first();
+  await expect(value).toBeVisible();
+  return Number((await value.innerText()).trim());
+}
+
 test.describe('arenas', () => {
   test('a signed-in user can create an arena and manage it', async ({ page }) => {
     await registerFreshUser(page);
@@ -229,17 +245,53 @@ test.describe('arenas', () => {
     await expect(page.getByRole('textbox', { name: 'Team A score' })).toHaveValue('11');
     await expect(page.getByRole('textbox', { name: 'Team B score' })).toHaveValue('5');
 
-    // Flipping the winner is refused in place; the dialog stays open.
-    await page.getByRole('textbox', { name: 'Team A score' }).fill('5');
-    await page.getByRole('textbox', { name: 'Team B score' }).fill('11');
-    await page.getByRole('button', { name: 'Save Correction' }).click();
-    await expect(page.getByRole('dialog').getByRole('alert')).toContainText(/changes who won/i);
-
     // A winner-preserving correction lands in the ledger.
     await page.getByRole('textbox', { name: 'Team A score' }).fill('11');
     await page.getByRole('textbox', { name: 'Team B score' }).fill('9');
     await page.getByRole('button', { name: 'Save Correction' }).click();
     await expect(page.getByRole('dialog')).toBeHidden();
     await expect(ledger.getByText('9', { exact: true })).toBeVisible();
+  });
+
+  // The scores-in-the-wrong-boxes correction: the whole result inverts, which
+  // means reversing the Elo the finish banked (see `applyMatchReversalTx`).
+  // Ratings are asserted through the leaderboard's DUPR column, since that is
+  // where a manager would notice a bad reversal.
+  test('a manager can correct a match whose winner was entered backwards', async ({ page }) => {
+    await registerFreshUser(page);
+    await createArenaFromDirectory(page, `Flip Arena ${Date.now()}`);
+    await expect(page).toHaveURL(/\/arena\/.+/);
+
+    await addWalkIns(page, ['Ana', 'Ben', 'Cai']);
+    await page.getByRole('button', { name: /Stack Next 4 Paddles/ }).first().click();
+
+    await page.getByRole('button', { name: /Finish Game & Record Score/ }).first().click();
+    await page.getByRole('textbox', { name: 'Team A score' }).fill('11');
+    await page.getByRole('textbox', { name: 'Team B score' }).fill('5');
+    await page.getByRole('button', { name: 'Save Score' }).click();
+    await expect(page.getByText('4 in rack').first()).toBeVisible();
+
+    // Everyone started level at 3.500, so the owner (auto-added as paddle #1,
+    // hence always one of the four) has now moved off it in one direction.
+    const ratingBefore = await myDupr(page);
+    expect(ratingBefore).not.toBeCloseTo(3.5, 3);
+
+    await page.getByRole('tab', { name: /Match Log/ }).click();
+    const ledger = page.getByRole('tabpanel', { name: /Match Log/ });
+    await ledger.getByRole('button', { name: /Correct score for/ }).first().click();
+    await page.getByRole('textbox', { name: 'Team A score' }).fill('5');
+    await page.getByRole('textbox', { name: 'Team B score' }).fill('11');
+    await page.getByRole('button', { name: 'Save Correction' }).click();
+    await expect(page.getByRole('dialog')).toBeHidden();
+
+    // The ledger now credits Team B, and the win badge moved with it.
+    const row = ledger.locator('article').first();
+    await expect(row.getByText('11', { exact: true })).toBeVisible();
+    await expect(row.getByText('Win')).toHaveCount(1);
+
+    // The reversal is symmetric: the swing the finish applied is exactly the
+    // swing the flip takes back, mirrored about the 3.500 starting point.
+    const ratingAfter = await myDupr(page);
+    expect(ratingAfter).toBeCloseTo(3.5 - (ratingBefore - 3.5), 3);
   });
 });

@@ -30,6 +30,7 @@ import {
   applyEndMatchTx,
   applyEventTx,
   applyFillCourtTx,
+  applyMatchReversalTx,
   applyShuffleQueueTx,
   applySkipPlayerTx,
   bumpPartnership,
@@ -930,18 +931,33 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
   return { notification, state: await getState(arenaId) };
 }
 
+/** Lost the optimistic write: the row changed (or vanished) mid-correction. */
+const RACED_CORRECTION =
+  'That match changed while you were editing it. Reopen it and check the score before correcting again.';
+
+/** Typed `applyMatchReversalTx` failures, as the manager should read them. */
+const CORRECTION_FAILURES = {
+  RACED: RACED_CORRECTION,
+  NO_RATING_DELTA:
+    "This match was recorded before the app tracked rating changes, so who won can't be corrected now. You can still fix the score if the same team won.",
+  INCOMPLETE_ROSTER:
+    "This match's roster is incomplete — a player was merged or removed — so who won can't be corrected. You can still fix the score if the same team won.",
+};
+
 /**
  * Correct the scoreline of an already-recorded match. Manager-gated.
  *
- * Scope is deliberately narrow: the correction must keep the SAME winner.
  * Everything downstream of a match reads from the `Match` rows at query time
  * (weekly leaderboard, session stats, /profile insights, streaks, best
- * partner), so a winner-preserving edit needs no recompute anywhere. The two
- * stored aggregates that a finish writes — `Player.wins`/`losses` and the Elo
- * `Player.rating` (see `applyEndMatchTx`) — only move when the winner changes,
- * and Elo is path-dependent: once later matches have been played, no local fix
- * restores the ratings the arena would have had. So a winner-flipping edit is
- * rejected rather than silently corrupting ratings.
+ * partner), so a correction that keeps the same winner needs no recompute
+ * anywhere — only the scoreline changes.
+ *
+ * A correction that FLIPS the winner also has to undo the two aggregates the
+ * finish banked: `Player.wins`/`losses` and the Elo `Player.rating`. That runs
+ * through {@link applyMatchReversalTx}, which backs out the match's stored
+ * `ratingDelta` and re-rates it — see the exactness note there. Matches
+ * recorded before that column existed can't be reversed and are refused
+ * rather than approximated.
  *
  * `gamesPlayed` and `Partnership` counts are incremented at FILL time, not at
  * finish, so they're unaffected either way.
@@ -960,6 +976,8 @@ export async function updateMatchScore(arenaId, matchId, score1, score2) {
   // Same rules the entry modal enforces, re-checked server-side so a stale tab
   // or a hand-rolled call can't write an illegal scoreline.
   const target = guard.arena?.targetScore ?? DEFAULT_TARGET_SCORE;
+  // TODO(#159 phase 3): prefer `match.targetScore` so a correction is judged
+  // by the rules this game was played under, not the arena's current setting.
   const check = validateMatchScore(score1, score2, target);
   if (!check.ok) {
     return {
@@ -975,28 +993,61 @@ export async function updateMatchScore(arenaId, matchId, score1, score2) {
     return { state: await getState(arenaId) }; // nothing to correct
   }
 
-  // Rejected outright for a legacy tie record: it banked no win/loss and was
-  // rated as a draw, so ANY legal correction of it changes the outcome.
+  // A legacy tie record banked no win/loss and was rated as a draw, so any
+  // legal correction of it changes the outcome — it flows through the same
+  // reversal path as a flip.
   const winnerOf = (a, b) => (a > b ? 1 : b > a ? 2 : 0);
-  if (winnerOf(s1, s2) !== winnerOf(match.score1, match.score2)) {
-    return {
-      error:
-        "This changes who won. Correcting the winner isn't supported yet, because it would rewrite skill ratings for every game since.",
-      state: await getState(arenaId),
-    };
+  const flipsOutcome = winnerOf(s1, s2) !== winnerOf(match.score1, match.score2);
+
+  // The write is scoped by `arenaId` AND by the scoreline this correction was
+  // computed against: updateMany (not update) so a concurrent delete is a
+  // clean count===0 instead of a thrown P2025 (same reasoning as
+  // `updateArenaGeneral`), and the score predicate makes a second manager's
+  // simultaneous correction a clean miss rather than silent last-write-wins.
+  const writeCorrection = (tx, ratingDelta) =>
+    tx.match.updateMany({
+      where: { id: matchId, arenaId, score1: match.score1, score2: match.score2 },
+      data: {
+        score1: s1,
+        score2: s2,
+        editedAt: new Date(),
+        ...(ratingDelta === undefined ? {} : { ratingDelta }),
+      },
+    });
+
+  if (!flipsOutcome) {
+    const updated = await writeCorrection(prisma);
+    if (updated.count === 0) {
+      return { error: RACED_CORRECTION, state: await getState(arenaId) };
+    }
+    return { state: await getState(arenaId) };
   }
 
-  // updateMany (not update) so a concurrent delete is a clean count===0 rather
-  // than a thrown P2025 — same reasoning as `updateArenaGeneral`. Re-scoping by
-  // arenaId also closes the read-then-write gap above.
-  const updated = await prisma.match.updateMany({
-    where: { id: matchId, arenaId },
-    // `editedAt` marks the row as corrected after the fact. Nothing reads it
-    // yet; it's what a future "edited" chip in the ledger keys off.
-    data: { score1: s1, score2: s2, editedAt: new Date() },
+  // Flipping the winner moves ratings and win/loss counters, so it runs under
+  // the arena's queue lock like every other rating write — a concurrent
+  // `endMatch` must not interleave with the reversal.
+  let failure = null;
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+    try {
+      const { ratingDelta } = await applyMatchReversalTx(tx, arenaId, {
+        match,
+        rescore: { s1, s2 },
+      });
+      const updated = await writeCorrection(tx, ratingDelta);
+      if (updated.count === 0) throw new Error('RACED');
+    } catch (err) {
+      failure = err?.message;
+      throw err; // roll the rating writes back with it
+    }
+  }).catch((err) => {
+    // A typed failure is reported to the manager; anything else is a real
+    // infrastructure error and must not be swallowed.
+    if (!CORRECTION_FAILURES[failure]) throw err;
   });
-  if (updated.count === 0) {
-    return { error: 'That match no longer exists.', state: await getState(arenaId) };
+
+  if (failure) {
+    return { error: CORRECTION_FAILURES[failure], state: await getState(arenaId) };
   }
 
   return { state: await getState(arenaId) };
