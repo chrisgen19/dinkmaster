@@ -64,6 +64,14 @@ describe('toMatch()', () => {
     expect(m.teams.a.players).toEqual([]);
   });
 
+  it('carries the edit stamp through, defaulting to null', () => {
+    // Drives the ledger's "Edited" chip. Null means never corrected — a row
+    // must not be marked just because the field is missing from its source.
+    const edited = toMatch({ ...NEUTRAL, editedAt: '2026-05-26T08:00:00.000Z' });
+    expect(edited.editedAt).toBe('2026-05-26T08:00:00.000Z');
+    expect(toMatch(NEUTRAL).editedAt).toBeNull();
+  });
+
   it('carries the match target through, defaulting to null', () => {
     // The arena's correction dialog states this value as its "First to N"
     // rule, and the server validates against the same one — so a row that
