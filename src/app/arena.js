@@ -13,6 +13,7 @@ import {
   editCourtLineup,
   endMatch,
   updateMatchScore,
+  deleteMatch,
   addCourt,
   removeCourt,
   requestToJoin,
@@ -395,6 +396,11 @@ export default function Arena({
   // flip, vanished match) surfaces inside the dialog rather than behind it.
   const [matchToCorrect, setMatchToCorrect] = useState(null);
   const [correctionError, setCorrectionError] = useState('');
+  // The recorded match a manager has asked to delete (null = closed), with its
+  // own error slot so a rejection lands in the confirm dialog rather than
+  // behind it.
+  const [matchToDelete, setMatchToDelete] = useState(null);
+  const [deleteError, setDeleteError] = useState('');
 
   // The court whose fill is pending cancellation, surfaced in a confirm modal
   // so a destructive "return to deck" can't fire on a stray click. Null = closed.
@@ -1085,6 +1091,38 @@ export default function Arena({
     run(() => endMatch(arenaId, courtId, score1, score2, autoMix));
   };
 
+  // Open the delete confirmation for a recorded match (manager-only). Only
+  // the newest row offers this; the server enforces it as well.
+  const handleRequestDeleteMatch = (match) => {
+    if (!canManage) return;
+    setDeleteError('');
+    setMatchToDelete(match);
+  };
+
+  // Confirmed: undo the match's effect and remove it. Keeps the dialog open on
+  // a rejection so the reason lands in context, like the correction flow.
+  const handleConfirmDeleteMatch = () => {
+    if (!matchToDelete) return;
+    const matchId = matchToDelete.id;
+    startTransition(async () => {
+      try {
+        const result = await deleteMatch(arenaId, matchId);
+        if (result?.error) {
+          if (result.state) applyResult({ state: result.state });
+          setDeleteError(result.error);
+          return;
+        }
+        applyResult(result);
+        setDeleteError('');
+        setMatchToDelete(null);
+      } catch {
+        // Transport failure — nothing was written, so a retry is safe.
+        setDeleteError('Connection problem: that match was not deleted. Please try again.');
+        offline.notifyActionFailed();
+      }
+    });
+  };
+
   const handleAddCourt = () => {
     if (!canManage) return;
     if (offline.offlineActive) {
@@ -1669,6 +1707,7 @@ export default function Arena({
               // engine has no edit command — so the affordance is hidden while
               // the board is running offline.
               onEditMatch={canManage && !offline.offlineActive ? handleRequestCorrectScore : null}
+              onDeleteMatch={canManage && !offline.offlineActive ? handleRequestDeleteMatch : null}
             />
           )}
 
@@ -1852,6 +1891,81 @@ export default function Arena({
           onConfirm={handleConfirmSkipWithReplacement}
           onClose={handleCancelSkipPicker}
         />
+      )}
+
+      {/* Delete confirmation. Shows the scoreline and both rosters, because
+          the row it removes is identified only by court and time in the
+          ledger — and the deletion is unrecoverable. */}
+      {mounted && matchToDelete && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isPending) setMatchToDelete(null);
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-match-title"
+            aria-describedby="delete-match-desc"
+            className="bg-white rounded-2xl border border-slate-200 max-w-sm w-full shadow-xl animate-scale-up overflow-hidden"
+          >
+            <div className="px-5 py-5">
+              <h3 id="delete-match-title" className="font-extrabold text-slate-900 text-base">
+                Delete this match?
+              </h3>
+              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-3">
+                <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-slate-400">
+                  {matchToDelete.courtName}
+                </p>
+                <p className="mt-1.5 text-sm font-bold text-slate-800">
+                  {matchToDelete.teams.a.players.map((p) => p.firstName).join(' + ')}{' '}
+                  <span className="tabular-nums text-slate-900">
+                    {matchToDelete.teams.a.score}–{matchToDelete.teams.b.score}
+                  </span>{' '}
+                  {matchToDelete.teams.b.players.map((p) => p.firstName).join(' + ')}
+                </p>
+              </div>
+              <p id="delete-match-desc" className="text-sm text-slate-600 mt-3 leading-relaxed">
+                It comes off the record for all four players — game count, win or loss, and
+                skill rating.{' '}
+                <span className="font-semibold">This can&apos;t be undone</span>, and the match
+                can&apos;t be re-recorded. To fix a wrong score, correct it instead.
+              </p>
+              {deleteError && (
+                <div
+                  role="alert"
+                  className="mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-[11px] font-semibold"
+                >
+                  {deleteError}
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/60 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isPending) return;
+                  setMatchToDelete(null);
+                  setDeleteError('');
+                }}
+                disabled={isPending}
+                className="px-4 py-2.5 rounded-xl text-slate-600 hover:bg-slate-200/60 disabled:opacity-50 font-bold text-xs uppercase tracking-wide transition"
+              >
+                Keep Match
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteMatch}
+                disabled={isPending}
+                className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-wide transition shadow-sm shadow-red-600/20"
+              >
+                Delete Match
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
 
       {/* Score entry — the SAME dialog for both scorelines the arena writes:

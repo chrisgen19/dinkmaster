@@ -818,6 +818,55 @@ export async function applyMatchReversalTx(tx, arenaId, { match, rescore }) {
 }
 
 /**
+ * Delete a recorded match and undo everything it counted for.
+ *
+ * A correction reverses only what the FINISH banked (Elo, wins/losses),
+ * because the game still happened. A deletion says the game never should have
+ * been recorded at all, so it also unwinds what the FILL banked: the
+ * `gamesPlayed` bump and the partnership counts. That half mirrors
+ * {@link applyCancelFillTx}, which is the existing "this fill shouldn't have
+ * counted" path — same `gt: 0` guard so an already-reconciled counter can't
+ * go negative, same `unbumpPartnership`.
+ *
+ * The row itself is hard-deleted (`MatchPlayer` cascades). Nothing here
+ * touches the rack or the courts: the four went back to the rack when the
+ * match finished and may be mid-game elsewhere by now.
+ *
+ * @param {object} opts
+ * @param {object} opts.match - the `Match` row, including `ratingDelta`.
+ * @throws {Error} `NO_RATING_DELTA` / `INCOMPLETE_ROSTER` — see
+ *   {@link applyMatchReversalTx}.
+ * @throws {Error} `RACED` when the row is already gone.
+ */
+export async function applyMatchDeletionTx(tx, arenaId, { match }) {
+  const snapshots = await tx.matchPlayer.findMany({
+    where: { matchId: match.id },
+    select: { playerId: true, team: true },
+  });
+
+  // Reverse the finish first: it validates the roster and the stored delta,
+  // so a match it refuses is left completely untouched.
+  await applyMatchReversalTx(tx, arenaId, { match });
+
+  // Now the fill's side of the ledger.
+  const ids = snapshots.map((mp) => mp.playerId);
+  await tx.player.updateMany({
+    where: { id: { in: ids }, arenaId, gamesPlayed: { gt: 0 } },
+    data: { gamesPlayed: { decrement: 1 } },
+  });
+  const team1 = snapshots.filter((mp) => mp.team === 1).map((mp) => mp.playerId);
+  const team2 = snapshots.filter((mp) => mp.team === 2).map((mp) => mp.playerId);
+  await unbumpPartnership(tx, team1[0], team1[1]);
+  await unbumpPartnership(tx, team2[0], team2[1]);
+
+  // deleteMany (not delete) so a row that vanished under us is a clean
+  // count===0 rather than a thrown P2025, and scoped to the arena so a match
+  // id from elsewhere can't be removed through this path.
+  const removed = await tx.match.deleteMany({ where: { id: match.id, arenaId } });
+  if (removed.count === 0) throw new Error('RACED');
+}
+
+/**
  * Silo-Buster auto-mix: re-sort the whole waiting rack by fairness band, wait,
  * games, then a random tie-break, and consume any `skipBoosted` flags.
  * Returns whether anything was mixed. Throws `ARENA_GONE` when the arena was

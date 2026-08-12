@@ -59,6 +59,11 @@ export function MatchHistory({
   // /profile, /p, /u and My Stats never pass it; the arena History tab passes
   // it for managers only.
   onEditMatch = null,
+  // Optional: same contract for deleting a match. Paired with
+  // `deletableMatchId` because deletion is allowed on ONE row only (the
+  // arena's most recent), so the affordance must not appear on the rest.
+  onDeleteMatch = null,
+  deletableMatchId = null,
 }) {
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'wins' | 'losses'
 
@@ -158,6 +163,7 @@ export function MatchHistory({
                         profileHrefFor={profileHrefFor}
                         subjectName={subjectName}
                         onEditMatch={onEditMatch}
+                        onDeleteMatch={m.id === deletableMatchId ? onDeleteMatch : null}
                       />
                     </li>
                   ))}
@@ -308,7 +314,7 @@ function GroupHeader({ label, count }) {
   );
 }
 
-function MatchRow({ match, perspective, formatTime, profileHrefFor = null, subjectName = null, onEditMatch = null }) {
+function MatchRow({ match, perspective, formatTime, profileHrefFor = null, subjectName = null, onEditMatch = null, onDeleteMatch = null }) {
   const winner = winnerSide(match);
   const youOn = match.youOn;
   const youWon = perspective === 'player' ? viewerWon(match) : null;
@@ -401,6 +407,32 @@ function MatchRow({ match, perspective, formatTime, profileHrefFor = null, subje
               >
                 <path d="M12 20h9" />
                 <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+            </button>
+          )}
+          {/* Delete is offered on the newest row only (the caller decides via
+              `deletableMatchId`), because that's the only one whose rating
+              effect can be undone exactly. Rose on hover, not by default —
+              it's destructive, but it shouldn't shout from every row. */}
+          {onDeleteMatch && (
+            <button
+              type="button"
+              onClick={() => onDeleteMatch(match)}
+              aria-label={`Delete match on ${match.courtName} at ${formatTime(match.timestamp)}`}
+              title="Delete this match"
+              className="-my-2.5 -mr-1.5 sm:my-0 sm:mr-0 w-11 h-11 sm:w-7 sm:h-7 shrink-0 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40 flex items-center justify-center transition"
+            >
+              <svg
+                className="w-3.5 h-3.5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
               </svg>
             </button>
           )}

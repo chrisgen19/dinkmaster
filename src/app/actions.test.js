@@ -29,7 +29,7 @@ vi.mock('@/lib/prisma', () => ({
       update: vi.fn(),
     },
     court: { findMany: vi.fn() },
-    match: { findUnique: vi.fn(), updateMany: vi.fn() },
+    match: { findUnique: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
     player: { count: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
     joinRequest: { upsert: vi.fn(), deleteMany: vi.fn(), findUnique: vi.fn() },
     linkRequest: {
@@ -64,6 +64,7 @@ const PLAY = [
   ['editCourtLineup', () => actions.editCourtLineup(ARENA, 'c1', ['p1', 'p2'], ['p3', 'p4'])],
   ['endMatch', () => actions.endMatch(ARENA, 'c1', 11, 5, true)],
   ['updateMatchScore', () => actions.updateMatchScore(ARENA, 'm1', 11, 5)],
+  ['deleteMatch', () => actions.deleteMatch(ARENA, 'm1')],
   ['addCourt', () => actions.addCourt(ARENA)],
   ['removeCourt', () => actions.removeCourt(ARENA, 'c1')],
   ['resetArena', () => actions.resetArena(ARENA)],
@@ -701,6 +702,105 @@ describe('arena server actions — authorization', () => {
       });
     });
 
+
+    describe('deleteMatch()', () => {
+      const MATCH = { id: 'm1', arenaId: ARENA, score1: 11, score2: 5, ratingDelta: 16 };
+      const TEAM1 = ['w1', 'w2'];
+      const TEAM2 = ['l1', 'l2'];
+      const SNAPSHOTS = [
+        ...TEAM1.map((playerId) => ({ playerId, team: 1 })),
+        ...TEAM2.map((playerId) => ({ playerId, team: 2 })),
+      ];
+      const RATED = [
+        { id: 'w1', rating: 1016 },
+        { id: 'w2', rating: 1016 },
+        { id: 'l1', rating: 984 },
+        { id: 'l2', rating: 984 },
+      ];
+
+      const makeTx = ({ removed = 1 } = {}) => ({
+        $executeRaw: vi.fn(),
+        matchPlayer: { findMany: vi.fn().mockResolvedValue(SNAPSHOTS) },
+        player: { findMany: vi.fn().mockResolvedValue(RATED), update: vi.fn(), updateMany: vi.fn() },
+        partnership: { updateMany: vi.fn() },
+        match: { deleteMany: vi.fn().mockResolvedValue({ count: removed }) },
+      });
+
+      beforeEach(() => {
+        requireArenaManager.mockResolvedValue({
+          user: { id: 'u1' },
+          arena: { id: ARENA, ownerId: 'u1', targetScore: 11 },
+          role: ROLES.OWNER,
+        });
+        prisma.match.findUnique.mockResolvedValue(MATCH);
+        prisma.match.findFirst.mockResolvedValue({ id: 'm1' }); // it IS the newest
+      });
+
+      it('undoes the finish and the fill, then removes the row', async () => {
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.deleteMatch(ARENA, 'm1');
+        expect(result.error).toBeUndefined();
+
+        // Elo returns to where it was before the match.
+        const ratingFor = (id) => tx.player.update.mock.calls.find((c) => c[0].where.id === id)[0].data.rating;
+        expect(ratingFor('w1')).toBe(1000);
+        expect(ratingFor('l1')).toBe(1000);
+
+        // The finish's win/loss comes back out...
+        expect(tx.player.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: TEAM1 }, wins: { gt: 0 } },
+          data: { wins: { decrement: 1 } },
+        });
+        // ...and so does the FILL's games bump, which a correction leaves alone
+        // because the game still happened.
+        expect(tx.player.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: [...TEAM1, ...TEAM2] }, arenaId: ARENA, gamesPlayed: { gt: 0 } },
+          data: { gamesPlayed: { decrement: 1 } },
+        });
+        // Both pairings are given back to the variety algorithm.
+        expect(tx.partnership.updateMany).toHaveBeenCalledTimes(2);
+
+        expect(tx.match.deleteMany).toHaveBeenCalledWith({ where: { id: 'm1', arenaId: ARENA } });
+      });
+
+      it('refuses anything but the arena\'s most recent match', async () => {
+        prisma.match.findFirst.mockResolvedValue({ id: 'm-newer' });
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.deleteMatch(ARENA, 'm1');
+        expect(result.error).toMatch(/only the most recent match/i);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('refuses a match recorded before rating deltas were stored', async () => {
+        prisma.match.findUnique.mockResolvedValue({ ...MATCH, ratingDelta: null });
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.deleteMatch(ARENA, 'm1');
+        expect(result.error).toMatch(/before the app tracked rating changes/i);
+        expect(tx.match.deleteMany).not.toHaveBeenCalled();
+        expect(tx.player.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses a match id belonging to another arena', async () => {
+        prisma.match.findUnique.mockResolvedValue({ ...MATCH, arenaId: 'other_arena' });
+        const result = await actions.deleteMatch(ARENA, 'm1');
+        expect(result.error).toMatch(/no longer exists/i);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('reports a clean error when the row vanished mid-delete', async () => {
+        const tx = makeTx({ removed: 0 });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.deleteMatch(ARENA, 'm1');
+        expect(result.error).toMatch(/already removed/i);
+      });
+    });
 
     describe('updateArenaSessions()', () => {
       beforeEach(() => {

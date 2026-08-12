@@ -30,6 +30,7 @@ import {
   applyEndMatchTx,
   applyEventTx,
   applyFillCourtTx,
+  applyMatchDeletionTx,
   applyMatchReversalTx,
   applyShuffleQueueTx,
   applySkipPlayerTx,
@@ -1066,6 +1067,78 @@ export async function updateMatchScore(arenaId, matchId, score1, score2) {
 
   if (failure) {
     return { error: CORRECTION_FAILURES[failure], state: await getState(arenaId) };
+  }
+
+  return { state: await getState(arenaId) };
+}
+
+/** Typed `applyMatchDeletionTx` failures, as the manager should read them. */
+const DELETION_FAILURES = Object.assign(Object.create(null), {
+  RACED: 'That match was already removed.',
+  NO_RATING_DELTA:
+    "This match was recorded before the app tracked rating changes, so deleting it can't undo its effect on skill ratings.",
+  INCOMPLETE_ROSTER:
+    "This match's roster is incomplete — a player was merged or removed — so deleting it can't undo its effect cleanly.",
+});
+
+/**
+ * Delete a recorded match, undoing everything it counted for. Manager-gated.
+ *
+ * For a match that should never have been recorded — a duplicate, or a game
+ * finished on the wrong court. NOT the way to fix a wrong result: a `Match`
+ * row can only be created by finishing a live court, so a deleted match can't
+ * be re-recorded. {@link updateMatchScore} is the tool for a bad scoreline,
+ * including one whose winner was entered backwards.
+ *
+ * Restricted to the arena's MOST RECENT match. That keeps the Elo reversal
+ * exact rather than the bounded approximation a correction settles for (see
+ * {@link applyMatchReversalTx}), and it matches the real use case: a
+ * duplicate is noticed immediately. Deleting further back would need the
+ * approximation, which is a much harder trade to justify for an operation
+ * that can't be undone.
+ */
+export async function deleteMatch(arenaId, matchId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  const match = await prisma.match.findUnique({ where: { id: matchId } });
+  if (!match || match.arenaId !== arenaId) {
+    return { error: 'That match no longer exists.', state: await getState(arenaId) };
+  }
+
+  // Newest by `createdAt`, with the id as a deterministic tie-break — offline
+  // batches clamp timestamps, and while `syncOfflineEvents` now keeps them
+  // strictly increasing, older synced rows can still share one.
+  const latest = await prisma.match.findFirst({
+    where: { arenaId },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    select: { id: true },
+  });
+  if (latest?.id !== matchId) {
+    return {
+      error:
+        'Only the most recent match can be deleted, so its effect on skill ratings can be undone exactly. Correct its score instead.',
+      state: await getState(arenaId),
+    };
+  }
+
+  let failure = null;
+  await prisma
+    .$transaction(async (tx) => {
+      await lockQueue(tx, arenaId);
+      try {
+        await applyMatchDeletionTx(tx, arenaId, { match });
+      } catch (err) {
+        failure = err?.message;
+        throw err; // roll the reversal back with it
+      }
+    })
+    .catch((err) => {
+      if (!DELETION_FAILURES[failure]) throw err;
+    });
+
+  if (failure) {
+    return { error: DELETION_FAILURES[failure], state: await getState(arenaId) };
   }
 
   return { state: await getState(arenaId) };

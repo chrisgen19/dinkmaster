@@ -18,8 +18,18 @@ import { toMatch } from '@/lib/match-history';
  * wired to the same dialog the finish flow uses). It's passed through as null
  * for everyone else, which keeps the ledger read-only.
  */
-export function ArenaHistory({ matches, formatTimestamp, profileHrefFor = null, onEditMatch = null }) {
+export function ArenaHistory({
+  matches,
+  formatTimestamp,
+  profileHrefFor = null,
+  onEditMatch = null,
+  onDeleteMatch = null,
+}) {
   const normalised = useMemo(() => matches.map((m) => toMatch(m)), [matches]);
+  // `matches` arrives newest-first from `getState`, and only that row can be
+  // deleted (the server enforces it too) — so the affordance appears on one
+  // row rather than tempting a manager into a rejection on the others.
+  const deletableMatchId = normalised[0]?.id ?? null;
 
   return (
     <div
@@ -37,6 +47,8 @@ export function ArenaHistory({ matches, formatTimestamp, profileHrefFor = null, 
         // since left/been deleted resolve to null and stay plain text.
         profileHrefFor={profileHrefFor ? (p) => profileHrefFor(p?.id) : null}
         onEditMatch={onEditMatch}
+        onDeleteMatch={onDeleteMatch}
+        deletableMatchId={deletableMatchId}
       />
     </div>
   );
