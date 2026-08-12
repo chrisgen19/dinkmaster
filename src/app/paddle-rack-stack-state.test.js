@@ -5,6 +5,7 @@ import {
   fullName,
   initials,
   ON_DECK_SIZE,
+  pruneDrafted,
 } from './paddle-rack-stack-state';
 import { splitDecks } from '@/lib/decks';
 
@@ -195,6 +196,37 @@ describe('deriveRackRow — win/lose decks', () => {
     const row = deriveRackRow(player({ userId: 'u-me' }), 0, { ...opts, canManage: true, queueLength: 6 });
     expect(row.isOnDeck).toBe(true);
     expect(row.canSkip).toBe(true);
+  });
+});
+
+describe('pruneDrafted', () => {
+  it('forgets a hand-added paddle once they leave the rack', () => {
+    // The reported bug: a paddle added to the winners deck goes on court, the
+    // game ends, they return — and drop straight back into that deck flagged
+    // "Added", as though the organizer picked them a second time. Dropping the
+    // id when they leave is what stops it coming back with them.
+    const drafted = { W: ['ben', 'ana'], L: [] };
+    expect(pruneDrafted(drafted, ['ana', 'cai'])).toEqual({ W: ['ana'], L: [] });
+  });
+
+  it('prunes both decks', () => {
+    const drafted = { W: ['gone-w'], L: ['gone-l', 'here'] };
+    expect(pruneDrafted(drafted, ['here'])).toEqual({ W: [], L: ['here'] });
+  });
+
+  it('returns the SAME object when nothing is stale', () => {
+    // Identity matters: the caller adjusts state during render, so a fresh
+    // object every time would loop forever.
+    const drafted = { W: ['ana'], L: ['ben'] };
+    expect(pruneDrafted(drafted, ['ana', 'ben', 'cai'])).toBe(drafted);
+    expect(pruneDrafted({ W: [], L: [] }, [])).not.toBeUndefined();
+  });
+
+  it('keeps a draft when some OTHER four went on court', () => {
+    // Those paddles are still racked, so the organizer's staging still stands —
+    // and since they didn't play, their W/L hasn't changed either.
+    const drafted = { W: ['ben'], L: [] };
+    expect(pruneDrafted(drafted, ['ben', 'cai', 'dev'])).toBe(drafted);
   });
 });
 

@@ -165,6 +165,44 @@ test.describe('win/lose decks', () => {
     await expect(page.getByRole('button', { name: /Finish Game & Record Score/ }).first()).toBeVisible();
   });
 
+  test('a hand-added paddle does not stay added across the next game', async ({ page }) => {
+    // An add stages the NEXT stack. The bug: a paddle added to a deck that
+    // never reached four — so never grew its own "Stack these 4" button —
+    // stayed flagged "Added" through every later game, because only that
+    // button cleared the staging. The organizer picked once and it looked like
+    // it kept re-picking itself.
+    await registerAndSignIn(page);
+    await createArena(page, `Sticky ${Date.now()}`);
+    const arenaUrl = page.url();
+
+    await addWalkIns(page, ['Ana', 'Ben', 'Cai', 'Dev', 'Eve', 'Fay', 'Gus']);
+    await enableDeckMode(page, arenaUrl);
+    await playAGame(page, 8);
+
+    // Add ONE paddle to the winners deck, which needs two — so it stays short
+    // and offers no stack button of its own.
+    await page.getByRole('button', { name: 'Add a paddle to the winners deck' }).first().click();
+    const dialog = page.getByRole('dialog', { name: 'Add to Winners' });
+    await dialog.getByRole('listitem').first().getByRole('button').click();
+    await dialog.getByRole('button', { name: 'Add to deck' }).click();
+    await expect(dialog).toHaveCount(0);
+
+    await expect(page.getByRole('button', { name: /Remove .* from this deck/ }).first()).toBeVisible();
+    await expect(page.getByText('needs 1 more').first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Stack the winners deck/ })).toHaveCount(0);
+
+    // Stack the next court the ordinary way, from the court card. That button
+    // sends the AUTOMATIC four and ignores the staging entirely — so the
+    // staging is spent, and must not survive into the next game.
+    await page.getByRole('button', { name: /^Stack /, exact: false }).first().click();
+    await expect(page.getByText('4 in rack').first()).toBeVisible();
+
+    // Asserted here, before the game is scored: once results land, deck
+    // membership shifts on its own and would mask the flag for the wrong
+    // reason. The added paddle is still racked — only the staging is gone.
+    await expect(page.getByRole('button', { name: /Remove .* from this deck/ })).toHaveCount(0);
+  });
+
   test('never offers a paddle who is already on the other deck', async ({ page }) => {
     // The pool is Waiting only: topping up a short deck must not break a deck
     // that was ready to play. With nobody waiting the picker says so rather

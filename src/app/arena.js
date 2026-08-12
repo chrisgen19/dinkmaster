@@ -52,7 +52,7 @@ import { ArenaCourtsPanel } from './arena-courts-panel';
 import { CourtEditModal } from './court-edit-modal';
 import { SkipPickerModal } from './skip-picker-modal';
 import { DeckAddModal } from './deck-add-modal';
-import { buildRackSections } from './paddle-rack-stack-state';
+import { buildRackSections, pruneDrafted } from './paddle-rack-stack-state';
 import { ScoreEntryModal } from './score-entry-modal';
 import { ArenaThisWeek } from './arena-this-week';
 import { ArenaSessionPrepBanner } from './arena-session-prep-banner';
@@ -483,6 +483,24 @@ export default function Arena({
   // is open (`deckPickerFor`) is null when closed.
   const [drafted, setDrafted] = useState({ W: [], L: [] });
   const [deckPickerFor, setDeckPickerFor] = useState(null);
+
+  // React 19 "adjust state during render" pattern, as used for the rack's
+  // expanded row: forget anyone who has left the rack, so a hand-added paddle
+  // can't be pulled onto a court and then reappear in that deck — still
+  // flagged "Added" — when the game ends. Safe from loops: `pruneDrafted`
+  // returns the same object when there is nothing to drop, so the next render
+  // skips this branch.
+  const prunedDrafted = pruneDrafted(drafted, queue);
+  if (prunedDrafted !== drafted) setDrafted(prunedDrafted);
+
+  /**
+   * Forget every hand-added paddle. An add stages the NEXT stack, so once ANY
+   * stack happens that opportunity has passed — otherwise a player added to a
+   * deck that never reached four (so never grew its own "Stack these 4"
+   * button) stayed flagged "Added" through every subsequent game, looking as
+   * though the organizer kept re-picking them.
+   */
+  const clearDrafts = () => setDrafted({ W: [], L: [] });
 
   const [activeTab, setActiveTab] = useState('courts');
 
@@ -1008,6 +1026,9 @@ export default function Arena({
 
   const handleFillCourt = (courtId) => {
     if (!canManage) return;
+    // This button stacks the AUTOMATIC four, ignoring any staging — so the
+    // staging is spent either way and must not linger into the next game.
+    clearDrafts();
     if (offline.offlineActive) return runLocalCommand({ type: 'fillCourt', courtId });
     // Send the four THIS render is showing as up next — the top of the rack,
     // or the front of whichever deck the alternation has reached — so the
@@ -1061,9 +1082,9 @@ export default function Arena({
       setErrorMsg('No open court to stack onto. Finish a game first.');
       return;
     }
-    // Clear the staging either way: these four are on their way out, and a
-    // refused fill repaints the rack from the server anyway.
-    setDrafted((prev) => ({ ...prev, [deck]: [] }));
+    // Clear ALL staging, not just this deck's: the stack these were staged for
+    // has happened, and a refused fill repaints the rack from the server anyway.
+    clearDrafts();
     if (offline.offlineActive) {
       return runLocalCommand({
         type: 'fillCourt',

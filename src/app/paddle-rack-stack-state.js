@@ -98,6 +98,37 @@ export function deriveRackRow(
 }
 
 /**
+ * Drop hand-added paddles who are no longer on the rack.
+ *
+ * A draft is staging for ONE stack, but the ids live in client state, and
+ * nothing about a player going onto a court removes them. Left alone, a paddle
+ * added to the winners deck plays their game and then reappears in that deck —
+ * still flagged "Added" — the moment they return to the rack, as though the
+ * organizer had picked them a second time. Same for a paddle taken off the
+ * rack entirely.
+ *
+ * Note this deliberately does NOT clear a draft merely because some other four
+ * went on court: those paddles are still racked and the organizer's staging
+ * still stands, and since they didn't play, their W/L hasn't changed either.
+ *
+ * Returns the SAME object when nothing needs dropping, so callers can use it as
+ * a render-time state adjustment without looping.
+ *
+ * @param {{W: string[], L: string[]}} drafted
+ * @param {string[]} queue - the current rack
+ * @returns {{W: string[], L: string[]}}
+ */
+export function pruneDrafted(drafted, queue) {
+  const racked = new Set(queue);
+  const stale = (ids) => ids.some((id) => !racked.has(id));
+  if (!stale(drafted.W) && !stale(drafted.L)) return drafted;
+  return {
+    W: drafted.W.filter((id) => racked.has(id)),
+    L: drafted.L.filter((id) => racked.has(id)),
+  };
+}
+
+/**
  * Group the rack into the labelled sections the list renders, so the grouping
  * rule is testable without JSX.
  *
