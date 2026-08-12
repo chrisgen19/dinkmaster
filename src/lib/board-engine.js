@@ -631,12 +631,19 @@ export function resolveCommand(state, settings, command, opts = {}) {
       // A settings snapshot captured before this feature has no flag at all;
       // treat that as ON, matching the column default.
       const balanced = settings.balancedPairing !== false;
-      const recentMatches = state.matchHistory.map((m) => ({
-        score1: m.score1,
-        score2: m.score2,
-        team1: m.team1.map((p) => p.id),
-        team2: m.team2.map((p) => p.id),
-      }));
+      // Session-scoped, mirroring `applyFillCourtTx`: a reset keeps match rows
+      // but starts the split's inputs fresh, so results from a previous
+      // session must not classify tonight's arrivals. Matches recorded during
+      // this offline session are stamped after the boundary and still count.
+      const sessionStart = state.lastSessionResetAt ? Date.parse(state.lastSessionResetAt) : null;
+      const recentMatches = state.matchHistory
+        .filter((m) => sessionStart === null || Date.parse(m.timestamp) >= sessionStart)
+        .map((m) => ({
+          score1: m.score1,
+          score2: m.score2,
+          team1: m.team1.map((p) => p.id),
+          team2: m.team2.map((p) => p.id),
+        }));
       const ranked = rankMatchups(top4, {
         results: recentResults(recentMatches, top4),
         ratings: new Map(state.players.map((p) => [p.id, p.rating])),

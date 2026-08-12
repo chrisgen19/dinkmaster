@@ -1402,7 +1402,17 @@ export async function syncOfflineEvents(arenaId, input) {
 
       // Clamp event times to the offline window: never in the future, never
       // before the session started (falling back to a 24h lookback when the
-      // client clock produced garbage), and monotonic within the batch.
+      // client clock produced garbage), and STRICTLY increasing within the
+      // batch.
+      //
+      // Strictly, not merely non-decreasing: a device whose clock runs ahead
+      // clamps every event to the same `now`, and equal `createdAt` values
+      // leave `ORDER BY createdAt DESC` free to return tied matches in any
+      // order. `recentResults` takes the first result it sees per player, so
+      // ties could hand the balanced split a stale "most recent" outcome —
+      // and the Match Log would list them arbitrarily too. The cost is that a
+      // batch can end up to (event count) milliseconds past `now`, which is
+      // nothing next to the clock skew the clamp exists to contain.
       const now = Date.now();
       const enteredMs = Date.parse(enteredAt ?? '');
       let prevMs = Math.min(Number.isFinite(enteredMs) ? enteredMs : now - 24 * 60 * 60 * 1000, now);
@@ -1419,7 +1429,7 @@ export async function syncOfflineEvents(arenaId, input) {
             throw new Error('BAD_EVENT');
           }
           const atMs = Date.parse(event.occurredAt ?? '');
-          prevMs = Math.max(prevMs, Math.min(Number.isFinite(atMs) ? atMs : prevMs, now));
+          prevMs = Math.max(prevMs + 1, Math.min(Number.isFinite(atMs) ? atMs : prevMs, now));
           await applyEventTx(tx, arenaId, settings, event, { occurredAt: new Date(prevMs) });
           appliedIds.push(event.id);
         } catch (err) {

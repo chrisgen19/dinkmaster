@@ -253,16 +253,28 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome }) {
     // rather than failing a fill the court claim already committed to.
     const arena = await tx.arena.findUnique({
       where: { id: arenaId },
-      select: { balancedPairing: true },
+      select: { balancedPairing: true, lastSessionResetAt: true },
     });
     const balanced = arena?.balancedPairing ?? true;
 
     // Normalize the recent matches into the shape src/lib/pairing.js expects,
     // so this ranks identically to the offline engine's own fill. Legacy mode
     // ignores results entirely, so skip the query in that case.
+    //
+    // Scoped to the current session: `prepareNextSession` keeps Match rows but
+    // wipes `Partnership` so the split "starts the new session unbiased by
+    // last week's pairings" — the same reasoning applies to the OTHER input to
+    // that split. Without this, the first fills of a new session would pair
+    // tonight's arrivals off results from a week ago. The offline engine
+    // applies the same cutoff (see `board-engine.js`); match history is not
+    // part of the sync fingerprint, so a one-sided change here would silently
+    // diverge the two paths.
     const recent = balanced
       ? await tx.match.findMany({
-          where: { arenaId },
+          where: {
+            arenaId,
+            ...(arena?.lastSessionResetAt ? { createdAt: { gte: arena.lastSessionResetAt } } : {}),
+          },
           orderBy: { createdAt: 'desc' },
           take: RECENT_MATCH_WINDOW,
           select: { score1: true, score2: true, players: { select: { playerId: true, team: true } } },

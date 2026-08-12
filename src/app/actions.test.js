@@ -844,6 +844,51 @@ describe('arena server actions — authorization', () => {
         expect(created.score1).toBe(11);
         expect(created.score2).toBe(7);
       });
+
+      it('gives each synced match a distinct createdAt even when the clock is ahead', async () => {
+        // A device running fast clamps EVERY event to the same `now`. Equal
+        // timestamps leave `ORDER BY createdAt DESC` free to return the tied
+        // matches in any order, and `recentResults` takes the first result it
+        // sees per player — so the balanced split could classify someone by an
+        // older game. Strictly increasing stamps remove the tie at the source.
+        const slots = [
+          { playerId: 'a', team: 1, player: { firstName: 'A', lastName: null, rating: 1000 } },
+          { playerId: 'b', team: 1, player: { firstName: 'B', lastName: null, rating: 1000 } },
+          { playerId: 'c', team: 2, player: { firstName: 'C', lastName: null, rating: 1000 } },
+          { playerId: 'd', team: 2, player: { firstName: 'D', lastName: null, rating: 1000 } },
+        ];
+        const tx = makeTx({
+          court: {
+            findMany: vi.fn().mockResolvedValue([]),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+            findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
+            update: vi.fn(),
+          },
+          courtSlot: { findMany: vi.fn().mockResolvedValue(slots), findFirst: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
+        });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const ahead = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        const endMatch = (id) => ({
+          id,
+          type: 'endMatch',
+          occurredAt: ahead, // identical, future-dated: all clamp to `now`
+          payload: { courtId: 'c1', score1: '11', score2: '7', autoMix: false },
+          outcome: { recycleOrder: ['d', 'a', 'c', 'b'], mixedOrder: null },
+        });
+
+        const result = await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({ mode: 'best-effort', events: [endMatch('e1'), endMatch('e2'), endMatch('e3')] }),
+        );
+
+        expect(result.appliedIds).toEqual(['e1', 'e2', 'e3']);
+        const stamps = tx.match.create.mock.calls.map((c) => c[0].data.createdAt.getTime());
+        expect(stamps).toHaveLength(3);
+        // Strictly increasing, in the order the manager played them.
+        expect(stamps[1]).toBeGreaterThan(stamps[0]);
+        expect(stamps[2]).toBeGreaterThan(stamps[1]);
+      });
     });
 
     describe('offline hold', () => {
@@ -2206,9 +2251,10 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
         findMany: vi.fn().mockResolvedValue([]), // no prior partnerships
         upsert: vi.fn(),
       },
-      // The fill reads the arena's pairing mode before splitting the four.
+      // The fill reads the arena's pairing mode and session boundary before
+      // splitting the four.
       arena: {
-        findUnique: vi.fn().mockResolvedValue({ balancedPairing: true }),
+        findUnique: vi.fn().mockResolvedValue({ balancedPairing: true, lastSessionResetAt: null }),
       },
       // Recent matches feed the losers-partner-winners team split; an empty
       // history means nobody has a recent result, so the split falls through
@@ -2247,6 +2293,36 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
       expect(slot.prevWaitRounds).toBe(source.waitRounds);
       expect([1, 2]).toContain(slot.team);
     }
+  });
+
+  it('scopes the recent-results query to the current session', async () => {
+    // `prepareNextSession` keeps Match rows but wipes Partnership so the split
+    // starts unbiased by last week; the other input to that same split has to
+    // honour the boundary too, or tonight's first fills classify players by a
+    // result from a previous session. The offline engine filters the same
+    // boundary (board-engine.test.js) — match history isn't fingerprinted, so
+    // the two paths can only be kept in step by asserting both.
+    const resetAt = new Date('2026-07-27T00:00:00.000Z');
+    const tx = makeTx();
+    tx.arena.findUnique.mockResolvedValue({ balancedPairing: true, lastSessionResetAt: resetAt });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.fillCourt(ARENA, COURT);
+
+    expect(tx.match.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { arenaId: ARENA, createdAt: { gte: resetAt } } }),
+    );
+  });
+
+  it('queries every match when the arena has never been reset', async () => {
+    const tx = makeTx();
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.fillCourt(ARENA, COURT);
+
+    expect(tx.match.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { arenaId: ARENA } }),
+    );
   });
 
   it('records the exact bumped player ids on the court for cancelFill to reverse', async () => {
