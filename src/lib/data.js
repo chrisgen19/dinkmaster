@@ -93,6 +93,11 @@ export async function getState(arenaId) {
     team2: teamSnapshot(m, 2),
     score1: m.score1,
     score2: m.score2,
+    // The target this match was played under, so the correction dialog states
+    // the rule the server will actually validate against. Null for matches
+    // recorded before it was captured; the client falls back to the arena's
+    // current setting exactly as `updateMatchScore` does.
+    targetScore: m.targetScore,
     // ISO string; formatted in the client so it uses the viewer's locale/timezone.
     timestamp: new Date(m.createdAt).toISOString(),
   }));

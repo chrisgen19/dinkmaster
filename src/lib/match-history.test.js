@@ -64,6 +64,14 @@ describe('toMatch()', () => {
     expect(m.teams.a.players).toEqual([]);
   });
 
+  it('carries the match target through, defaulting to null', () => {
+    // The arena's correction dialog states this value as its "First to N"
+    // rule, and the server validates against the same one — so a row that
+    // never recorded its target must normalise to null, not to a guess.
+    expect(toMatch({ ...NEUTRAL, targetScore: 15 }).targetScore).toBe(15);
+    expect(toMatch(NEUTRAL).targetScore).toBeNull();
+  });
+
   it('throws on an unknown shape', () => {
     expect(() => toMatch({ foo: 'bar' })).toThrow();
   });

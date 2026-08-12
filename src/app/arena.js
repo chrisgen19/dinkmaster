@@ -1887,7 +1887,11 @@ export default function Arena({
           team2={matchToCorrect.teams.b.players.map(resolveSnapshotPlayer)}
           initialScore1={String(matchToCorrect.teams.a.score)}
           initialScore2={String(matchToCorrect.teams.b.score)}
-          targetScore={matchDefaults.targetScore}
+          // The target THIS match was played under — the same value
+          // `updateMatchScore` validates against, so the dialog's "First to N"
+          // hint can't promise a rule the server then rejects. Matches
+          // recorded before it was captured fall back identically.
+          targetScore={matchToCorrect.targetScore ?? matchDefaults.targetScore}
           submitLabel="Save Correction"
           isPending={isPending}
           error={correctionError}

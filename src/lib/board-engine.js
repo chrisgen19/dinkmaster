@@ -417,6 +417,10 @@ function applyEndMatch(state, settings, event) {
     team2: team2.map(nameOf),
     score1: s1,
     score2: s2,
+    // Mirrors what `applyEndMatchTx` persists on sync, so a match played
+    // offline reads back with the target it was played under rather than
+    // appearing to predate the column.
+    targetScore: settings.targetScore,
     timestamp: event.occurredAt,
   };
 

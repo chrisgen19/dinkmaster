@@ -620,6 +620,56 @@ describe('arena server actions — authorization', () => {
         expect(threw).toBe(true);
       });
 
+      it('judges the correction by the target the match was played under', async () => {
+        // The arena has since moved to 15, but this game was played to 11.
+        // Correcting it to 11-7 must be legal — validating against today's
+        // target would tell the manager the winner never reached 15.
+        prisma.match.findUnique.mockResolvedValue({ ...MATCH, targetScore: 11 });
+        requireArenaManager.mockResolvedValue({
+          user: { id: 'u1' },
+          arena: { id: ARENA, ownerId: 'u1', targetScore: 15 },
+          role: ROLES.OWNER,
+        });
+
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 7);
+        expect(result.error).toBeUndefined();
+        expect(prisma.match.updateMany).toHaveBeenCalled();
+      });
+
+      it('holds an old match to its own target when the arena has lowered it', async () => {
+        // Played to 15, arena now set to 11. A 12-10 "correction" was never a
+        // legal result for this game and must not become one retroactively.
+        prisma.match.findUnique.mockResolvedValue({
+          ...MATCH,
+          score1: 15,
+          score2: 9,
+          targetScore: 15,
+        });
+        requireArenaManager.mockResolvedValue({
+          user: { id: 'u1' },
+          arena: { id: ARENA, ownerId: 'u1', targetScore: 11 },
+          role: ROLES.OWNER,
+        });
+
+        const result = await actions.updateMatchScore(ARENA, 'm1', 12, 10);
+        expect(result.error).toMatch(/must reach 15/i);
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('falls back to the arena target for a match recorded before it was captured', async () => {
+        prisma.match.findUnique.mockResolvedValue({ ...MATCH, targetScore: null });
+        requireArenaManager.mockResolvedValue({
+          user: { id: 'u1' },
+          arena: { id: ARENA, ownerId: 'u1', targetScore: 15 },
+          role: ROLES.OWNER,
+        });
+
+        // 11-7 is illegal under the arena's current 15, which is the only
+        // rule we have for a row that never recorded its own.
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 7);
+        expect(result.error).toMatch(/must reach 15/i);
+      });
+
       it.each([
         ['a tie', 11, 11],
         ['a winner below the target', 9, 5],

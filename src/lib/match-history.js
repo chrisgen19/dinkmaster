@@ -65,6 +65,11 @@ export function toMatch(raw, options = {}) {
         a: { players: raw.team1, score: raw.score1 },
         b: { players: raw.team2, score: raw.score2 },
       },
+      // Carried through for the arena's correction dialog, which must state
+      // the target this match was played under (null = unknown, caller falls
+      // back to the arena's current setting). Absent from player-shape rows,
+      // which are read-only everywhere they're rendered.
+      targetScore: raw.targetScore ?? null,
       youOn: onA ? 'a' : onB ? 'b' : null,
     };
   }
