@@ -1,29 +1,47 @@
 /**
- * Split the public arena directory into arenas the signed-in user is attached
- * to and arenas they can discover/request from. Ownership is canonical even if
- * a membership row is missing, so owned arenas still appear under "Your arenas".
+ * Pure paging maths for the arena directory.
  *
- * @param {Array<{id:string,ownerId:string}>} arenas
- * @param {object} options
- * @param {string|null|undefined} options.userId
- * @param {Iterable<string>} options.memberArenaIds
+ * The directory used to fetch every arena and split them in memory. It now
+ * pages the public list in SQL (see `listPublicArenas`), which needs the page
+ * number sanitised before it reaches a query: `?page=` is user input, and a
+ * negative `skip` is a Prisma error while a wildly high one is a blank screen.
  */
-export function partitionArenaDirectory(arenas, { userId, memberArenaIds = [] } = {}) {
-  if (!userId) {
-    return { yourArenas: [], publicArenas: arenas };
-  }
 
-  const memberIds = new Set(memberArenaIds);
-  const yourArenas = [];
-  const publicArenas = [];
+/** Arenas per page of the public directory. */
+export const ARENAS_PER_PAGE = 12;
 
-  for (const arena of arenas) {
-    if (memberIds.has(arena.id) || arena.ownerId === userId) {
-      yourArenas.push(arena);
-    } else {
-      publicArenas.push(arena);
-    }
-  }
+/**
+ * Resolve a requested page against a known total.
+ *
+ * Out-of-range requests CLAMP rather than 404: `?page=99` on a two-page
+ * directory is a stale link or a typo, and showing the last page is more
+ * useful than an error. Garbage (`?page=abc`, `?page=-3`) resolves to page 1.
+ *
+ * @param {object} input
+ * @param {number} input.total - matching rows.
+ * @param {string|number|undefined} input.page - the raw `?page=` value.
+ * @param {number} [input.pageSize]
+ * @returns {{page: number, pageCount: number, skip: number, take: number,
+ *   from: number, to: number, hasPrev: boolean, hasNext: boolean}}
+ *   `from`/`to` are 1-based inclusive for display, and `0` when nothing matched.
+ */
+export function resolveDirectoryPage({ total, page, pageSize = ARENAS_PER_PAGE }) {
+  const size = Math.max(1, Math.floor(pageSize));
+  const count = Math.max(0, Math.floor(total) || 0);
+  const pageCount = Math.max(1, Math.ceil(count / size));
 
-  return { yourArenas, publicArenas };
+  const requested = Number.parseInt(page, 10);
+  const current = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), pageCount) : 1;
+
+  const skip = (current - 1) * size;
+  return {
+    page: current,
+    pageCount,
+    skip,
+    take: size,
+    from: count === 0 ? 0 : skip + 1,
+    to: Math.min(skip + size, count),
+    hasPrev: current > 1,
+    hasNext: current < pageCount,
+  };
 }

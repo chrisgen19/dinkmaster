@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // mocked weekly leaderboard below.
 vi.mock('@/lib/prisma', () => ({
   prisma: {
-    arena: { findFirst: vi.fn() },
+    arena: { findFirst: vi.fn(), findMany: vi.fn(), count: vi.fn() },
     user: { findUnique: vi.fn() },
     player: { findMany: vi.fn(), findUnique: vi.fn() },
     matchPlayer: { findMany: vi.fn() },
@@ -17,7 +17,14 @@ vi.mock('@/lib/leaderboard-server', () => ({
 }));
 
 import { prisma } from '@/lib/prisma';
-import { usersShareArena, getViewableUserProfile, getViewablePlayerProfile } from './arenas';
+import {
+  usersShareArena,
+  getViewableUserProfile,
+  getViewablePlayerProfile,
+  listUserArenas,
+  listPublicArenas,
+  countPublicArenas,
+} from './arenas';
 
 const VIEWER = 'viewer-1';
 const TARGET = 'target-1';
@@ -130,5 +137,59 @@ describe('getViewablePlayerProfile', () => {
     expect(result.stats.totals).toMatchObject({ arenas: 1, gamesPlayed: 4, wins: 3, losses: 1 });
     expect(result.stats.arenas).toHaveLength(1);
     expect(result.stats.arenas[0]).toMatchObject({ arenaId: ARENA, arenaName: 'Mirea Dinkers Club' });
+  });
+});
+
+describe('arena directory queries', () => {
+  beforeEach(() => {
+    prisma.arena.findMany.mockResolvedValue([]);
+    prisma.arena.count.mockResolvedValue(0);
+  });
+
+  it('listUserArenas asks for owned OR joined arenas, unpaged', () => {
+    listUserArenas(VIEWER);
+    const [args] = prisma.arena.findMany.mock.calls[0];
+    expect(args.where).toEqual(inArena(VIEWER));
+    // No take: this half is bounded by how many arenas one person belongs to,
+    // and it's the half they came for.
+    expect(args.take).toBeUndefined();
+    expect(args.skip).toBeUndefined();
+  });
+
+  it('listPublicArenas pages, and excludes what the viewer already has', () => {
+    listPublicArenas({ excludeIds: ['a', 'b'], skip: 24, take: 12 });
+    const [args] = prisma.arena.findMany.mock.calls[0];
+    expect(args.where).toEqual({ id: { notIn: ['a', 'b'] } });
+    expect(args).toMatchObject({ skip: 24, take: 12 });
+  });
+
+  it('orders the public list by a stable key, not createdAt alone', () => {
+    // Two arenas created in the same millisecond could otherwise swap places
+    // between the page-1 and page-2 queries, so a row appears twice or never.
+    listPublicArenas({ skip: 0, take: 12 });
+    const [args] = prisma.arena.findMany.mock.calls[0];
+    expect(args.orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+  });
+
+  it('omits the exclusion filter when the viewer has no arenas', () => {
+    // An empty `notIn` is dropped by Prisma anyway; not building it keeps the
+    // guest query trivially readable in logs.
+    listPublicArenas({ excludeIds: [], skip: 0, take: 12 });
+    expect(prisma.arena.findMany.mock.calls[0][0].where).toEqual({});
+  });
+
+  it('counts with the same filter the list uses', async () => {
+    // If these two disagree, the pager promises pages that render empty.
+    await countPublicArenas({ excludeIds: ['a'] });
+    listPublicArenas({ excludeIds: ['a'], skip: 0, take: 12 });
+    expect(prisma.arena.count.mock.calls[0][0].where).toEqual(
+      prisma.arena.findMany.mock.calls[0][0].where,
+    );
+  });
+
+  it('counts only active players, so departed rows do not inflate a card', async () => {
+    listPublicArenas({ skip: 0, take: 12 });
+    const [args] = prisma.arena.findMany.mock.calls[0];
+    expect(args.include._count.select.players).toEqual({ where: { leftAt: null } });
   });
 });

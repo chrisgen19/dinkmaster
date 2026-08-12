@@ -8,34 +8,96 @@ import {
 } from '@/lib/user-insights';
 
 /**
- * List every arena for the public directory, with owner and content counts.
- * @returns {Promise<Array<{id:string,name:string,description:string|null,ownerId:string,ownerName:string,playerCount:number,courtCount:number,matchCount:number}>>}
+ * Shape a directory row: the arena's own fields plus the owner name and the
+ * three counts the card shows.
+ *
+ * Active players only — departed rows are kept for history but must not
+ * inflate the public directory's player count.
  */
-export async function listArenas() {
-  const arenas = await prisma.arena.findMany({
-    orderBy: { createdAt: 'asc' },
-    include: {
-      owner: { select: { id: true, name: true } },
-      // Count active players only — departed rows are kept for history but
-      // must not inflate the public directory's player count.
-      _count: { select: { players: { where: { leftAt: null } }, courts: true, matches: true } },
-    },
-  });
+const DIRECTORY_SHAPE = {
+  include: {
+    owner: { select: { id: true, name: true } },
+    _count: { select: { players: { where: { leftAt: null } }, courts: true, matches: true } },
+  },
+};
 
-  return arenas.map((a) => ({
-    id: a.id,
-    name: a.name,
-    description: a.description,
-    ownerId: a.ownerId,
-    ownerName: a.owner.name,
-    playerCount: a._count.players,
-    courtCount: a._count.courts,
-    matchCount: a._count.matches,
-    scheduleDays: a.scheduleDays,
-    scheduleStart: a.scheduleStart,
-    scheduleEnd: a.scheduleEnd,
-    timezone: a.timezone,
-  }));
+/**
+ * Stable ordering for a paged list. `createdAt` alone is not a sort key: two
+ * arenas created in the same millisecond could swap places between requests
+ * for page 1 and page 2, so a row would appear twice or not at all.
+ */
+const DIRECTORY_ORDER = [{ createdAt: 'asc' }, { id: 'asc' }];
+
+const toDirectoryRow = (a) => ({
+  id: a.id,
+  name: a.name,
+  description: a.description,
+  ownerId: a.ownerId,
+  ownerName: a.owner.name,
+  playerCount: a._count.players,
+  courtCount: a._count.courts,
+  matchCount: a._count.matches,
+  scheduleDays: a.scheduleDays,
+  scheduleStart: a.scheduleStart,
+  scheduleEnd: a.scheduleEnd,
+  timezone: a.timezone,
+});
+
+/** A user's own arenas: owned OR joined. */
+const ownedOrJoined = (userId) => ({
+  OR: [{ ownerId: userId }, { memberships: { some: { userId } } }],
+});
+
+/**
+ * The signed-in user's arenas, for the directory's "Your arenas" section.
+ *
+ * Deliberately unpaginated: this is bounded by how many arenas one person
+ * belongs to, and it's the half of the page they came for. Ownership is
+ * canonical, so an arena you own still appears if its membership row is
+ * missing.
+ *
+ * @param {string} userId
+ */
+export async function listUserArenas(userId) {
+  const arenas = await prisma.arena.findMany({
+    where: ownedOrJoined(userId),
+    orderBy: DIRECTORY_ORDER,
+    ...DIRECTORY_SHAPE,
+  });
+  return arenas.map(toDirectoryRow);
+}
+
+/**
+ * One page of the arenas a user has NOT joined — the discoverable half.
+ *
+ * Paged in SQL rather than sliced afterwards: the directory renders a card per
+ * row, so an unbounded fetch made the page cost grow with every arena ever
+ * created (#163 measured 2.6s at 239 arenas against 14ms of query).
+ *
+ * @param {object} options
+ * @param {string[]} [options.excludeIds] - the viewer's own arenas, already listed above.
+ * @param {number} options.skip
+ * @param {number} options.take
+ */
+export async function listPublicArenas({ excludeIds = [], skip = 0, take = 12 } = {}) {
+  const arenas = await prisma.arena.findMany({
+    where: publicWhere(excludeIds),
+    orderBy: DIRECTORY_ORDER,
+    skip,
+    take,
+    ...DIRECTORY_SHAPE,
+  });
+  return arenas.map(toDirectoryRow);
+}
+
+/** How many arenas the public list has, for the pager. */
+export async function countPublicArenas({ excludeIds = [] } = {}) {
+  return prisma.arena.count({ where: publicWhere(excludeIds) });
+}
+
+/** Prisma omits an empty `notIn`, so build the filter only when there is one. */
+function publicWhere(excludeIds) {
+  return excludeIds.length > 0 ? { id: { notIn: excludeIds } } : {};
 }
 
 /**
