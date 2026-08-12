@@ -16,6 +16,9 @@
 
 # next.js
 /.next/
+# e2e build dirs (see NEXT_DIST_DIR in the Playwright configs)
+/.next-e2e/
+/.next-e2e-offline/
 /out/
 
 # production

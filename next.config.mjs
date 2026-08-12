@@ -2,6 +2,12 @@ import { withSerwist } from "@serwist/turbopack";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // A separate build directory when NEXT_DIST_DIR is set. The e2e config uses
+  // it so its dev server is a different Next.js instance from `pnpm dev`:
+  // Next refuses a second `next dev` for the same project directory whatever
+  // port it is given, so without this you could not run the suite while
+  // developing. It also keeps the two compilation caches apart.
+  ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
   async headers() {
     return [
       {
