@@ -848,16 +848,32 @@ export async function applyMatchDeletionTx(tx, arenaId, { match }) {
   // so a match it refuses is left completely untouched.
   await applyMatchReversalTx(tx, arenaId, { match });
 
-  // Now the fill's side of the ledger.
+  // Now the fill's side of the ledger. `gamesPlayed` is cumulative across
+  // sessions — `prepareNextSession` deliberately leaves it alone — so it comes
+  // back out whatever session the match belongs to.
   const ids = snapshots.map((mp) => mp.playerId);
   await tx.player.updateMany({
     where: { id: { in: ids }, arenaId, gamesPlayed: { gt: 0 } },
     data: { gamesPlayed: { decrement: 1 } },
   });
-  const team1 = snapshots.filter((mp) => mp.team === 1).map((mp) => mp.playerId);
-  const team2 = snapshots.filter((mp) => mp.team === 2).map((mp) => mp.playerId);
-  await unbumpPartnership(tx, team1[0], team1[1]);
-  await unbumpPartnership(tx, team2[0], team2[1]);
+
+  // Partnerships are NOT cumulative: a session reset wipes the table so the
+  // variety algorithm starts unbiased by last week. So a match from before the
+  // boundary no longer has a contribution in the current ledger — decrementing
+  // for it would eat a pairing THIS session's fills recorded, and tell
+  // matchmaking two players have partnered one time fewer than they have.
+  const arena = await tx.arena.findUnique({
+    where: { id: arenaId },
+    select: { lastSessionResetAt: true },
+  });
+  const boundary = arena?.lastSessionResetAt ?? null;
+  const countedThisSession = !boundary || new Date(match.createdAt) >= new Date(boundary);
+  if (countedThisSession) {
+    const team1 = snapshots.filter((mp) => mp.team === 1).map((mp) => mp.playerId);
+    const team2 = snapshots.filter((mp) => mp.team === 2).map((mp) => mp.playerId);
+    await unbumpPartnership(tx, team1[0], team1[1]);
+    await unbumpPartnership(tx, team2[0], team2[1]);
+  }
 
   // deleteMany (not delete) so a row that vanished under us is a clean
   // count===0 rather than a thrown P2025, and scoped to the arena so a match
