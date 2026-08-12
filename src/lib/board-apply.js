@@ -263,10 +263,11 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome, expected
   const rack = queued.map((p) => p.id);
 
   // Recent results drive BOTH the deck split and the balanced team split, so
-  // one query serves both. Legacy pairing with no deck mode ignores results
-  // entirely, and a replayed outcome already records the split, so skip the
-  // query when nobody needs it.
-  const needsResults = deckMode || (!outcome && balanced);
+  // one query serves both. A replayed outcome already records the four AND the
+  // split, so it needs neither — skipping the query matters because a sync
+  // batch replays many fills inside ONE transaction, each holding the queue
+  // lock. Legacy pairing with no deck mode ignores results entirely.
+  const needsResults = !outcome && (deckMode || balanced);
   const recentMatches = needsResults
     ? await sessionRecentMatches(tx, arenaId, arena?.lastSessionResetAt)
     : [];
@@ -295,11 +296,12 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome, expected
     // it took its turn — however the four were assembled. Anything else lets
     // the same deck go out twice running.
     deck = manual.deck;
-  } else if (deckMode) {
+  } else if (deckMode && !outcome) {
     const picked = nextDeck(rack, recentResults(recentMatches, rack), prevDeck);
     deck = picked.deck;
     players = picked.players;
   } else {
+    // Placeholder for the replayed-outcome path, which replaces both below.
     players = rack.slice(0, ON_DECK_SIZE);
   }
 
@@ -323,7 +325,19 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome, expected
         new Set(outcome.players).size === ON_DECK_SIZE &&
         outcome.players.every((id) => rack.includes(id))
       : sameMembers(outcome.players, rack.slice(0, ON_DECK_SIZE));
-    if (!selectionValid || !teamsCoverPlayers) throw new Error('OUTCOME_MISMATCH');
+    // The recorded deck is written straight into `Arena.lastDeckFilled`, which
+    // then drives `nextDeck` and the sync fingerprint — so it has to be in the
+    // documented domain, exactly as the `manual` path above requires. A
+    // corrupted stored event log otherwise sets an arbitrary pointer, and
+    // `nextDeck` silently degrades to "always prefer winners".
+    const deckValid =
+      outcome.deck === undefined ||
+      outcome.deck === null ||
+      outcome.deck === DECK_WIN ||
+      outcome.deck === DECK_LOSE;
+    if (!selectionValid || !teamsCoverPlayers || !deckValid) {
+      throw new Error('OUTCOME_MISMATCH');
+    }
     players = outcome.players;
     deck = outcome.deck ?? null;
   }

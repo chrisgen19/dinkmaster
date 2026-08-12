@@ -444,6 +444,27 @@ describe('fillCourt', () => {
       expect(replayed.state.lastDeckFilled).toBe('L');
     });
 
+    it('refuses a recorded fill whose deck is outside W/L/null', () => {
+      // The recorded deck becomes `lastDeckFilled`, which drives the next
+      // fill's alternation and is hashed into the sync fingerprint — so a
+      // corrupted stored log must be rejected, not replayed.
+      const state = eightState({ lastDeckFilled: 'W' });
+      const resolved = resolveCommand(state, DECKS, { type: 'fillCourt', courtId: 'c1' }, opts());
+      const corrupted = { ...resolved.event, outcome: { ...resolved.event.outcome, deck: 'X' } };
+      expect(applyEvent(state, DECKS, corrupted).error).toBe('STATE_MISMATCH');
+    });
+
+    it('accepts a recorded fill with no deck at all', () => {
+      // A log written before decks shipped carries no `deck` key; that is the
+      // classic fallback, not corruption.
+      const state = eightState({ lastDeckFilled: 'W' });
+      const resolved = resolveCommand(state, DECKS, { type: 'fillCourt', courtId: 'c1' }, opts());
+      const { deck: _omitted, ...outcome } = resolved.event.outcome;
+      const replayed = applyEvent(state, DECKS, { ...resolved.event, outcome });
+      expect(replayed.error).toBeUndefined();
+      expect(replayed.state.lastDeckFilled).toBeNull();
+    });
+
     it('refuses a recorded fill naming someone who left the rack', () => {
       const state = eightState({ lastDeckFilled: 'W' });
       const resolved = resolveCommand(state, DECKS, { type: 'fillCourt', courtId: 'c1' }, opts());
@@ -531,6 +552,73 @@ describe('fillCourt', () => {
         opts(),
       );
       expect(result.event.outcome.players).toEqual(['a', 'b', 'c', 'd']);
+    });
+
+    // `skipRestoresPriority: false` takes the other skip branch, whose
+    // arithmetic mixes two coordinate systems: the replacement is picked out of
+    // the DECK bucket, but the slot it frees is a RACK position.
+    //
+    // Rack interleaves six winners and four losers, so the winners' rack slots
+    // are 0,2,4,6,8,9 and the losers' are 1,3,5,7.
+    const legacyRack = ['w1', 'l1', 'w2', 'l2', 'w3', 'l3', 'w4', 'l4', 'w5', 'w6'];
+    const legacyState = () =>
+      eightState({
+        players: legacyRack.map((id) => makePlayer(id)),
+        queue: legacyRack,
+        matchHistory: [
+          played(['w1', 'w2'], ['l1', 'l2'], '2026-07-20T08:20:00.000Z'),
+          played(['w3', 'w4'], ['l3', 'l4'], '2026-07-20T08:10:00.000Z'),
+          played(['w5', 'w6'], ['yy', 'xx'], '2026-07-20T08:00:00.000Z'),
+        ],
+      });
+
+    it('legacy skip: the same-deck replacement takes the freed RACK slot', () => {
+      // w6 is SIXTH in the winners bucket, so this is a genuine manual pick —
+      // picking the fifth would collapse to the auto-pick path and never reach
+      // this arithmetic at all.
+      const result = resolveCommand(
+        legacyState(),
+        { ...DECKS, skipRestoresPriority: false },
+        { type: 'skipPlayer', playerId: 'w1', replacementId: 'w6', isManager: true },
+        opts(),
+      );
+
+      expect(result.error).toBeUndefined();
+      // w6 lands in w1's freed rack slot; w1 goes to the back.
+      expect(result.state.queue).toEqual([
+        'w6', 'l1', 'w2', 'l2', 'w3', 'l3', 'w4', 'l4', 'w5', 'w1',
+      ]);
+      // Every loser is exactly where they were — a winners-deck skip must not
+      // disturb the other deck.
+      for (const [slot, id] of [[1, 'l1'], [3, 'l2'], [5, 'l3'], [7, 'l4']]) {
+        expect(result.state.queue[slot]).toBe(id);
+      }
+      expect(playerIn(result.state, 'w1').waitRounds).toBe(0);
+      expect(playerIn(result.state, 'w1').skipBoosted).toBe(false);
+    });
+
+    it('legacy skip: auto-pick promotes the next in the same deck', () => {
+      const result = resolveCommand(
+        legacyState(),
+        { ...DECKS, skipRestoresPriority: false },
+        { type: 'skipPlayer', playerId: 'w1', isManager: true },
+        opts(),
+      );
+      // No explicit pick: w1 just vacates and everyone shifts up, which
+      // promotes w5 into the winners deck by position alone.
+      expect(result.state.queue).toEqual([
+        'l1', 'w2', 'l2', 'w3', 'l3', 'w4', 'l4', 'w5', 'w6', 'w1',
+      ]);
+    });
+
+    it('legacy skip: refuses a replacement from the other deck', () => {
+      const result = resolveCommand(
+        legacyState(),
+        { ...DECKS, skipRestoresPriority: false },
+        { type: 'skipPlayer', playerId: 'w1', replacementId: 'l4', isManager: true },
+        opts(),
+      );
+      expect(result.error).toBe('That replacement is no longer available. Pick again.');
     });
 
     it('refuses to skip a paddle that is not on its own deck', () => {

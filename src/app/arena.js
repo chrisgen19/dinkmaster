@@ -405,6 +405,12 @@ export default function Arena({
       // child component refreshing after a link approval) still surfaces a
       // concurrent reset that happened on the server.
       setLastSessionResetAt(initialState.lastSessionResetAt);
+      // Same reasoning for the deck alternation pointer: a refresh that skips
+      // `applyResult` would otherwise leave it stale, and the rack would label
+      // the wrong deck "Up next" until the next SSE frame. `handleFillCourt`
+      // then sends `expected` for that wrong deck, which the server refuses —
+      // a needless "the court or queue changed" for the manager.
+      setLastDeckFilled(initialState.lastDeckFilled ?? null);
       setOfflineHold(initialState.offlineHold ?? null);
     }
   }

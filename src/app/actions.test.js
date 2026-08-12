@@ -28,7 +28,9 @@ vi.mock('@/lib/prisma', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
-    court: { findMany: vi.fn() },
+    // `updateMany` is used outside a transaction by `updateArenaMatchmaking`,
+    // which clears the courts' deck pointers when the mode is switched off.
+    court: { findMany: vi.fn(), updateMany: vi.fn() },
     match: { findUnique: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
     player: { count: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
     joinRequest: { upsert: vi.fn(), deleteMany: vi.fn(), findUnique: vi.fn() },
@@ -50,7 +52,7 @@ import { MAX_WAIT_THRESHOLD } from '@/lib/matchmaking';
 import { MAX_TARGET_SCORE, MAX_LEADERBOARD_SIZE } from '@/lib/match-defaults';
 import { boardFingerprint } from '@/lib/board-fingerprint';
 import * as actions from '@/app/actions';
-import { applyMatchDeletionTx } from '@/lib/board-apply';
+import { applyFillCourtTx, applyMatchDeletionTx } from '@/lib/board-apply';
 
 const ARENA = 'arena_test';
 const ERR = 'denied';
@@ -317,6 +319,23 @@ describe('arena server actions — authorization', () => {
       it('does NOT wipe skipBoosted when the setting is being turned on', async () => {
         await actions.updateArenaMatchmaking(ARENA, base);
         expect(prisma.player.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('clears the courts\' deck pointers when win/lose decks are switched off', async () => {
+        // Nulling `Arena.lastDeckFilled` isn't enough: a court filled while the
+        // mode was on still carries its own pre-fill copy, and cancelFill
+        // restores that copy unconditionally — putting the stale pointer right
+        // back, ready for a later re-enable to resume from.
+        await actions.updateArenaMatchmaking(ARENA, { ...base, splitDeckByResult: false });
+        expect(prisma.court.updateMany).toHaveBeenCalledWith({
+          where: { arenaId: ARENA, fillPrevDeck: { not: null } },
+          data: { fillPrevDeck: null },
+        });
+      });
+
+      it('leaves the courts alone when the mode is being turned on', async () => {
+        await actions.updateArenaMatchmaking(ARENA, { ...base, splitDeckByResult: true });
+        expect(prisma.court.updateMany).not.toHaveBeenCalled();
       });
 
       it('reports a clean error when the arena no longer exists', async () => {
@@ -3283,6 +3302,47 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
       await actions.fillCourt(ARENA, COURT);
 
       expect(tx.arena.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('skips the recent-match query when replaying a recorded outcome', async () => {
+      // A sync batch replays many fills inside ONE transaction holding the
+      // queue lock; a recorded outcome already names the four AND the split, so
+      // querying for results per event is pure lock-hold cost.
+      const tx = makeDeckTx({ lastDeckFilled: 'L' });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await applyFillCourtTx(tx, ARENA, {
+        courtId: COURT,
+        outcome: {
+          players: WINNERS,
+          team1: ['w1', 'w2'],
+          team2: ['w3', 'w4'],
+          deck: 'W',
+        },
+      });
+
+      expect(tx.match.findMany).not.toHaveBeenCalled();
+      expect(stacked(tx)).toEqual(WINNERS);
+    });
+
+    it('refuses a recorded outcome whose deck is outside W/L/null', async () => {
+      // The recorded deck is written straight into `lastDeckFilled`, which
+      // drives `nextDeck` and the sync fingerprint.
+      const tx = makeDeckTx({ lastDeckFilled: 'L' });
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+      await expect(
+        applyFillCourtTx(tx, ARENA, {
+          courtId: COURT,
+          outcome: {
+            players: WINNERS,
+            team1: ['w1', 'w2'],
+            team2: ['w3', 'w4'],
+            deck: 'X',
+          },
+        }),
+      ).rejects.toThrow('OUTCOME_MISMATCH');
+      expect(tx.courtSlot.createMany).not.toHaveBeenCalled();
     });
 
     // Hand-topping a short deck: the organizer fills the empty slots from the

@@ -406,6 +406,19 @@ export async function updateArenaMatchmaking(
     });
   }
 
+  // Same shape of cleanup for the deck alternation. The write above nulls
+  // `Arena.lastDeckFilled`, but any court filled while the mode was on still
+  // carries its own pre-fill copy — and `applyCancelFillTx` restores that copy
+  // unconditionally. Without this, disabling the mode and then cancelling such
+  // a fill puts the stale pointer straight back, and a later re-enable resumes
+  // from it. Idempotent: a no-op when the mode was already off.
+  if (!splitDeckByResult) {
+    await prisma.court.updateMany({
+      where: { arenaId, fillPrevDeck: { not: null } },
+      data: { fillPrevDeck: null },
+    });
+  }
+
   return {
     matchmaking: {
       starveThreshold: starve,

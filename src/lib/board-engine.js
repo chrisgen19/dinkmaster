@@ -186,9 +186,19 @@ function applyFillCourt(state, settings, event) {
       new Set(filled).size === 4 &&
       filled.every((id) => state.queue.includes(id))
     : sameMembers(filled, state.queue.slice(0, 4));
+  // The recorded deck becomes `state.lastDeckFilled`, which drives the next
+  // fill's alternation and is hashed into the sync fingerprint — so constrain
+  // it to the documented domain here too, or a corrupted stored log quietly
+  // poisons both. Server-side twin in `applyFillCourtTx`.
+  const deckValid =
+    outcome?.deck === undefined ||
+    outcome?.deck === null ||
+    outcome?.deck === DECK_WIN ||
+    outcome?.deck === DECK_LOSE;
   if (
     !outcome ||
     !selectionValid ||
+    !deckValid ||
     !sameMembers([...outcome.team1, ...outcome.team2], filled)
   ) {
     return { error: 'STATE_MISMATCH' };
