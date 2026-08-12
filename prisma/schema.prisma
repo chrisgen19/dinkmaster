@@ -67,6 +67,17 @@ model Arena {
   leaderboardSize       Int     @default(5)
   countOffScheduleGames Boolean @default(true)
 
+  // When on, `fillCourt` splits the stacked four by pairing each player who
+  // LOST their most recent game with one who WON theirs, breaking ties by the
+  // closer-rated split and then by fewest repeat partnerships. When off, the
+  // arena keeps the legacy rule: fewest repeat partnerships only, with a
+  // random tie-break and no skill input at all. Default `true` — existing
+  // arenas opt in (this migration backfills them), and a manager who prefers
+  // the pure anti-clique rotation can switch it off from Settings →
+  // Matchmaking. Both modes live in `src/lib/pairing.js` so the online action
+  // and the offline board engine can never disagree about either one.
+  balancedPairing Boolean @default(true)
+
   // When on, the arena surfaces the "Partnership Matrix" tab (a pairing-count
   // grid). Hidden by default — it's an advanced/diagnostic view — and opt-in
   // per arena from Settings → Match Defaults. Visibility is arena-wide, not

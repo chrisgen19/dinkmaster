@@ -57,6 +57,7 @@ export function engineSettings({ matchmaking, matchDefaults }) {
     emergencyWait: matchmaking.emergencyWait,
     skipRestoresPriority: matchmaking.skipRestoresPriority,
     skipPickReplacement: matchmaking.skipPickReplacement,
+    balancedPairing: matchmaking.balancedPairing,
   };
 }
 

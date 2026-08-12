@@ -41,7 +41,7 @@ const bit = (value) => (value ? 1 : 0);
  *
  * @param {object} state - getState shape: { players, queue, courts, history }
  * @param {object} settings - { targetScore, starveThreshold, emergencyWait,
- *   skipRestoresPriority, skipPickReplacement }
+ *   skipRestoresPriority, skipPickReplacement, balancedPairing }
  */
 export function canonicalBoardString(state, settings) {
   const players = [...state.players]
@@ -75,7 +75,11 @@ export function canonicalBoardString(state, settings) {
   }
   const partnerships = pairs.sort().join(';');
 
-  const rules = `${settings.targetScore}|${settings.starveThreshold}|${settings.emergencyWait}|${bit(settings.skipRestoresPriority)}|${bit(settings.skipPickReplacement)}`;
+  // `balancedPairing` belongs here: it changes which team split a fill picks,
+  // so a device that ran a session under the old value produced a board the
+  // server would not have produced. Absent (a snapshot predating the setting)
+  // hashes as ON, matching the column default.
+  const rules = `${settings.targetScore}|${settings.starveThreshold}|${settings.emergencyWait}|${bit(settings.skipRestoresPriority)}|${bit(settings.skipPickReplacement)}|${bit(settings.balancedPairing !== false)}`;
 
   return `p:${players}\nq:${queue}\nc:${courts}\nh:${partnerships}\ns:${rules}`;
 }

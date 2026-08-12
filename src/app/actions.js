@@ -331,6 +331,7 @@ export async function updateArenaMatchmaking(
     emergencyWait: emergencyInput,
     skipRestoresPriority: skipPriorityInput,
     skipPickReplacement: skipPickInput,
+    balancedPairing: balancedPairingInput,
   } = {},
 ) {
   const guard = await requireArenaManager(arenaId);
@@ -362,10 +363,20 @@ export async function updateArenaMatchmaking(
   if (skipPickReplacement === null) {
     return { error: 'Pick-replacement setting must be true or false.' };
   }
+  const balancedPairing = asBool(balancedPairingInput);
+  if (balancedPairing === null) {
+    return { error: 'Balanced-pairing setting must be true or false.' };
+  }
 
   const updated = await prisma.arena.updateMany({
     where: { id: arenaId },
-    data: { starveThreshold: starve, emergencyWait: emergency, skipRestoresPriority, skipPickReplacement },
+    data: {
+      starveThreshold: starve,
+      emergencyWait: emergency,
+      skipRestoresPriority,
+      skipPickReplacement,
+      balancedPairing,
+    },
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
 
@@ -388,6 +399,7 @@ export async function updateArenaMatchmaking(
       emergencyWait: emergency,
       skipRestoresPriority,
       skipPickReplacement,
+      balancedPairing,
     },
   };
 }
@@ -1368,6 +1380,10 @@ export async function syncOfflineEvents(arenaId, input) {
           emergencyWait: true,
           skipRestoresPriority: true,
           skipPickReplacement: true,
+          // Part of the hashed rules — omitting it would make the server
+          // fingerprint a legacy-mode arena as if it were balanced, and every
+          // strict sync from that arena would report a phantom divergence.
+          balancedPairing: true,
         },
       });
       if (!arena) throw new Error('ARENA_GONE');

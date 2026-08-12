@@ -34,6 +34,21 @@ async function addWalkIns(page, names) {
   await page.getByRole('button', { name: 'Close roster' }).click();
 }
 
+/**
+ * The short display names on one side of the single playing court.
+ *
+ * Coupled to court-card.js markup: each side renders a `Team A`/`Team B`
+ * caption followed by a sibling <ul> of names. Only a PLAYING court renders
+ * those captions, so this resolves unambiguously while one court is live.
+ */
+async function teamNames(page, label) {
+  const list = page
+    .locator(`xpath=//*[normalize-space(text())="${label}"]/following-sibling::ul[1]`)
+    .first();
+  await expect(list.locator('li')).toHaveCount(2);
+  return (await list.locator('li').allInnerTexts()).map((s) => s.trim());
+}
+
 test.describe('arenas', () => {
   test('a signed-in user can create an arena and manage it', async ({ page }) => {
     await registerFreshUser(page);
@@ -134,6 +149,58 @@ test.describe('arenas', () => {
 
     // User B is now a member
     await expect(page.getByText(/You're a member of this arena/)).toBeVisible();
+  });
+
+  // Covers the ONLINE board round trip end to end: the real `fillCourt` and
+  // `endMatch` server actions, against a real database, driven from the UI.
+  // The offline equivalent lives in offline-session.spec.js.
+  //
+  // SCOPE NOTE: the closing "winners get split up" assertion is a rotation
+  // regression guard, NOT a test of the pairing rule in src/lib/pairing.js.
+  // With four players it cannot distinguish the two: the pair that just won
+  // necessarily just partnered, so their partnership count is 1 while both
+  // cross pairs sit at 0 — which means the OLD lowest-partnership rule breaks
+  // them up for its own unrelated reason. Verified by reverting the rule and
+  // watching this test still pass. Discriminating the rule needs two recent
+  // winners who did NOT partner each other, i.e. winners from two different
+  // matches, which auto-mix then reorders nondeterministically. That coverage
+  // lives in src/lib/pairing.test.js, where the inputs can be pinned.
+  test('a manager can stack a court, record a score, and re-stack', async ({ page }) => {
+    await registerFreshUser(page);
+    await createArenaFromDirectory(page, `Stack Arena ${Date.now()}`);
+    await expect(page).toHaveURL(/\/arena\/.+/);
+
+    // Exactly four on the rack: the owner (auto-added as paddle #1) plus three
+    // walk-ins. Four is deliberate — one court's worth, so the same four
+    // recycle and re-stack, and auto-mix stays out of it (it needs >4 waiting).
+    await addWalkIns(page, ['Ana', 'Ben', 'Cai']);
+    await expect(page.getByText('4 in rack').first()).toBeVisible();
+
+    await page.getByRole('button', { name: /Stack Next 4 Paddles/ }).first().click();
+
+    // The court is live with two a side, and the rack is drained.
+    const firstA = await teamNames(page, 'Team A');
+    const firstB = await teamNames(page, 'Team B');
+    expect(new Set([...firstA, ...firstB]).size).toBe(4);
+    await expect(page.getByText('0 in rack').first()).toBeVisible();
+
+    // Team A takes it 11-5, making them the recent winners and B the losers.
+    await page.getByRole('button', { name: /Finish Game & Record Score/ }).first().click();
+    await page.getByRole('textbox', { name: 'Team A score' }).fill('11');
+    await page.getByRole('textbox', { name: 'Team B score' }).fill('5');
+    await page.getByRole('button', { name: 'Save Score' }).click();
+    await expect(page.getByText('4 in rack').first()).toBeVisible();
+
+    // Re-stack the same four; the winning pair must not be sent back out
+    // together (see the SCOPE NOTE above on what this does and doesn't prove).
+    await page.getByRole('button', { name: /Stack Next 4 Paddles/ }).first().click();
+    const secondA = await teamNames(page, 'Team A');
+    const secondB = await teamNames(page, 'Team B');
+
+    for (const side of [secondA, secondB]) {
+      expect(side.filter((n) => firstA.includes(n))).toHaveLength(1);
+      expect(side.filter((n) => firstB.includes(n))).toHaveLength(1);
+    }
   });
 
   // Covers the correction round trip through the real `updateMatchScore`

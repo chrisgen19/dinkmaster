@@ -1,4 +1,5 @@
 import { ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
+import { bestMatchups, rankMatchups, recentResults } from '@/lib/pairing';
 import { RATING_BASELINE, computeMatchRatings } from '@/lib/rating';
 import { validateMatchScore } from '@/lib/scoring';
 import { diffLineup, validateLineup } from '@/lib/court-lineup';
@@ -621,20 +622,32 @@ export function resolveCommand(state, settings, command, opts = {}) {
       const court = state.courts.find((c) => c.id === command.courtId);
       if (!court || court.status !== 'vacant') return { error: MSG_COURT_CHANGED };
       if (state.queue.length < 4) return { error: MSG_NOT_ENOUGH };
-      const [p0, p1, p2, p3] = state.queue.slice(0, 4);
-      const weightOf = (t1, t2) =>
-        pairCount(state.history, t1[0], t1[1]) + pairCount(state.history, t2[0], t2[1]);
-      const matchups = [
-        { team1: [p0, p1], team2: [p2, p3] },
-        { team1: [p0, p2], team2: [p1, p3] },
-        { team1: [p0, p3], team2: [p1, p2] },
-      ].map((m) => ({ ...m, weight: weightOf(m.team1, m.team2) }));
-      const minWeight = Math.min(...matchups.map((m) => m.weight));
-      const best = shuffleWith(rng, matchups.filter((m) => m.weight === minWeight))[0];
+      const top4 = state.queue.slice(0, 4);
+      // Same ranking as the server's `applyFillCourtTx`: recent losers partner
+      // recent winners, then closer-rated, then fewest repeat partnerships —
+      // or, when the arena has opted out, fewest repeats alone.
+      // `state.matchHistory` is newest-first and is updated by `applyEndMatch`,
+      // so consecutive offline fills see results from this session's own games.
+      // A settings snapshot captured before this feature has no flag at all;
+      // treat that as ON, matching the column default.
+      const balanced = settings.balancedPairing !== false;
+      const recentMatches = state.matchHistory.map((m) => ({
+        score1: m.score1,
+        score2: m.score2,
+        team1: m.team1.map((p) => p.id),
+        team2: m.team2.map((p) => p.id),
+      }));
+      const ranked = rankMatchups(top4, {
+        results: recentResults(recentMatches, top4),
+        ratings: new Map(state.players.map((p) => [p.id, p.rating])),
+        pairCount: (a, b) => pairCount(state.history, a, b),
+        balanced,
+      });
+      const best = shuffleWith(rng, bestMatchups(ranked))[0];
       event = {
         ...base,
         payload: { courtId: command.courtId },
-        outcome: { players: [p0, p1, p2, p3], team1: best.team1, team2: best.team2 },
+        outcome: { players: top4, team1: best.team1, team2: best.team2 },
       };
       break;
     }

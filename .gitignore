@@ -71,3 +71,6 @@ ScreenRecording*
 
 # e2e/screenshot.spec.js output artifact
 homepage_screenshot.png
+
+# simulation bundle (scripts/simulate-session.mjs, see its header)
+.sim-build.mjs
