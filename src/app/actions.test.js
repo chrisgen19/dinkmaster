@@ -362,8 +362,33 @@ describe('arena server actions — authorization', () => {
     });
 
     describe('updateMatchScore()', () => {
-      // A recorded 11-5 win for Team A on this arena.
-      const MATCH = { id: 'm1', arenaId: ARENA, score1: 11, score2: 5 };
+      // A recorded 11-5 win for Team A (w1+w2) over Team B (l1+l2), rated at
+      // +16 to Team A. The four therefore sit at 1016/1016/984/984, which is
+      // exactly 1000 apiece once this match's delta is backed out.
+      const MATCH = { id: 'm1', arenaId: ARENA, score1: 11, score2: 5, ratingDelta: 16 };
+      const TEAM1 = ['w1', 'w2'];
+      const TEAM2 = ['l1', 'l2'];
+      const RATED = [
+        { id: 'w1', rating: 1016 },
+        { id: 'w2', rating: 1016 },
+        { id: 'l1', rating: 984 },
+        { id: 'l2', rating: 984 },
+      ];
+
+      /** tx double for the flip path: roster snapshot + live ratings. */
+      const makeFlipTx = ({ snapshots, players = RATED, updatedCount = 1 } = {}) => ({
+        $executeRaw: vi.fn(),
+        matchPlayer: {
+          findMany: vi.fn().mockResolvedValue(
+            snapshots ?? [
+              ...TEAM1.map((playerId) => ({ playerId, team: 1 })),
+              ...TEAM2.map((playerId) => ({ playerId, team: 2 })),
+            ],
+          ),
+        },
+        player: { findMany: vi.fn().mockResolvedValue(players), update: vi.fn(), updateMany: vi.fn() },
+        match: { updateMany: vi.fn().mockResolvedValue({ count: updatedCount }) },
+      });
 
       beforeEach(() => {
         requireArenaManager.mockResolvedValue({
@@ -375,23 +400,24 @@ describe('arena server actions — authorization', () => {
         prisma.match.updateMany.mockResolvedValue({ count: 1 });
       });
 
-      it('persists a winner-preserving correction', async () => {
+      it('persists a winner-preserving correction without touching ratings', async () => {
         const result = await actions.updateMatchScore(ARENA, 'm1', 11, 8);
         expect(result.error).toBeUndefined();
         expect(prisma.match.updateMany).toHaveBeenCalledWith({
-          where: { id: 'm1', arenaId: ARENA },
-          // `editedAt` stamps the row as corrected after the fact.
+          // Scoped by the scoreline it was computed against, so a second
+          // manager's simultaneous correction is a clean miss.
+          where: { id: 'm1', arenaId: ARENA, score1: 11, score2: 5 },
           data: { score1: 11, score2: 8, editedAt: expect.any(Date) },
         });
+        // No reversal transaction: the winner did not change.
+        expect(prisma.$transaction).not.toHaveBeenCalled();
       });
 
       it('accepts numeric strings from the client', async () => {
         await actions.updateMatchScore(ARENA, 'm1', '13', '11');
-        expect(prisma.match.updateMany).toHaveBeenCalledWith({
-          where: { id: 'm1', arenaId: ARENA },
-          // `editedAt` stamps the row as corrected after the fact.
-          data: { score1: 13, score2: 11, editedAt: expect.any(Date) },
-        });
+        expect(prisma.match.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ score1: 13, score2: 11 }) }),
+        );
       });
 
       it('no-ops when the scoreline is unchanged', async () => {
@@ -400,19 +426,198 @@ describe('arena server actions — authorization', () => {
         expect(prisma.match.updateMany).not.toHaveBeenCalled();
       });
 
-      it('rejects a correction that flips the winner', async () => {
+      it('reverses and re-rates the match when the winner flips', async () => {
+        const tx = makeFlipTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
         const result = await actions.updateMatchScore(ARENA, 'm1', 5, 11);
-        expect(result.error).toMatch(/changes who won/i);
-        expect(prisma.match.updateMany).not.toHaveBeenCalled();
+        expect(result.error).toBeUndefined();
+
+        // Backing out +16 puts all four at 1000; the flipped result then rates
+        // an even matchup the other way, so team 2 gains what team 1 loses.
+        const ratingFor = (id) => tx.player.update.mock.calls.find((c) => c[0].where.id === id)[0].data.rating;
+        expect(ratingFor('w1')).toBe(984);
+        expect(ratingFor('w2')).toBe(984);
+        expect(ratingFor('l1')).toBe(1016);
+        expect(ratingFor('l2')).toBe(1016);
+
+        // The stored delta follows the new outcome, so the flip is itself
+        // reversible — flipping back must land on the original ratings.
+        expect(tx.match.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ ratingDelta: -16 }) }),
+        );
+
+        // W/L swaps: the old winners give one back and take a loss.
+        expect(tx.player.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: TEAM1 }, wins: { gt: 0 } },
+          data: { wins: { decrement: 1 } },
+        });
+        expect(tx.player.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: TEAM2 }, losses: { gt: 0 } },
+          data: { losses: { decrement: 1 } },
+        });
+        expect(tx.player.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: TEAM2 } },
+          data: { wins: { increment: 1 } },
+        });
+        expect(tx.player.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: TEAM1 } },
+          data: { losses: { increment: 1 } },
+        });
       });
 
-      // A legacy tie banked no win/loss and was rated as a draw, so every legal
-      // correction of it changes the outcome.
-      it('rejects any correction of a legacy tie record', async () => {
-        prisma.match.findUnique.mockResolvedValueOnce({ ...MATCH, score1: 9, score2: 9 });
+      it('flipping back restores the ratings the match started from', async () => {
+        // Round trip on the output of the previous test: 984/984/1016/1016 at
+        // delta -16 must come back to 1016/1016/984/984 at delta +16.
+        prisma.match.findUnique.mockResolvedValue({
+          ...MATCH,
+          score1: 5,
+          score2: 11,
+          ratingDelta: -16,
+        });
+        const tx = makeFlipTx({
+          players: [
+            { id: 'w1', rating: 984 },
+            { id: 'w2', rating: 984 },
+            { id: 'l1', rating: 1016 },
+            { id: 'l2', rating: 1016 },
+          ],
+        });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.updateMatchScore(ARENA, 'm1', 11, 5);
+
+        const ratingFor = (id) => tx.player.update.mock.calls.find((c) => c[0].where.id === id)[0].data.rating;
+        expect(ratingFor('w1')).toBe(1016);
+        expect(ratingFor('l1')).toBe(984);
+        expect(tx.match.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ ratingDelta: 16 }) }),
+        );
+      });
+
+      it('stays zero-sum and bounded when the four have played since', async () => {
+        // The reconstruction subtracts this match's delta from CURRENT ratings,
+        // so once the four have played on, it recovers "current minus this
+        // match" rather than the true pre-match ratings, and the replacement
+        // delta is computed from slightly-off strengths. Two invariants keep
+        // that honest, and both are asserted here rather than argued:
+        //
+        //   1. Zero-sum — the correction moves points between the four, never
+        //      invents or destroys them.
+        //   2. Bounded — a correction only ever swaps ONE match's contribution,
+        //      and any single delta is inside ±K (32), so no player can move by
+        //      more than 2K however stale the match is. Errors cannot compound
+        //      across corrections.
+        const drifted = [
+          { id: 'w1', rating: 1080 }, // won a lot since
+          { id: 'w2', rating: 1016 },
+          { id: 'l1', rating: 930 }, // lost a lot since
+          { id: 'l2', rating: 984 },
+        ];
+        const totalBefore = drifted.reduce((sum, p) => sum + p.rating, 0);
+        const tx = makeFlipTx({ players: drifted });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        await actions.updateMatchScore(ARENA, 'm1', 5, 11);
+
+        const written = tx.player.update.mock.calls.map((c) => ({
+          id: c[0].where.id,
+          rating: c[0].data.rating,
+        }));
+        expect(written).toHaveLength(4);
+        expect(written.reduce((sum, p) => sum + p.rating, 0)).toBe(totalBefore);
+        for (const p of written) {
+          const was = drifted.find((d) => d.id === p.id).rating;
+          expect(Math.abs(p.rating - was)).toBeLessThanOrEqual(64);
+        }
+      });
+
+      it('correcting a tie banks new counters without taking any back', async () => {
+        // A tie recorded no win or loss for anyone, so the reversal has nothing
+        // to decrement — it must only apply the new outcome's counters.
+        prisma.match.findUnique.mockResolvedValue({
+          ...MATCH,
+          score1: 9,
+          score2: 9,
+          ratingDelta: 0, // an even tie moves nobody
+        });
+        const tx = makeFlipTx({
+          players: [
+            { id: 'w1', rating: 1000 },
+            { id: 'w2', rating: 1000 },
+            { id: 'l1', rating: 1000 },
+            { id: 'l2', rating: 1000 },
+          ],
+        });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
         const result = await actions.updateMatchScore(ARENA, 'm1', 11, 9);
-        expect(result.error).toMatch(/changes who won/i);
-        expect(prisma.match.updateMany).not.toHaveBeenCalled();
+        expect(result.error).toBeUndefined();
+
+        const counterCalls = tx.player.updateMany.mock.calls.map((c) => c[0]);
+        expect(counterCalls).toHaveLength(2); // the new winner and loser only
+        expect(JSON.stringify(counterCalls)).not.toMatch(/decrement/);
+        expect(counterCalls).toContainEqual({
+          where: { id: { in: TEAM1 } },
+          data: { wins: { increment: 1 } },
+        });
+        expect(counterCalls).toContainEqual({
+          where: { id: { in: TEAM2 } },
+          data: { losses: { increment: 1 } },
+        });
+      });
+
+      it('refuses a flip on a match recorded before rating deltas were stored', async () => {
+        // Null delta means the rating effect was never recorded and cannot be
+        // recovered — refuse rather than approximate.
+        prisma.match.findUnique.mockResolvedValue({ ...MATCH, ratingDelta: null });
+        const tx = makeFlipTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.updateMatchScore(ARENA, 'm1', 5, 11);
+        expect(result.error).toMatch(/before the app tracked rating changes/i);
+        expect(tx.player.update).not.toHaveBeenCalled();
+        expect(tx.match.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('refuses a flip when the roster no longer resolves to two a side', async () => {
+        // `linkPlayerToMember` drops a duplicate participant row when a merge
+        // puts both players in the same match; reversing a partial roster
+        // would move some ratings and not others.
+        const tx = makeFlipTx({
+          snapshots: [
+            { playerId: 'w1', team: 1 },
+            { playerId: 'l1', team: 2 },
+            { playerId: 'l2', team: 2 },
+          ],
+          players: RATED.slice(0, 3),
+        });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.updateMatchScore(ARENA, 'm1', 5, 11);
+        expect(result.error).toMatch(/roster is incomplete/i);
+        expect(tx.player.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses a flip whose optimistic write loses a race', async () => {
+        // Another manager corrected the same row first, so the score predicate
+        // misses and the callback throws — which is what makes the real
+        // transaction discard the rating writes. The double can't roll back,
+        // so assert the throw itself rather than claiming a rollback.
+        const tx = makeFlipTx({ updatedCount: 0 });
+        let threw = false;
+        prisma.$transaction.mockImplementation(async (cb) => {
+          try {
+            return await cb(tx);
+          } catch (err) {
+            threw = true;
+            throw err;
+          }
+        });
+
+        const result = await actions.updateMatchScore(ARENA, 'm1', 5, 11);
+        expect(result.error).toMatch(/changed while you were editing/i);
+        expect(threw).toBe(true);
       });
 
       it.each([
@@ -439,14 +644,13 @@ describe('arena server actions — authorization', () => {
         expect(prisma.match.updateMany).not.toHaveBeenCalled();
       });
 
-      // The read and the write are separate statements: a delete landing
-      // between them is a count===0, not a thrown P2025.
       it('reports a clean error when the match is deleted mid-correction', async () => {
         prisma.match.updateMany.mockResolvedValueOnce({ count: 0 });
         const result = await actions.updateMatchScore(ARENA, 'm1', 11, 8);
-        expect(result.error).toMatch(/no longer exists/i);
+        expect(result.error).toMatch(/changed while you were editing/i);
       });
     });
+
 
     describe('updateArenaSessions()', () => {
       beforeEach(() => {
