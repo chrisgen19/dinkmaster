@@ -935,14 +935,21 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
 const RACED_CORRECTION =
   'That match changed while you were editing it. Reopen it and check the score before correcting again.';
 
-/** Typed `applyMatchReversalTx` failures, as the manager should read them. */
-const CORRECTION_FAILURES = {
+/**
+ * Typed `applyMatchReversalTx` failures, as the manager should read them.
+ *
+ * Null-prototype: the key is an arbitrary `err.message`, and a plain object
+ * would resolve `constructor` / `toString` / `valueOf` through
+ * `Object.prototype` — turning a real infrastructure error into a "handled"
+ * one and returning a function as the user-facing message.
+ */
+const CORRECTION_FAILURES = Object.assign(Object.create(null), {
   RACED: RACED_CORRECTION,
   NO_RATING_DELTA:
     "This match was recorded before the app tracked rating changes, so who won can't be corrected now. You can still fix the score if the same team won.",
   INCOMPLETE_ROSTER:
     "This match's roster is incomplete — a player was merged or removed — so who won can't be corrected. You can still fix the score if the same team won.",
-};
+});
 
 /**
  * Correct the scoreline of an already-recorded match. Manager-gated.
@@ -1004,6 +1011,11 @@ export async function updateMatchScore(arenaId, matchId, score1, score2) {
   // clean count===0 instead of a thrown P2025 (same reasoning as
   // `updateArenaGeneral`), and the score predicate makes a second manager's
   // simultaneous correction a clean miss rather than silent last-write-wins.
+  // INVARIANT: every write that changes `Match.ratingDelta` also changes the
+  // scoreline in the same statement — this one and the row's creation in
+  // `applyEndMatchTx` are the only two. That's what lets the flip path read
+  // `match` before taking the lock: the predicate below catches any concurrent
+  // change to the values the reversal was computed from.
   const writeCorrection = (tx, ratingDelta) =>
     tx.match.updateMany({
       where: { id: matchId, arenaId, score1: match.score1, score2: match.score2 },

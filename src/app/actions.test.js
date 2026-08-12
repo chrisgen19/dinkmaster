@@ -532,6 +532,41 @@ describe('arena server actions — authorization', () => {
         }
       });
 
+      it('correcting a tie banks new counters without taking any back', async () => {
+        // A tie recorded no win or loss for anyone, so the reversal has nothing
+        // to decrement — it must only apply the new outcome's counters.
+        prisma.match.findUnique.mockResolvedValue({
+          ...MATCH,
+          score1: 9,
+          score2: 9,
+          ratingDelta: 0, // an even tie moves nobody
+        });
+        const tx = makeFlipTx({
+          players: [
+            { id: 'w1', rating: 1000 },
+            { id: 'w2', rating: 1000 },
+            { id: 'l1', rating: 1000 },
+            { id: 'l2', rating: 1000 },
+          ],
+        });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 9);
+        expect(result.error).toBeUndefined();
+
+        const counterCalls = tx.player.updateMany.mock.calls.map((c) => c[0]);
+        expect(counterCalls).toHaveLength(2); // the new winner and loser only
+        expect(JSON.stringify(counterCalls)).not.toMatch(/decrement/);
+        expect(counterCalls).toContainEqual({
+          where: { id: { in: TEAM1 } },
+          data: { wins: { increment: 1 } },
+        });
+        expect(counterCalls).toContainEqual({
+          where: { id: { in: TEAM2 } },
+          data: { losses: { increment: 1 } },
+        });
+      });
+
       it('refuses a flip on a match recorded before rating deltas were stored', async () => {
         // Null delta means the rating effect was never recorded and cannot be
         // recovered — refuse rather than approximate.
@@ -565,13 +600,24 @@ describe('arena server actions — authorization', () => {
       });
 
       it('refuses a flip whose optimistic write loses a race', async () => {
-        // Another manager corrected the same row first: the score predicate
-        // misses, and the transaction (ratings included) rolls back.
+        // Another manager corrected the same row first, so the score predicate
+        // misses and the callback throws — which is what makes the real
+        // transaction discard the rating writes. The double can't roll back,
+        // so assert the throw itself rather than claiming a rollback.
         const tx = makeFlipTx({ updatedCount: 0 });
-        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+        let threw = false;
+        prisma.$transaction.mockImplementation(async (cb) => {
+          try {
+            return await cb(tx);
+          } catch (err) {
+            threw = true;
+            throw err;
+          }
+        });
 
         const result = await actions.updateMatchScore(ARENA, 'm1', 5, 11);
         expect(result.error).toMatch(/changed while you were editing/i);
+        expect(threw).toBe(true);
       });
 
       it.each([
