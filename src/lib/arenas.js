@@ -60,6 +60,7 @@ export async function getArena(id) {
       emergencyWait: true,
       skipRestoresPriority: true,
       skipPickReplacement: true,
+      balancedPairing: true,
       targetScore: true,
       autoMixDefault: true,
       leaderboardSize: true,

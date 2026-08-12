@@ -553,6 +553,7 @@ function MatchmakingSection({ arenaId, matchmaking }) {
   const [skipPickReplacement, setSkipPickReplacement] = useState(
     matchmaking.skipPickReplacement ?? true,
   );
+  const [balancedPairing, setBalancedPairing] = useState(matchmaking.balancedPairing ?? true);
   const [error, setError] = useState('');
   const [saved, flashSaved, clearSaved] = useSavedFlag();
   const [isPending, startTransition] = useTransition();
@@ -579,6 +580,7 @@ function MatchmakingSection({ arenaId, matchmaking }) {
           emergencyWait: emergencyNum,
           skipRestoresPriority,
           skipPickReplacement,
+          balancedPairing,
         });
         if (result?.error) return setError(result.error);
         flashSaved();
@@ -660,6 +662,22 @@ function MatchmakingSection({ arenaId, matchmaking }) {
             <span className="block text-sm font-bold text-slate-800">Pick replacement on Skip (managers)</span>
             <span className="block text-xs text-slate-400 mt-0.5">
               When on, managers see a picker after tapping Skip — choose which waiting paddle fills the freed on-deck slot. When off, the first waiting paddle auto-fills. Self-rest by a non-manager always auto-fills regardless of this setting.
+            </span>
+          </span>
+        </label>
+
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={balancedPairing}
+            onChange={(e) => setBalancedPairing(e.target.checked)}
+            disabled={isPending}
+            className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4"
+          />
+          <span>
+            <span className="block text-sm font-bold text-slate-800">Pair losers with winners</span>
+            <span className="block text-xs text-slate-400 mt-0.5">
+              When on, each player who lost their most recent game is partnered with someone who won theirs, so a beaten pair isn&apos;t sent straight back out together. Ties go to the closer-rated split, then to the pairing that repeats the fewest partnerships. When off, only repeat partnerships are minimised — the pure Silo-Buster rotation, with no skill input.
             </span>
           </span>
         </label>

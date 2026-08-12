@@ -245,28 +245,36 @@ describe('arena server actions — authorization', () => {
       });
 
       it('persists valid thresholds and coerces numeric strings', async () => {
-        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: '3', emergencyWait: '6', skipRestoresPriority: true, skipPickReplacement: true });
+        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: '3', emergencyWait: '6', skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true });
         expect(result.error).toBeUndefined();
         expect(prisma.arena.updateMany).toHaveBeenCalledWith({
           where: { id: ARENA },
-          data: { starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true, skipPickReplacement: true },
+          data: { starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true },
         });
-        expect(result.matchmaking).toEqual({ starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true, skipPickReplacement: true });
+        expect(result.matchmaking).toEqual({ starveThreshold: 3, emergencyWait: 6, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true });
       });
 
       it('coerces "true"/"false" string values for skipRestoresPriority', async () => {
-        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: 'false', skipPickReplacement: 'true' });
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: 'false', skipPickReplacement: 'true', balancedPairing: true });
         expect(prisma.arena.updateMany).toHaveBeenLastCalledWith({
           where: { id: ARENA },
-          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false, skipPickReplacement: true },
+          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false, skipPickReplacement: true, balancedPairing: true },
         });
       });
 
       it('coerces "true"/"false" string values for skipPickReplacement', async () => {
-        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: 'false' });
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: 'false', balancedPairing: true });
         expect(prisma.arena.updateMany).toHaveBeenLastCalledWith({
           where: { id: ARENA },
-          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: false },
+          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: false, balancedPairing: true },
+        });
+      });
+
+      it('coerces "true"/"false" string values for balancedPairing', async () => {
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: 'false' });
+        expect(prisma.arena.updateMany).toHaveBeenLastCalledWith({
+          where: { id: ARENA },
+          data: { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: false },
         });
       });
 
@@ -274,7 +282,7 @@ describe('arena server actions — authorization', () => {
         // After persisting `skipRestoresPriority: false`, the action must also
         // clear `Player.skipBoosted` for the arena so the next auto-mix can't
         // elevate paddles that were boosted while the setting was on.
-        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false, skipPickReplacement: true });
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: false, skipPickReplacement: true, balancedPairing: true });
         expect(prisma.player.updateMany).toHaveBeenCalledWith({
           where: { arenaId: ARENA, skipBoosted: true },
           data: { skipBoosted: false },
@@ -282,25 +290,27 @@ describe('arena server actions — authorization', () => {
       });
 
       it('does NOT wipe skipBoosted when the setting is being turned on', async () => {
-        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true });
+        await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true });
         expect(prisma.player.updateMany).not.toHaveBeenCalled();
       });
 
       it('reports a clean error when the arena no longer exists', async () => {
         prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
-        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true });
+        const result = await actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true });
         expect(result.error).toMatch(/no longer exists/i);
       });
 
       it.each([
-        ['a zero starve threshold', { starveThreshold: 0, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true }],
-        ['a fractional starve threshold', { starveThreshold: 2.5, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true }],
-        ['a non-numeric starve threshold', { starveThreshold: 'lots', emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true }],
-        ['an emergency wait below the starve threshold', { starveThreshold: 4, emergencyWait: 2, skipRestoresPriority: true, skipPickReplacement: true }],
-        ['an out-of-range starve threshold', { starveThreshold: MAX_WAIT_THRESHOLD + 1, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true }],
-        ['an out-of-range emergency wait', { starveThreshold: 2, emergencyWait: MAX_WAIT_THRESHOLD + 1, skipRestoresPriority: true, skipPickReplacement: true }],
+        ['a zero starve threshold', { starveThreshold: 0, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true }],
+        ['a fractional starve threshold', { starveThreshold: 2.5, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true }],
+        ['a non-numeric starve threshold', { starveThreshold: 'lots', emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true }],
+        ['an emergency wait below the starve threshold', { starveThreshold: 4, emergencyWait: 2, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true }],
+        ['an out-of-range starve threshold', { starveThreshold: MAX_WAIT_THRESHOLD + 1, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true }],
+        ['an out-of-range emergency wait', { starveThreshold: 2, emergencyWait: MAX_WAIT_THRESHOLD + 1, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true }],
         ['a non-boolean skipRestoresPriority', { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: 'maybe', skipPickReplacement: true }],
         ['a non-boolean skipPickReplacement', { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: 'maybe' }],
+        ['a non-boolean balancedPairing', { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: 'maybe' }],
+        ['a missing balancedPairing', { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true }],
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaMatchmaking(ARENA, input);
         expect(result.error).toBeTruthy();
@@ -491,6 +501,7 @@ describe('arena server actions — authorization', () => {
         emergencyWait: 4,
         skipRestoresPriority: true,
         skipPickReplacement: true,
+        balancedPairing: true,
       };
       const matchingFingerprint = () =>
         boardFingerprint(
@@ -581,6 +592,52 @@ describe('arena server actions — authorization', () => {
         expect(result.appliedIds).toBeUndefined();
         expect(tx.player.updateMany).not.toHaveBeenCalled();
         expect(tx.offlineSyncBatch.create).not.toHaveBeenCalled();
+      });
+
+      it('strict mode: reads every hashed rule, including the pairing mode', async () => {
+        // Direct guard on the `arena.findUnique` SELECT. It has to be asserted
+        // explicitly: the Prisma mock returns its canned row regardless of the
+        // select, so no behavioural test can notice a dropped field. If one is
+        // dropped, the server fingerprints that rule from `undefined` while the
+        // device used its real value, and strict sync reports a phantom
+        // divergence for every arena that set it.
+        const tx = makeTx();
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+        await actions.syncOfflineEvents(ARENA, batchInput());
+
+        const [{ select }] = tx.arena.findUnique.mock.calls[0];
+        expect(select).toEqual({
+          targetScore: true,
+          starveThreshold: true,
+          emergencyWait: true,
+          skipRestoresPriority: true,
+          skipPickReplacement: true,
+          balancedPairing: true,
+        });
+      });
+
+      it('strict mode: a legacy-pairing arena syncs clean when the device agrees', async () => {
+        const legacy = { ...ARENA_SETTINGS, balancedPairing: false };
+        const tx = makeTx({
+          arena: { findUnique: vi.fn().mockResolvedValue(legacy), updateMany: vi.fn() },
+        });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const result = await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({
+            base: {
+              fetchedAt: 1,
+              fingerprint: boardFingerprint(
+                { players: PLAYER_ROWS, queue: ['a', 'b', 'c', 'd', 'e'], courts: [], history: {} },
+                legacy,
+              ),
+            },
+            events: [{ id: 'e1', type: 'checkOut', payload: { playerId: 'e' } }],
+          }),
+        );
+        expect(result.divergence).toBeUndefined();
+        expect(result.appliedIds).toEqual(['e1']);
       });
 
       it('strict mode: matching fingerprint applies events in order and records the batch', async () => {
@@ -786,6 +843,51 @@ describe('arena server actions — authorization', () => {
         expect(created.createdAt.getTime()).toBeLessThanOrEqual(Date.now());
         expect(created.score1).toBe(11);
         expect(created.score2).toBe(7);
+      });
+
+      it('gives each synced match a distinct createdAt even when the clock is ahead', async () => {
+        // A device running fast clamps EVERY event to the same `now`. Equal
+        // timestamps leave `ORDER BY createdAt DESC` free to return the tied
+        // matches in any order, and `recentResults` takes the first result it
+        // sees per player — so the balanced split could classify someone by an
+        // older game. Strictly increasing stamps remove the tie at the source.
+        const slots = [
+          { playerId: 'a', team: 1, player: { firstName: 'A', lastName: null, rating: 1000 } },
+          { playerId: 'b', team: 1, player: { firstName: 'B', lastName: null, rating: 1000 } },
+          { playerId: 'c', team: 2, player: { firstName: 'C', lastName: null, rating: 1000 } },
+          { playerId: 'd', team: 2, player: { firstName: 'D', lastName: null, rating: 1000 } },
+        ];
+        const tx = makeTx({
+          court: {
+            findMany: vi.fn().mockResolvedValue([]),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+            findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
+            update: vi.fn(),
+          },
+          courtSlot: { findMany: vi.fn().mockResolvedValue(slots), findFirst: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
+        });
+        prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+        const ahead = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        const endMatch = (id) => ({
+          id,
+          type: 'endMatch',
+          occurredAt: ahead, // identical, future-dated: all clamp to `now`
+          payload: { courtId: 'c1', score1: '11', score2: '7', autoMix: false },
+          outcome: { recycleOrder: ['d', 'a', 'c', 'b'], mixedOrder: null },
+        });
+
+        const result = await actions.syncOfflineEvents(
+          ARENA,
+          batchInput({ mode: 'best-effort', events: [endMatch('e1'), endMatch('e2'), endMatch('e3')] }),
+        );
+
+        expect(result.appliedIds).toEqual(['e1', 'e2', 'e3']);
+        const stamps = tx.match.create.mock.calls.map((c) => c[0].data.createdAt.getTime());
+        expect(stamps).toHaveLength(3);
+        // Strictly increasing, in the order the manager played them.
+        expect(stamps[1]).toBeGreaterThan(stamps[0]);
+        expect(stamps[2]).toBeGreaterThan(stamps[1]);
       });
     });
 
@@ -2123,10 +2225,10 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
   // waiting at fill time). Plus two players still behind them in the rack —
   // those are the ones whose waitRounds get bumped by the fill.
   const TOP_FOUR = [
-    { id: 'p1', queueOrder: 1, waitRounds: 0 },
-    { id: 'p2', queueOrder: 2, waitRounds: 0 },
-    { id: 'p3', queueOrder: 3, waitRounds: 0 },
-    { id: 'p4', queueOrder: 4, waitRounds: 0 },
+    { id: 'p1', queueOrder: 1, waitRounds: 0, rating: 1000 },
+    { id: 'p2', queueOrder: 2, waitRounds: 0, rating: 1000 },
+    { id: 'p3', queueOrder: 3, waitRounds: 0, rating: 1000 },
+    { id: 'p4', queueOrder: 4, waitRounds: 0, rating: 1000 },
   ];
   const BEHIND = [{ id: 'p5' }, { id: 'p6' }];
 
@@ -2148,6 +2250,17 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
       partnership: {
         findMany: vi.fn().mockResolvedValue([]), // no prior partnerships
         upsert: vi.fn(),
+      },
+      // The fill reads the arena's pairing mode and session boundary before
+      // splitting the four.
+      arena: {
+        findUnique: vi.fn().mockResolvedValue({ balancedPairing: true, lastSessionResetAt: null }),
+      },
+      // Recent matches feed the losers-partner-winners team split; an empty
+      // history means nobody has a recent result, so the split falls through
+      // to the rating/partnership tie-breaks.
+      match: {
+        findMany: vi.fn().mockResolvedValue([]),
       },
       courtSlot: {
         createMany: vi.fn(),
@@ -2180,6 +2293,36 @@ describe('fillCourt() — snapshot rack state for cancelFill', () => {
       expect(slot.prevWaitRounds).toBe(source.waitRounds);
       expect([1, 2]).toContain(slot.team);
     }
+  });
+
+  it('scopes the recent-results query to the current session', async () => {
+    // `prepareNextSession` keeps Match rows but wipes Partnership so the split
+    // starts unbiased by last week; the other input to that same split has to
+    // honour the boundary too, or tonight's first fills classify players by a
+    // result from a previous session. The offline engine filters the same
+    // boundary (board-engine.test.js) — match history isn't fingerprinted, so
+    // the two paths can only be kept in step by asserting both.
+    const resetAt = new Date('2026-07-27T00:00:00.000Z');
+    const tx = makeTx();
+    tx.arena.findUnique.mockResolvedValue({ balancedPairing: true, lastSessionResetAt: resetAt });
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.fillCourt(ARENA, COURT);
+
+    expect(tx.match.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { arenaId: ARENA, createdAt: { gte: resetAt } } }),
+    );
+  });
+
+  it('queries every match when the arena has never been reset', async () => {
+    const tx = makeTx();
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+
+    await actions.fillCourt(ARENA, COURT);
+
+    expect(tx.match.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { arenaId: ARENA } }),
+    );
   });
 
   it('records the exact bumped player ids on the court for cancelFill to reverse', async () => {

@@ -1,4 +1,5 @@
 import { ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
+import { RECENT_MATCH_WINDOW, bestMatchups, rankMatchups, recentResults } from '@/lib/pairing';
 import { computeMatchRatings } from '@/lib/rating';
 import { validateMatchScore } from '@/lib/scoring';
 import { diffLineup, validateLineup } from '@/lib/court-lineup';
@@ -181,7 +182,8 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome }) {
     where: { arenaId, leftAt: null, queueOrder: { not: null } },
     orderBy: { queueOrder: 'asc' },
     take: 4,
-    select: { id: true, queueOrder: true, waitRounds: true },
+    // `rating` feeds the closer-rated tie-break in the team split below.
+    select: { id: true, queueOrder: true, waitRounds: true, rating: true },
   });
   if (queued.length < 4) throw new Error('NOT_ENOUGH');
 
@@ -230,8 +232,9 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome }) {
     data: { fillBumpedPlayerIds: bumped.map((p) => p.id) },
   });
 
-  // Pick the matchup with the fewest prior partnerships (random tie-break),
-  // unless a replayed event already recorded the choice.
+  // Pair recent losers with recent winners, breaking ties by the closer-rated
+  // and then least-repeated split (see src/lib/pairing.js), unless a replayed
+  // event already recorded the choice.
   const rows = await tx.partnership.findMany({
     where: { arenaId, playerA: { in: [p0, p1, p2, p3] }, playerB: { in: [p0, p1, p2, p3] } },
   });
@@ -239,15 +242,58 @@ export async function applyFillCourtTx(tx, arenaId, { courtId, outcome }) {
     const [a, b] = canonicalPair(x, y);
     return rows.find((r) => r.playerA === a && r.playerB === b)?.count ?? 0;
   };
-  const matchups = [
-    { team1: [p0, p1], team2: [p2, p3], weight: countFor(p0, p1) + countFor(p2, p3) },
-    { team1: [p0, p2], team2: [p1, p3], weight: countFor(p0, p2) + countFor(p1, p3) },
-    { team1: [p0, p3], team2: [p1, p2], weight: countFor(p0, p3) + countFor(p1, p2) },
-  ];
-  const minWeight = Math.min(...matchups.map((m) => m.weight));
-  const best = outcome
-    ? { team1: outcome.team1, team2: outcome.team2 }
-    : shuffle(matchups.filter((m) => m.weight === minWeight))[0];
+
+  let best;
+  if (outcome) {
+    best = { team1: outcome.team1, team2: outcome.team2 };
+  } else {
+    // Read the arena's pairing mode under the queue lock, mirroring
+    // `applyAutoMixTx`, so a concurrent settings save can't land between the
+    // read and the split. A torn/missing row falls back to the column default
+    // rather than failing a fill the court claim already committed to.
+    const arena = await tx.arena.findUnique({
+      where: { id: arenaId },
+      select: { balancedPairing: true, lastSessionResetAt: true },
+    });
+    const balanced = arena?.balancedPairing ?? true;
+
+    // Normalize the recent matches into the shape src/lib/pairing.js expects,
+    // so this ranks identically to the offline engine's own fill. Legacy mode
+    // ignores results entirely, so skip the query in that case.
+    //
+    // Scoped to the current session: `prepareNextSession` keeps Match rows but
+    // wipes `Partnership` so the split "starts the new session unbiased by
+    // last week's pairings" — the same reasoning applies to the OTHER input to
+    // that split. Without this, the first fills of a new session would pair
+    // tonight's arrivals off results from a week ago. The offline engine
+    // applies the same cutoff (see `board-engine.js`); match history is not
+    // part of the sync fingerprint, so a one-sided change here would silently
+    // diverge the two paths.
+    const recent = balanced
+      ? await tx.match.findMany({
+          where: {
+            arenaId,
+            ...(arena?.lastSessionResetAt ? { createdAt: { gte: arena.lastSessionResetAt } } : {}),
+          },
+          orderBy: { createdAt: 'desc' },
+          take: RECENT_MATCH_WINDOW,
+          select: { score1: true, score2: true, players: { select: { playerId: true, team: true } } },
+        })
+      : [];
+    const recentMatches = recent.map((m) => ({
+      score1: m.score1,
+      score2: m.score2,
+      team1: m.players.filter((mp) => mp.team === 1).map((mp) => mp.playerId),
+      team2: m.players.filter((mp) => mp.team === 2).map((mp) => mp.playerId),
+    }));
+    const ranked = rankMatchups([p0, p1, p2, p3], {
+      results: recentResults(recentMatches, [p0, p1, p2, p3]),
+      ratings: new Map(queued.map((p) => [p.id, p.rating])),
+      pairCount: countFor,
+      balanced,
+    });
+    best = shuffle(bestMatchups(ranked))[0];
+  }
 
   await tx.courtSlot.createMany({
     data: [

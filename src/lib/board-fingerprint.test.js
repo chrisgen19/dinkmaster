@@ -7,6 +7,7 @@ const SETTINGS = {
   emergencyWait: 4,
   skipRestoresPriority: true,
   skipPickReplacement: true,
+  balancedPairing: true,
 };
 
 const player = (id, overrides = {}) => ({
@@ -108,6 +109,39 @@ describe('boardFingerprint', () => {
     expect(text).toContain('q:a,b');
     expect(text).toContain('c:c1|vacant|');
     expect(text).toContain('h:');
-    expect(text).toContain('s:11|2|4|1|1');
+    // Anchored to end-of-string, not `toContain`: the rules section is last,
+    // and a substring match silently passes when a NEW rule is appended —
+    // which is exactly how `balancedPairing` slipped in unasserted.
+    expect(text).toMatch(/\ns:11\|2\|4\|1\|1$/);
+  });
+
+  it('changes when the pairing mode is toggled', () => {
+    // The whole point of hashing the rules: a device that ran a session under
+    // a different team-split rule produced a board the server would not have,
+    // so its pending batch must not sync clean.
+    const legacy = { ...SETTINGS, balancedPairing: false };
+    expect(boardFingerprint(baseState(), legacy)).not.toBe(boardFingerprint(baseState(), SETTINGS));
+    expect(canonicalBoardString(baseState(), legacy)).toMatch(/\ns:11\|2\|4\|1\|1\|0$/);
+  });
+
+  it('treats a settings snapshot with no pairing mode as ON', () => {
+    // Back-compat: a pending log captured before this setting existed must
+    // hash the same as one captured with it explicitly on, so an in-flight
+    // offline session survives the deploy that adds the column.
+    const { balancedPairing: _omitted, ...preFeature } = SETTINGS;
+    expect(boardFingerprint(baseState(), preFeature)).toBe(boardFingerprint(baseState(), SETTINGS));
+  });
+
+  it('leaves the pre-feature canonical string byte-identical when the mode is ON', () => {
+    // The case the test above CANNOT cover: a log stamped before this setting
+    // shipped carries a fingerprint string the old five-field code produced.
+    // That string can't be recomputed, only matched — so ON must add nothing
+    // to the canonical form, or every session in flight across the deploy
+    // reports a phantom divergence. This literal IS the old format.
+    const legacy = `s:${SETTINGS.targetScore}|${SETTINGS.starveThreshold}|${SETTINGS.emergencyWait}|1|1`;
+    expect(canonicalBoardString(baseState(), SETTINGS).endsWith(`\n${legacy}`)).toBe(true);
+    // ...and the opt-out is what deviates from it.
+    const off = { ...SETTINGS, balancedPairing: false };
+    expect(canonicalBoardString(baseState(), off).endsWith(`\n${legacy}|0`)).toBe(true);
   });
 });

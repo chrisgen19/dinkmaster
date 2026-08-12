@@ -44,6 +44,7 @@ export async function loadArenaForSettings(arenaId) {
         emergencyWait: arena.emergencyWait,
         skipRestoresPriority: arena.skipRestoresPriority,
         skipPickReplacement: arena.skipPickReplacement,
+        balancedPairing: arena.balancedPairing,
       },
       matchDefaults: {
         targetScore: arena.targetScore,

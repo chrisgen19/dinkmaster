@@ -177,6 +177,146 @@ describe('shuffleQueue', () => {
 });
 
 describe('fillCourt', () => {
+  it('pairs each recent loser with a recent winner from matchHistory', () => {
+    // a+b beat c+d last game, so the split must break both pairs up.
+    const state = makeState({
+      matchHistory: [
+        {
+          id: 'm1',
+          courtName: 'Court c1',
+          team1: [{ id: 'a' }, { id: 'b' }],
+          team2: [{ id: 'c' }, { id: 'd' }],
+          score1: 11,
+          score2: 6,
+          timestamp: '2026-07-20T08:00:00.000Z',
+        },
+      ],
+    });
+    const result = resolveCommand(state, SETTINGS, { type: 'fillCourt', courtId: 'c1' }, opts());
+    expect(result.error).toBeUndefined();
+
+    const { team1, team2 } = result.event.outcome;
+    // Every side pairs one winner with one loser.
+    for (const team of [team1, team2]) {
+      expect(team.filter((id) => ['a', 'b'].includes(id))).toHaveLength(1);
+      expect(team.filter((id) => ['c', 'd'].includes(id))).toHaveLength(1);
+    }
+  });
+
+  it('reads the scoreline rather than the team number when deciding who lost', () => {
+    // team2 (c+d) won this one, so c/d are the winners to split across sides.
+    const state = makeState({
+      matchHistory: [
+        {
+          id: 'm1',
+          courtName: 'Court c1',
+          team1: [{ id: 'a' }, { id: 'b' }],
+          team2: [{ id: 'c' }, { id: 'd' }],
+          score1: 4,
+          score2: 11,
+          timestamp: '2026-07-20T08:00:00.000Z',
+        },
+      ],
+    });
+    const { team1, team2 } = resolveCommand(
+      state,
+      SETTINGS,
+      { type: 'fillCourt', courtId: 'c1' },
+      opts(),
+    ).event.outcome;
+    for (const team of [team1, team2]) {
+      expect(team.filter((id) => ['c', 'd'].includes(id))).toHaveLength(1);
+    }
+  });
+
+  it('ignores results from before the session boundary', () => {
+    // a+b beat c+d LAST session, and every crossed pair is an expensive
+    // repeat. If the pre-reset result still counted, the balanced rule would
+    // cross anyway; scoped to this session nobody has a result, so the split
+    // falls through to the partnership tie-break and takes the cheap one.
+    // Mirrors `applyFillCourtTx`, which filters the same boundary in SQL.
+    const state = makeState({
+      lastSessionResetAt: '2026-07-27T00:00:00.000Z',
+      history: { a: { c: 4, d: 4 }, b: { c: 4, d: 4 }, c: { a: 4, b: 4 }, d: { a: 4, b: 4 } },
+      matchHistory: [
+        {
+          id: 'm1',
+          courtName: 'Court c1',
+          team1: [{ id: 'a' }, { id: 'b' }],
+          team2: [{ id: 'c' }, { id: 'd' }],
+          score1: 11,
+          score2: 6,
+          timestamp: '2026-07-20T08:00:00.000Z', // a week before the reset
+        },
+      ],
+    });
+    const { team1 } = resolveCommand(
+      state,
+      SETTINGS,
+      { type: 'fillCourt', courtId: 'c1' },
+      opts(),
+    ).event.outcome;
+    // The cheap split keeps the old winners together (0 repeats) instead of
+    // crossing into four 4-count pairings.
+    expect(team1.slice().sort()).toEqual(['a', 'b']);
+  });
+
+  it('still counts results recorded after the session boundary', () => {
+    // Same board, but the match happened during THIS session, so it classifies
+    // a/b as winners and c/d as losers and the split crosses them.
+    const state = makeState({
+      lastSessionResetAt: '2026-07-27T00:00:00.000Z',
+      matchHistory: [
+        {
+          id: 'm1',
+          courtName: 'Court c1',
+          team1: [{ id: 'a' }, { id: 'b' }],
+          team2: [{ id: 'c' }, { id: 'd' }],
+          score1: 11,
+          score2: 6,
+          timestamp: '2026-07-27T08:00:00.000Z',
+        },
+      ],
+    });
+    const { team1, team2 } = resolveCommand(
+      state,
+      SETTINGS,
+      { type: 'fillCourt', courtId: 'c1' },
+      opts(),
+    ).event.outcome;
+    for (const team of [team1, team2]) {
+      expect(team.filter((id) => ['a', 'b'].includes(id))).toHaveLength(1);
+    }
+  });
+
+  it('honours a balancedPairing:false arena by ignoring recent results', () => {
+    // a+b beat c+d, but every crossed pair is an expensive repeat. The
+    // balanced rule would still cross; legacy mode must take the cheap split.
+    const state = makeState({
+      history: { a: { c: 4, d: 4 }, b: { c: 4, d: 4 }, c: { a: 4, b: 4 }, d: { a: 4, b: 4 } },
+      matchHistory: [
+        {
+          id: 'm1',
+          courtName: 'Court c1',
+          team1: [{ id: 'a' }, { id: 'b' }],
+          team2: [{ id: 'c' }, { id: 'd' }],
+          score1: 11,
+          score2: 6,
+          timestamp: '2026-07-20T08:00:00.000Z',
+        },
+      ],
+    });
+    const legacy = { ...SETTINGS, balancedPairing: false };
+    const { team1, team2 } = resolveCommand(
+      state,
+      legacy,
+      { type: 'fillCourt', courtId: 'c1' },
+      opts(),
+    ).event.outcome;
+    const together = (t) => t.includes('a') && t.includes('b');
+    expect(together(team1) || together(team2)).toBe(true);
+  });
+
   it('stacks the top four with the lowest-partnership matchup and full bookkeeping', () => {
     // a+b have played together twice, so the best split must separate them.
     const state = makeState({
