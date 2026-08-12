@@ -120,15 +120,21 @@ export function deriveRackRow(
  *   from `splitDecks`; omit for the classic single-group rack
  * @param {'W'|'L'|null} [opts.nextDeck] - the deck that stacks next, flagged so
  *   the list can mark it
- * @returns {Array<{key:string, label:string, accent:boolean, isNext:boolean, short:number, rows:Array<{playerId:string, rackIndex:number, bucketIndex:number, bucketLength:number}>}>}
+ * @param {Map<string, 'W'|'L'|null>} [opts.results] - each player's most recent
+ *   result (from `recentResults`), surfaced per row as `lastResult` for the
+ *   W/L chip. Independent of deck mode — every arena shows it.
+ * @returns {Array<{key:string, label:string, accent:boolean, isNext:boolean, short:number, rows:Array<{playerId:string, rackIndex:number, bucketIndex:number, bucketLength:number, lastResult:'W'|'L'|null}>}>}
  */
-export function buildRackSections(queue, { decks = null, nextDeck = null } = {}) {
+export function buildRackSections(queue, { decks = null, nextDeck = null, results = null } = {}) {
   const rackIndexOf = new Map(queue.map((id, i) => [id, i]));
   const row = (playerId, bucket) => ({
     playerId,
     rackIndex: rackIndexOf.get(playerId),
     bucketIndex: bucket.indexOf(playerId),
     bucketLength: bucket.length,
+    // `null` for a player with no game this session — no chip, rather than a
+    // chip that says "nothing yet".
+    lastResult: results?.get(playerId) ?? null,
   });
   const section = (key, label, rows, { accent = false, isNext = false, short = 0 } = {}) => ({
     key,

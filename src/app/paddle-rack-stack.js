@@ -52,6 +52,7 @@ function GroupLabel({ children, accent = false, className = '', trailing = null 
  * @param {boolean} props.skipRestoresPriority - when true, Skip = "back soon, top priority on return" (drives the button label/tooltip)
  * @param {{winners:string[],losers:string[],winnersDeck:string[],losersDeck:string[]}|null} props.decks - win/lose decks from `splitDecks`; null = the classic single on-deck group
  * @param {'W'|'L'|null} props.nextDeck - which deck stacks onto the next open court
+ * @param {Map<string, 'W'|'L'|null>|null} props.results - how each racked player's last game went, for the W/L chip
  * @param {string} props.errorMsg - surfaced inline above the list
  */
 export function PaddleRackStack({
@@ -72,6 +73,7 @@ export function PaddleRackStack({
   skipRestoresPriority = true,
   decks = null,
   nextDeck = null,
+  results = null,
   errorMsg,
   // Distinguishes the DOM ids of multiple mounted instances (e.g. the
   // desktop sidebar vs. the mobile block) so they don't collide.
@@ -107,7 +109,7 @@ export function PaddleRackStack({
   // its true rack position, so the badge keeps counting the real rack.
   // Flattened back to one list, with the first row of each group carrying its
   // header, so the list stays a single map over rows.
-  const rows = buildRackSections(queue, { decks, nextDeck }).flatMap((section, sectionIndex) =>
+  const rows = buildRackSections(queue, { decks, nextDeck, results }).flatMap((section, sectionIndex) =>
     section.rows.map((row, rowIndex) => ({
       ...row,
       section: rowIndex === 0 ? section : null,
@@ -211,7 +213,7 @@ export function PaddleRackStack({
             <p className="text-xs text-slate-400">Add players to stack their paddles for the next court.</p>
           </div>
         ) : (
-          rows.map(({ playerId, rackIndex, bucketIndex, bucketLength, section, sectionIndex }) => {
+          rows.map(({ playerId, rackIndex, bucketIndex, bucketLength, lastResult, section, sectionIndex }) => {
             const player = players.find((p) => p.id === playerId);
             if (!player) return null;
 
@@ -309,6 +311,32 @@ export function PaddleRackStack({
                           </Link>
                         ) : (
                           <span className="w-full min-w-0 truncate sm:w-auto sm:max-w-full">{name}</span>
+                        )}
+                        {lastResult && (
+                          // How their LAST game went. Absent for anyone who
+                          // hasn't played this session — a chip reading
+                          // "nothing yet" would be noise on a fresh rack.
+                          // Sits first so it reads as part of the name.
+                          <span
+                            // emerald-700/slate-700 rather than the lighter
+                            // shades: at 10px this is small text, so both need
+                            // to clear 4.5:1 against their own fill.
+                            className={`grid h-4 w-4 shrink-0 place-items-center rounded text-[10px] font-bold ${
+                              lastResult === 'W'
+                                ? 'bg-emerald-700 text-white'
+                                : 'bg-slate-200 text-slate-700'
+                            }`}
+                            title={
+                              lastResult === 'W'
+                                ? `${name} won their last game`
+                                : `${name} lost their last game`
+                            }
+                            aria-label={
+                              lastResult === 'W' ? 'Won their last game' : 'Lost their last game'
+                            }
+                          >
+                            {lastResult}
+                          </span>
                         )}
                         {isYou && (
                           <span className="shrink-0 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">

@@ -590,14 +590,16 @@ export default function Arena({
       }),
     [players, sessionStats],
   );
-  // Win/lose decks, when the arena runs them. Derived from the same inputs the
-  // server uses inside `applyFillCourtTx` — this session's match results over
-  // the current rack — so the four the rack shows as up next are the four the
-  // server will actually stack. `null` means the classic single on-deck group:
-  // either the mode is off, or nobody has won a game yet this session (see
-  // `hasTwoDecks`), which is how game one looks.
-  const deckResults = useMemo(() => {
-    if (!matchmakingProp.splitDeckByResult) return null;
+  // How each racked player's LAST game went — 'W', 'L', or null for someone
+  // who hasn't played yet this session. Derived from the same inputs the server
+  // uses inside `applyFillCourtTx`, so the rack can never disagree with the
+  // split the server is about to make. Two consumers:
+  //   - the W/L chip on every rack row (all arenas), so a manager can see at a
+  //     glance who just came off a win;
+  //   - the win/lose decks below, when the arena runs them.
+  // Session-scoped, matching the server: a result from last week must not
+  // label tonight's arrivals.
+  const rackResults = useMemo(() => {
     const sessionStart = lastSessionResetAt ? Date.parse(lastSessionResetAt) : null;
     const recent = matchHistory
       .filter((m) => sessionStart === null || Date.parse(m.timestamp) >= sessionStart)
@@ -608,8 +610,14 @@ export default function Arena({
         team2: m.team2.map((p) => p.id),
       }));
     return recentResults(recent, queue);
-  }, [matchmakingProp.splitDeckByResult, matchHistory, lastSessionResetAt, queue]);
+  }, [matchHistory, lastSessionResetAt, queue]);
 
+  // The same map, but only when the arena runs decks — `null` here means the
+  // classic single on-deck group.
+  const deckResults = matchmakingProp.splitDeckByResult ? rackResults : null;
+
+  // `null` also when nobody has won yet this session (see `hasTwoDecks`), which
+  // is how game one looks.
   const decks = useMemo(() => {
     if (!deckResults) return null;
     const split = splitDecks(queue, deckResults);
@@ -1654,6 +1662,7 @@ export default function Arena({
             skipRestoresPriority={matchmakingProp.skipRestoresPriority}
             decks={decks}
             nextDeck={upNextLabel}
+            results={rackResults}
             errorMsg={errorMsg}
           />
         </div>
@@ -1858,6 +1867,7 @@ export default function Arena({
             skipRestoresPriority={matchmakingProp.skipRestoresPriority}
             decks={decks}
             nextDeck={upNextLabel}
+            results={rackResults}
             errorMsg={errorMsg}
           />
         </div>

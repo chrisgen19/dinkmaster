@@ -211,6 +211,24 @@ describe('buildRackSections', () => {
     expect(buildRackSections(['a', 'b', 'c', 'd']).map((s) => s.key)).toEqual(['on-deck']);
   });
 
+  it('carries each row\'s most recent result for the W/L chip', () => {
+    const results = new Map([['a', 'W'], ['b', 'L'], ['c', null]]);
+    const [onDeck] = buildRackSections(rack, { results });
+    expect(onDeck.rows.map((r) => r.lastResult)).toEqual([
+      'W',
+      'L',
+      // No game this session (explicit null, and 'd' is absent from the map
+      // entirely) — both mean no chip rather than a chip reading "nothing yet".
+      null,
+      null,
+    ]);
+  });
+
+  it('leaves every row unlabelled when no results are given', () => {
+    const [onDeck] = buildRackSections(rack);
+    expect(onDeck.rows.every((r) => r.lastResult === null)).toBe(true);
+  });
+
   it('groups by deck, keeping each row\'s true rack position', () => {
     // Interleaved rack: winners at 1,3,5,7, losers at 2,4,6,8.
     const eight = ['w1', 'l1', 'w2', 'l2', 'w3', 'l3', 'w4', 'l4'];

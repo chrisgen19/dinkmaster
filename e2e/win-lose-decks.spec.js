@@ -127,6 +127,33 @@ test.describe('win/lose decks', () => {
     await expect(page.getByRole('button', { name: /Finish Game & Record Score/ })).toHaveCount(2);
   });
 
+  test('labels each racked paddle with how their last game went', async ({ page }) => {
+    // Independent of deck mode — every arena gets the chip, so this runs with
+    // the setting untouched.
+    await registerAndSignIn(page);
+    await createArena(page, `Last Result ${Date.now()}`);
+
+    // Exactly one court's worth, so the same four recycle and every racked
+    // paddle carries a result once the game is recorded.
+    await addWalkIns(page, ['Ana', 'Ben', 'Cai']);
+
+    // Nothing played yet: no chips at all, rather than four blank ones.
+    await expect(page.getByLabel('Won their last game')).toHaveCount(0);
+    await expect(page.getByLabel('Lost their last game')).toHaveCount(0);
+
+    await playAGame(page, 4);
+
+    // Two winners and two losers are back on the rack, each labelled. The rack
+    // renders twice (desktop sidebar + mobile block), so count per visible one.
+    const won = page.getByLabel('Won their last game');
+    const lost = page.getByLabel('Lost their last game');
+    await expect(won.first()).toBeVisible();
+    await expect(lost.first()).toBeVisible();
+    expect(await won.count()).toBe(await lost.count());
+    await expect(won.first()).toHaveText('W');
+    await expect(lost.first()).toHaveText('L');
+  });
+
   test('leaves the rack alone when the mode is off', async ({ page }) => {
     // The opt-in half of the contract: an arena that never touches the setting
     // must look and behave exactly as it did before this shipped.
