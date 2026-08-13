@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { DEFAULT_WIN_BY } from '@/lib/match-defaults';
 import { nextStateStamp } from '@/lib/state-freshness';
 
 /**
@@ -67,6 +68,12 @@ export async function getState(arenaId) {
         // rack UI names the deck that stacks next, and the offline engine has
         // to fork from the same value the server holds.
         lastDeckFilled: true,
+        // Ships with the board for the same reason `splitDeckByResult` does
+        // (see below): the score dialog validates against it, so a page holding
+        // a stale value either blocks a legal scoreline or offers one the server
+        // will refuse — and, without it on every payload, the refusal's own
+        // state could not correct the page.
+        winBy: true,
         // This one IS a setting, and the only matchmaking setting that rides
         // the board stream. It has to, because it decides WHICH FOUR the client
         // names in `fillCourt`'s `expected` guard: a client holding a stale
@@ -176,6 +183,10 @@ export async function getState(arenaId) {
     // Whether the arena is running win/lose decks (see the select above for
     // why this setting, alone among the matchmaking ones, ships with the board).
     splitDeckByResult: arena?.splitDeckByResult ?? false,
+    // The arena's current win-by margin. Rides every payload so the score
+    // dialog validates against the live rule rather than the prop the page was
+    // served with (see the select above).
+    winBy: arena?.winBy ?? DEFAULT_WIN_BY,
     // Advisory "a manager is running the board offline" flag. Both columns
     // are always written together; require both so a half-cleared row can't
     // render a nameless banner. Freshness is judged client-side (a dead

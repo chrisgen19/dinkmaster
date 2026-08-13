@@ -366,8 +366,14 @@ model Match {
   targetScore Int?
   // The arena's win-by margin WHEN THIS MATCH WAS PLAYED, for the same reason
   // `targetScore` is captured: a manager who turns sudden death off must still
-  // be able to correct an 11-10 game that was legal when it was recorded.
-  // Null = unknown (recorded before this column existed); readers fall back.
+  // be able to correct an 11-10 game that was legal when it was recorded, and
+  // one who turns it ON must still be able to correct an older 12-10 deuce game.
+  //
+  // Unlike `targetScore` above, this is backfilled rather than left null for
+  // pre-column rows (20260813150000_backfill_match_win_by): there was no margin
+  // setting before this feature, so every earlier match is KNOWN to have been
+  // played win-by-2. Readers still fall back defensively, but in practice no row
+  // should be null.
   winBy Int?
   // Set when a manager corrects the scoreline after the fact. Null = never
   // edited.

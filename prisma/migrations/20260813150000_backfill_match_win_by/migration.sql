@@ -1,0 +1,33 @@
+-- Backfill `Match.winBy` on every row that predates the column.
+--
+-- 20260813120000_add_win_by deliberately left these NULL, reasoning by analogy
+-- with `Match.targetScore` that a pre-column value is unknowable. That analogy
+-- was WRONG, and this corrects it.
+--
+-- The two cases are not alike. `targetScore` was already per-arena configurable
+-- before its provenance column existed, so a pre-column match really could have
+-- been played to any target and NULL honestly means "unknown". The win-by
+-- margin had no setting at all: `validateMatchScore` hardcoded a two-point
+-- margin, so EVERY match recorded before that column is known to have been
+-- played win-by-2. There is nothing to guess.
+--
+-- Leaving them NULL is not a neutral "unknown" either, because the reader falls
+-- back to the arena's CURRENT setting. The moment an arena switches to sudden
+-- death, every one of its historical matches starts being judged by a rule it
+-- was not played under, and `updateMatchScore` refuses a scoreline that was
+-- perfectly legal when recorded:
+--
+--   A 12-10 deuce game, corrected after the arena turns on sudden death,
+--   resolves its margin to 1 and is rejected as "sudden death ends at 11" —
+--   a score that cannot be edited at all, by any route, ever again.
+--
+-- Backfilling the value that was actually in force removes that dead end and
+-- makes the fallback in `updateMatchScore` the pure defensive path it reads as.
+--
+-- A separate migration rather than an edit to 20260813120000: Prisma checksums
+-- applied migrations, so amending that file would break `migrate deploy` for
+-- anyone who had already applied it.
+--
+-- Idempotent, and safe to re-run: scoped to NULL rows, so it can never overwrite
+-- a real margin recorded by `applyEndMatchTx`.
+UPDATE "Match" SET "winBy" = 2 WHERE "winBy" IS NULL;
