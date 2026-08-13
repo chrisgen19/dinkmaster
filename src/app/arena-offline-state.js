@@ -58,6 +58,7 @@ export function engineSettings({ matchmaking, matchDefaults }) {
     skipRestoresPriority: matchmaking.skipRestoresPriority,
     skipPickReplacement: matchmaking.skipPickReplacement,
     balancedPairing: matchmaking.balancedPairing,
+    splitDeckByResult: matchmaking.splitDeckByResult,
   };
 }
 

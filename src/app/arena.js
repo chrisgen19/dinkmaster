@@ -9,6 +9,9 @@ import {
   skipPlayer,
   shuffleQueue,
   fillCourt,
+  pinToDeck,
+  resolveDeckChallenge,
+  unpinFromDeck,
   cancelFill,
   editCourtLineup,
   endMatch,
@@ -21,6 +24,16 @@ import {
   prepareNextSession,
 } from './actions';
 import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT, ON_DECK_SIZE } from '@/lib/matchmaking';
+import {
+  DECK_LOSE,
+  DECK_WIN,
+  bucketOf,
+  deckChallenge,
+  hasTwoDecks,
+  nextDeck,
+  splitDecks,
+} from '@/lib/decks';
+import { recentResults } from '@/lib/pairing';
 import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE, DEFAULT_SHOW_PARTNERSHIP_MATRIX } from '@/lib/match-defaults';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
 import { createStateFreshnessGuard } from '@/lib/state-freshness';
@@ -49,6 +62,9 @@ import { ArenaScheduleModal } from './arena-schedule-modal';
 import { ArenaCourtsPanel } from './arena-courts-panel';
 import { CourtEditModal } from './court-edit-modal';
 import { SkipPickerModal } from './skip-picker-modal';
+import { DeckAddModal } from './deck-add-modal';
+import { DeckChallengeModal } from './deck-challenge-modal';
+import { buildRackSections, pinsFromPlayers } from './paddle-rack-stack-state';
 import { ScoreEntryModal } from './score-entry-modal';
 import { ArenaThisWeek } from './arena-this-week';
 import { ArenaSessionPrepBanner } from './arena-session-prep-banner';
@@ -173,6 +189,21 @@ export default function Arena({
   // because the prop-refresh resync block right after this needs to call
   // `setLastSessionResetAt` — declaring it later would TDZ-throw on render.
   const [lastSessionResetAt, setLastSessionResetAt] = useState(sessionPrep.lastSessionResetAt);
+  // Which win/lose deck stacked last ("W" | "L" | null). Board state, not a
+  // setting: it drives the alternation, so the rack has to name the deck that
+  // is up next and the offline engine forks from the same value. Always null
+  // in an arena that isn't running `splitDeckByResult`.
+  const [lastDeckFilled, setLastDeckFilled] = useState(initialState.lastDeckFilled ?? null);
+  // Whether the arena is running win/lose decks. Held as STATE, not read from
+  // `matchmakingProp`, because it decides which four this client names in
+  // `fillCourt`'s `expected` guard. A manager whose page still had the old
+  // value would send the wrong four and be refused — and, without this, would
+  // be refused identically on every retry until they reloaded, since the
+  // refusal's fresh state couldn't correct the prop. Seeded from the prop and
+  // resynced from every server payload, so the board self-heals.
+  const [splitDeckByResult, setSplitDeckByResult] = useState(
+    initialState.splitDeckByResult ?? matchmakingProp.splitDeckByResult ?? false,
+  );
   // Arena schedule (powers the "This Week" leaderboard window). Declared up
   // here, before `persistSnapshot`, so the offline snapshot captures the LIVE
   // schedule: `handleSaveSchedule` updates this state without a
@@ -203,6 +234,7 @@ export default function Arena({
       matchHistory: initialState.matchHistory,
       history: initialState.history,
       lastSessionResetAt: initialState.lastSessionResetAt,
+      lastDeckFilled: initialState.lastDeckFilled ?? null,
     };
   }
   // Stamp of the last applied server snapshot: recorded as the offline
@@ -230,8 +262,16 @@ export default function Arena({
   // sets board state (including the render-time prop resync, which may not
   // touch refs itself under react-hooks/refs).
   useEffect(() => {
-    boardStateRef.current = { players, queue, courts, matchHistory, history, lastSessionResetAt };
-  }, [players, queue, courts, matchHistory, history, lastSessionResetAt]);
+    boardStateRef.current = {
+      players,
+      queue,
+      courts,
+      matchHistory,
+      history,
+      lastSessionResetAt,
+      lastDeckFilled,
+    };
+  }, [players, queue, courts, matchHistory, history, lastSessionResetAt, lastDeckFilled]);
 
   // Write a board produced by the LOCAL engine (offline mode) into state.
   // Bypasses the freshness guard on purpose: local states carry no fetchedAt
@@ -246,6 +286,7 @@ export default function Arena({
       matchHistory: state.matchHistory,
       history: state.history,
       lastSessionResetAt: state.lastSessionResetAt ?? null,
+      lastDeckFilled: state.lastDeckFilled ?? null,
     };
     setPlayers(state.players);
     setQueue(state.queue);
@@ -253,11 +294,30 @@ export default function Arena({
     setMatchHistory(state.matchHistory);
     setHistory(state.history);
     if ('lastSessionResetAt' in state) setLastSessionResetAt(state.lastSessionResetAt);
+    // The offline engine advances this itself on every local fill, so a local
+    // board carries it just like the server's does.
+    setLastDeckFilled(state.lastDeckFilled ?? null);
+    // Guarded like `offlineHold`: a sync response carries the server's value,
+    // but a purely local engine state may not, and absence must not read as
+    // "mode off" and silently collapse the rack to one group mid-session.
+    if ('splitDeckByResult' in state) setSplitDeckByResult(state.splitDeckByResult ?? false);
     // Sync responses arrive through this path too (applySyncedState); they
     // carry `offlineHold: null` after the server cleared it. Engine states
     // never have the key, so a live hold can't be wiped by local play.
     if ('offlineHold' in state) setOfflineHold(state.offlineHold ?? null);
   }, []);
+
+  // The matchmaking settings with the one live-streamed member overridden by
+  // its current value. Everything downstream that freezes settings — the
+  // IndexedDB snapshot the offline shell boots from, and the engine settings
+  // stamped onto a pending log — must capture what the board is ACTUALLY
+  // running, not what the page was served. A stale flag on a pending log is
+  // worse than a stale rack: it is hashed into the sync fingerprint, so the
+  // whole batch would come back as a divergence.
+  const liveMatchmaking = useMemo(
+    () => ({ ...matchmakingProp, splitDeckByResult }),
+    [matchmakingProp, splitDeckByResult],
+  );
 
   // Save the current board as this arena's IndexedDB snapshot: the offline
   // shell renders it, and an offline session replays its event log over it.
@@ -270,7 +330,7 @@ export default function Arena({
         canManage,
         viewerRole,
         viewerUserId,
-        matchmaking: matchmakingProp,
+        matchmaking: liveMatchmaking,
         matchDefaults,
         // Extra props the interactive board needs when the offline shell
         // mounts <Arena> from this snapshot (cold offline boot). Server-only
@@ -294,7 +354,7 @@ export default function Arena({
       canManage,
       viewerRole,
       viewerUserId,
-      matchmakingProp,
+      liveMatchmaking,
       matchDefaults,
       description,
       schedule,
@@ -340,7 +400,7 @@ export default function Arena({
     arenaId,
     canManage,
     offlineBoot,
-    settingsProps: { matchmaking: matchmakingProp, matchDefaults },
+    settingsProps: { matchmaking: liveMatchmaking, matchDefaults },
     getBoardState,
     applyLocalState,
     applySyncedState,
@@ -383,6 +443,13 @@ export default function Arena({
       // child component refreshing after a link approval) still surfaces a
       // concurrent reset that happened on the server.
       setLastSessionResetAt(initialState.lastSessionResetAt);
+      // Same reasoning for the deck alternation pointer: a refresh that skips
+      // `applyResult` would otherwise leave it stale, and the rack would label
+      // the wrong deck "Up next" until the next SSE frame. `handleFillCourt`
+      // then sends `expected` for that wrong deck, which the server refuses —
+      // a needless "the court or queue changed" for the manager.
+      setLastDeckFilled(initialState.lastDeckFilled ?? null);
+      setSplitDeckByResult(initialState.splitDeckByResult ?? false);
       setOfflineHold(initialState.offlineHold ?? null);
     }
   }
@@ -421,6 +488,11 @@ export default function Arena({
   // page-level banner would be hidden behind the modal's backdrop.
   const [skipPickerSkippedId, setSkipPickerSkippedId] = useState(null);
   const [skipPickerError, setSkipPickerError] = useState('');
+  // Which deck's add-picker is open; null when closed. The placements
+  // themselves are no longer client state — they live on the player rows and
+  // arrive with every board payload, so both managers' racks assemble the same
+  // four and a reload can't quietly undo one.
+  const [deckPickerFor, setDeckPickerFor] = useState(null);
 
   const [activeTab, setActiveTab] = useState('courts');
 
@@ -570,6 +642,105 @@ export default function Arena({
       }),
     [players, sessionStats],
   );
+  // How each racked player's LAST game went — 'W', 'L', or null for someone
+  // who hasn't played yet this session. Derived from the same inputs the server
+  // uses inside `applyFillCourtTx`, so the rack can never disagree with the
+  // split the server is about to make. Two consumers:
+  //   - the W/L chip on every rack row (all arenas), so a manager can see at a
+  //     glance who just came off a win;
+  //   - the win/lose decks below, when the arena runs them.
+  // Session-scoped, matching the server: a result from last week must not
+  // label tonight's arrivals.
+  const rackResults = useMemo(() => {
+    const sessionStart = lastSessionResetAt ? Date.parse(lastSessionResetAt) : null;
+    const recent = matchHistory
+      .filter((m) => sessionStart === null || Date.parse(m.timestamp) >= sessionStart)
+      .map((m) => ({
+        score1: m.score1,
+        score2: m.score2,
+        team1: m.team1.map((p) => p.id),
+        team2: m.team2.map((p) => p.id),
+      }));
+    return recentResults(recent, queue);
+  }, [matchHistory, lastSessionResetAt, queue]);
+
+  // The same map, but only when the arena runs decks — `null` here means the
+  // classic single on-deck group.
+  // The LIVE mode, not the page prop: a toggle by another manager reaches this
+  // board through the state stream, and reading the prop here would keep the
+  // rack deriving its four the old way until a reload.
+  const deckResults = splitDeckByResult ? rackResults : null;
+
+  // `null` also when nobody has won yet this session (see `hasTwoDecks`), which
+  // is how game one looks.
+  const decks = useMemo(() => {
+    if (!deckResults) return null;
+    const split = splitDecks(queue, deckResults);
+    return hasTwoDecks(split) ? split : null;
+  }, [deckResults, queue]);
+
+  // The organizer's hand placements, straight off the board payload rather
+  // than local state — so the deck a manager assembled survives a reload and
+  // shows up identically on a co-organizer's board.
+  const pins = useMemo(() => pinsFromPlayers(players), [players]);
+
+  // The contest a pin has created: a paddle who belongs in this deck by result
+  // but has no slot, because a hand-placed paddle holds it. Derived from board
+  // state rather than fired by the score-record action, so it is correct
+  // whatever caused it (a game finishing here, another manager's fill, a
+  // sub-out) and self-heals if the challenger is gone by the time it renders.
+  //
+  // One deck at a time: a single finished game returns two winners AND two
+  // losers, so both decks can be contested at the same instant. Winners first,
+  // then the losers prompt re-derives on the next render.
+  const challenge = useMemo(() => {
+    if (!decks || !canManage) return null;
+    return (
+      deckChallenge(DECK_WIN, queue, decks, pins) ?? deckChallenge(DECK_LOSE, queue, decks, pins)
+    );
+  }, [decks, queue, pins, canManage]);
+
+  // The four that stack next, and which deck they came from. Recomputed from
+  // the same rule as the server so the `expected` guard on `fillCourt` carries
+  // the manager's real claim about who they were looking at.
+  const upNext = useMemo(
+    () =>
+      deckResults
+        ? nextDeck(queue, deckResults, lastDeckFilled, pins)
+        : { deck: null, players: queue.slice(0, ON_DECK_SIZE) },
+    [deckResults, queue, lastDeckFilled, pins],
+  );
+
+  // The deck to NAME in the UI. Only once the rack is actually drawn as two
+  // groups: before anyone has won, everything is technically the losers deck,
+  // and a "Stack Losers" button over a rack that shows one plain "On deck"
+  // group would be both confusing and a bit insulting to the four going on.
+  const upNextLabel = decks ? upNext.deck : null;
+
+  // Who the deck picker offers: paddles in WAITING only — everyone racked who
+  // isn't already in one of the two decks. Topping up a short deck must never
+  // pull someone out of the other deck: that would break a group that was
+  // ready to play to patch one that wasn't, and the manager would be fixing
+  // one hole by digging another.
+  const deckAddCandidates = useMemo(() => {
+    if (!deckPickerFor || !decks) return [];
+    const onDeck = new Set(
+      buildRackSections(queue, { decks, pins })
+        .filter((s) => s.deck)
+        .flatMap((s) => s.rows.map((r) => r.playerId)),
+    );
+    return queue.filter((id) => !onDeck.has(id));
+  }, [deckPickerFor, decks, pins, queue]);
+
+  // The pool a skipped paddle's replacement must come from — its own deck when
+  // the arena runs them, otherwise the whole rack. Mirrors the bucket
+  // `applySkipPlayerTx` computes server-side, so the picker never offers a
+  // paddle the server would refuse.
+  const skipBucketFor = useCallback(
+    (playerId) => (decks ? bucketOf(playerId, queue, decks, pins) : queue),
+    [decks, queue, pins],
+  );
+
   // The viewer's own linked player in this arena (null for guests / non-players).
   const myPlayer = viewerUserId
     ? displayPlayers.find((p) => p.userId === viewerUserId) ?? null
@@ -660,6 +831,12 @@ export default function Arena({
     if ('lastSessionResetAt' in state) {
       setLastSessionResetAt(state.lastSessionResetAt);
     }
+    // Server-authoritative deck alternation pointer, so two managers watching
+    // the same board agree on which deck is up next.
+    setLastDeckFilled(state.lastDeckFilled ?? null);
+    // …and the mode itself, so a manager who toggles it mid-session doesn't
+    // leave every other open board sending the wrong `expected` four.
+    setSplitDeckByResult(state.splitDeckByResult ?? false);
     // Advisory hold rides every server payload; guarded so a local engine
     // state (which never carries the key) can't clear a live hold.
     if ('offlineHold' in state) {
@@ -863,14 +1040,84 @@ export default function Arena({
   const handleFillCourt = (courtId) => {
     if (!canManage) return;
     if (offline.offlineActive) return runLocalCommand({ type: 'fillCourt', courtId });
-    // Send the on-deck four THIS render is showing, so the server stacks the
-    // players the manager could actually see rather than whoever reached the
-    // front while the tap was in flight (auto-mix on a finish, another
-    // manager's action, a sub-out jumping to #1). A mismatch comes back as
-    // "the court or queue changed" with a repainted rack. Offline needs no
-    // equivalent: the local engine records the four in the event's outcome and
-    // the sync replay rejects a mismatch there.
-    run(() => fillCourt(arenaId, courtId, queue.slice(0, ON_DECK_SIZE)));
+    // Send the four THIS render is showing as up next — the top of the rack,
+    // or the front of whichever deck the alternation has reached — so the
+    // server stacks the players the manager could actually see rather than
+    // whoever reached the front while the tap was in flight (auto-mix on a
+    // finish, another manager's action, a sub-out jumping to #1). A mismatch
+    // comes back as "the court or queue changed" with a repainted rack.
+    // Offline needs no equivalent: the local engine records the four in the
+    // event's outcome and the sync replay rejects a mismatch there.
+    run(() => fillCourt(arenaId, courtId, upNext.players));
+  };
+
+  // --- Hand-topping a short win/lose deck ---------------------------------
+  // A deck short of four (only two recent winners, say) can be filled from the
+  // rack so a court can still go out. All three handlers are no-ops without
+  // deck mode: the empty slots only render inside a deck section.
+
+  const handleAddToDeck = (deck) => {
+    if (!canManage) return;
+    setDeckPickerFor(deck);
+  };
+
+  const handleConfirmDeckAdd = (playerId) => {
+    const deck = deckPickerFor;
+    if (!deck || !playerId) return;
+    setDeckPickerFor(null);
+    // A pin is board state, so it goes to the server: every manager's rack
+    // assembles the same four, and a reload doesn't quietly undo a placement
+    // the organizer made. The server re-derives eligibility under the queue
+    // lock (still racked, deck still short, not already on deck elsewhere).
+    if (offline.offlineActive) {
+      return runLocalCommand({ type: 'pinToDeck', playerId, deck });
+    }
+    run(() => pinToDeck(arenaId, playerId, deck));
+  };
+
+  const handleRemoveFromDeck = (deck, playerId) => {
+    if (!canManage) return;
+    if (offline.offlineActive) return runLocalCommand({ type: 'unpinFromDeck', playerId });
+    run(() => unpinFromDeck(arenaId, playerId));
+  };
+
+  /**
+   * Answer the pin-vs-winner contest. `yieldIds` are the pins the organizer
+   * gave up; an empty array is "keep my picks", which locks them so the same
+   * question isn't re-asked after every subsequent game.
+   */
+  const handleResolveDeckChallenge = (yieldIds) => {
+    if (!canManage || !challenge) return;
+    if (offline.offlineActive) {
+      return runLocalCommand({ type: 'resolveDeckChallenge', deck: challenge.deck, yieldIds });
+    }
+    run(() => resolveDeckChallenge(arenaId, challenge.deck, yieldIds));
+  };
+
+  const handleStackDeck = (deck, playerIds) => {
+    if (!canManage) return;
+    // First open court, matching what the button promises. Nothing to stack
+    // onto is a no-op rather than an error — the button is only reachable when
+    // a deck is complete, not when a court is free.
+    const open = courts.find((c) => c.status !== 'playing');
+    if (!open) {
+      setErrorMsg('No open court to stack onto. Finish a game first.');
+      return;
+    }
+    // The server retires this deck's pins as part of the fill, and leaves the
+    // other deck's alone — those paddles are still racked and none of them
+    // played, so nothing about that placement has been spent.
+    if (offline.offlineActive) {
+      return runLocalCommand({
+        type: 'fillCourt',
+        courtId: open.id,
+        manualPlayers: playerIds,
+        manualDeck: deck,
+      });
+    }
+    // `expected` is the same four: the organizer named them, so the staleness
+    // guard still asks the server to confirm they're all still racked.
+    run(() => fillCourt(arenaId, open.id, playerIds, { players: playerIds, deck }));
   };
 
   // The rack X takes a player off the rack (reversible) rather than deleting
@@ -904,7 +1151,9 @@ export default function Arena({
     // resolution the modal's list uses (`players.find(...)`), not just raw
     // queue ids, so the open-condition is provably identical to what renders —
     // the manager never lands on a modal with an empty, unconfirmable list.
-    const hasWaiting = queue
+    // In deck mode the pool is the skipped paddle's own deck, matching where
+    // `applySkipPlayerTx` actually takes the replacement from.
+    const hasWaiting = skipBucketFor(id)
       .slice(ON_DECK_SIZE)
       .some((qid) => qid !== id && players.some((p) => p.id === qid));
     if (canManage && matchmakingProp.skipPickReplacement && hasWaiting) {
@@ -1574,6 +1823,13 @@ export default function Arena({
             starveThreshold={matchmakingProp.starveThreshold}
             emergencyWait={matchmakingProp.emergencyWait}
             skipRestoresPriority={matchmakingProp.skipRestoresPriority}
+            decks={decks}
+            nextDeck={upNextLabel}
+            results={rackResults}
+            pins={pins}
+            onAddToDeck={handleAddToDeck}
+            onRemoveFromDeck={handleRemoveFromDeck}
+            onStackDeck={handleStackDeck}
             errorMsg={errorMsg}
           />
         </div>
@@ -1604,6 +1860,7 @@ export default function Arena({
               onFillCourt={handleFillCourt}
               onRemoveCourt={handleRemoveCourt}
               profileHrefFor={playerProfileHrefFor}
+              nextDeck={upNextLabel}
             />
           )}
 
@@ -1775,6 +2032,13 @@ export default function Arena({
             starveThreshold={matchmakingProp.starveThreshold}
             emergencyWait={matchmakingProp.emergencyWait}
             skipRestoresPriority={matchmakingProp.skipRestoresPriority}
+            decks={decks}
+            nextDeck={upNextLabel}
+            results={rackResults}
+            pins={pins}
+            onAddToDeck={handleAddToDeck}
+            onRemoveFromDeck={handleRemoveFromDeck}
+            onStackDeck={handleStackDeck}
             errorMsg={errorMsg}
           />
         </div>
@@ -1897,10 +2161,39 @@ export default function Arena({
           skippedId={skipPickerSkippedId}
           players={displayPlayers}
           queue={queue}
+          bucket={skipBucketFor(skipPickerSkippedId)}
           isPending={isPending}
           error={skipPickerError}
           onConfirm={handleConfirmSkipWithReplacement}
           onClose={handleCancelSkipPicker}
+        />
+      )}
+
+      {/* The pin-vs-winner contest. Rendered ahead of the add picker: if a
+          challenge is open the organizer answers that before staging more,
+          otherwise the two dialogs would stack on top of each other. */}
+      {mounted && challenge && (
+        <DeckChallengeModal
+          key={`${challenge.deck}:${challenge.pins.join(',')}:${challenge.challengers.join(',')}`}
+          deck={challenge.deck}
+          challengers={challenge.challengers}
+          pins={challenge.pins}
+          players={displayPlayers}
+          isPending={isPending}
+          onResolve={handleResolveDeckChallenge}
+        />
+      )}
+
+      {/* Add-to-deck picker: fills an empty slot on a short win/lose deck.
+          The placement is written to the board, not staged locally. */}
+      {mounted && !challenge && deckPickerFor && decks && (
+        <DeckAddModal
+          deck={deckPickerFor}
+          players={displayPlayers}
+          candidates={deckAddCandidates}
+          isPending={isPending}
+          onConfirm={handleConfirmDeckAdd}
+          onClose={() => setDeckPickerFor(null)}
         />
       )}
 

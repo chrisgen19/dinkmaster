@@ -1,5 +1,15 @@
 import { ON_DECK_SIZE, bandOf } from '@/lib/matchmaking';
 import { bestMatchups, rankMatchups, recentResults } from '@/lib/pairing';
+import {
+  DECK_LOSE,
+  DECK_WIN,
+  assembleDeck,
+  bucketOf,
+  deckChallenge,
+  nextDeck,
+  pinnedIn,
+  splitDecks,
+} from '@/lib/decks';
 import { RATING_BASELINE, computeMatchRatings } from '@/lib/rating';
 import { validateMatchScore } from '@/lib/scoring';
 import { diffLineup, validateLineup } from '@/lib/court-lineup';
@@ -40,6 +50,9 @@ export const OFFLINE_COMMANDS = [
   'editCourtLineup',
   'endMatch',
   'skipPlayer',
+  'pinToDeck',
+  'unpinFromDeck',
+  'resolveDeckChallenge',
 ];
 
 // User-facing failure copy, kept identical to the messages the online server
@@ -54,6 +67,25 @@ const MSG_EDIT_QUEUE_CHANGED = 'A chosen player is no longer available — the r
 const MSG_EDIT_INVALID_LINEUP = 'Pick exactly four different players, two per team.';
 const MSG_REPLACEMENT_GONE = 'That replacement is no longer available. Pick again.';
 const MSG_REPLACEMENT_ON_DECK = 'That player is already on deck — pick a waiting paddle.';
+const MSG_PIN_INVALID = 'That paddle can no longer be added to this deck. Please try again.';
+
+/** Retiring a pin always clears both columns. Mirrors `CLEAR_PIN` server-side. */
+const CLEAR_PIN = { draftedDeck: null, draftedLocked: false };
+
+/**
+ * The organizer's deck pins, in the map `@/lib/decks` consumes. Read off the
+ * player rows so an offline board assembles its decks exactly as the server
+ * would, and a synced replay lands on the same four.
+ */
+function pinsOf(state) {
+  const pins = new Map();
+  for (const p of state.players ?? []) {
+    if (p.draftedDeck === DECK_WIN || p.draftedDeck === DECK_LOSE) {
+      pins.set(p.id, { deck: p.draftedDeck, locked: Boolean(p.draftedLocked) });
+    }
+  }
+  return pins;
+}
 
 const defaultMakeId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 
@@ -147,10 +179,18 @@ function applyCheckIn(state, event) {
 function applyCheckOut(state, event) {
   const { playerId } = event.payload;
   if (!state.queue.includes(playerId)) return { state, changed: false };
+  // A pin dies with the paddle's place on the rack, mirroring
+  // `applyCheckOutTx`. Without this a check-out/check-in round trip offline
+  // resurrects the placement locally while replay clears it on the server, and
+  // the two boards then pick different fours. Only touched when a pin exists,
+  // so an unpinned board's player rows keep the shape they arrived with.
+  const pinned = Boolean(playerById(state, playerId)?.draftedDeck);
   return {
     state: {
       ...state,
-      players: patchPlayers(state.players, { [playerId]: { waitRounds: 0, skipBoosted: false } }),
+      players: patchPlayers(state.players, {
+        [playerId]: { waitRounds: 0, skipBoosted: false, ...(pinned ? CLEAR_PIN : {}) },
+      }),
       queue: state.queue.filter((id) => id !== playerId),
     },
     changed: true,
@@ -165,32 +205,66 @@ function applyShuffleQueue(state, event) {
   return { state: { ...state, queue: order }, changed: true };
 }
 
-function applyFillCourt(state, event) {
+function applyFillCourt(state, settings, event) {
   const { courtId } = event.payload;
   const outcome = event.outcome;
   const court = state.courts.find((c) => c.id === courtId);
   if (!court || court.status !== 'vacant') return { error: MSG_COURT_CHANGED };
   if (state.queue.length < 4) return { error: MSG_NOT_ENOUGH };
 
-  const top4 = state.queue.slice(0, 4);
+  // Mirrors `applyFillCourtTx`'s validation exactly. In deck mode the recorded
+  // four came from the front of a deck, not the front of the rack, so they only
+  // have to be four distinct paddles that are all still racked; classic mode
+  // keeps the strict "must be the top four" check. A settings snapshot taken
+  // before this feature has no flag at all — treat that as OFF, matching the
+  // column default.
+  const deckMode = settings?.splitDeckByResult === true;
+  const filled = outcome?.players ?? [];
+  const selectionValid = deckMode
+    ? filled.length === 4 &&
+      new Set(filled).size === 4 &&
+      filled.every((id) => state.queue.includes(id))
+    : sameMembers(filled, state.queue.slice(0, 4));
+  // The recorded deck becomes `state.lastDeckFilled`, which drives the next
+  // fill's alternation and is hashed into the sync fingerprint — so constrain
+  // it to the documented domain here too, or a corrupted stored log quietly
+  // poisons both. Server-side twin in `applyFillCourtTx`.
+  const deckValid =
+    outcome?.deck === undefined ||
+    outcome?.deck === null ||
+    outcome?.deck === DECK_WIN ||
+    outcome?.deck === DECK_LOSE;
   if (
     !outcome ||
-    !sameMembers(outcome.players, top4) ||
-    !sameMembers([...outcome.team1, ...outcome.team2], top4)
+    !selectionValid ||
+    !deckValid ||
+    !sameMembers([...outcome.team1, ...outcome.team2], filled)
   ) {
     return { error: 'STATE_MISMATCH' };
   }
 
-  const remaining = state.queue.slice(4);
+  const remaining = state.queue.filter((id) => !filled.includes(id));
   const patches = {};
-  top4.forEach((id) => {
+  filled.forEach((id) => {
     const p = playerById(state, id);
     patches[id] = { gamesPlayed: p.gamesPlayed + 1, waitRounds: 0, skipBoosted: false };
+    // Only touch the pin columns on a paddle that actually carries a pin, so
+    // an unpinned board's player rows keep the exact shape they arrived with.
+    if (p.draftedDeck) patches[id] = { ...patches[id], ...CLEAR_PIN };
   });
   remaining.forEach((id) => {
     const p = playerById(state, id);
     patches[id] = { waitRounds: p.waitRounds + 1 };
   });
+  // Retire the stacked deck's remaining pins, and ONLY that deck's — the other
+  // deck's placements are still unspent. Server twin in `applyFillCourtTx`.
+  if (deckMode && outcome.deck) {
+    remaining.forEach((id) => {
+      if (playerById(state, id)?.draftedDeck === outcome.deck) {
+        patches[id] = { ...patches[id], ...CLEAR_PIN };
+      }
+    });
+  }
 
   // Slot snapshots let cancelFill restore the exact pre-fill rack state.
   const snapshotFor = (id) => ({
@@ -218,10 +292,16 @@ function applyFillCourt(state, event) {
               team1: outcome.team1,
               team2: outcome.team2,
               fillBumpedPlayerIds: remaining,
+              // Alternation pointer as it stood before this fill, so
+              // `applyCancelFill` can rewind it — mirrors `Court.fillPrevDeck`.
+              fillPrevDeck: state.lastDeckFilled ?? null,
               slots,
             }
           : c,
       ),
+      // Advance the W -> L -> W alternation. Only in deck mode, so an arena
+      // that isn't running decks never carries a stale pointer.
+      ...(deckMode ? { lastDeckFilled: outcome.deck ?? null } : {}),
       history,
     },
     changed: true,
@@ -269,9 +349,21 @@ function applyCancelFill(state, event) {
       queue: [...restored, ...state.queue],
       courts: state.courts.map((c) =>
         c.id === courtId
-          ? { ...c, status: 'vacant', team1: [], team2: [], fillBumpedPlayerIds: [], slots: [] }
+          ? {
+              ...c,
+              status: 'vacant',
+              team1: [],
+              team2: [],
+              fillBumpedPlayerIds: [],
+              fillPrevDeck: null,
+              slots: [],
+            }
           : c,
       ),
+      // Rewind the deck alternation to where the cancelled fill found it, so
+      // an undone stack doesn't cost the other deck its turn (see
+      // `applyCancelFillTx`).
+      lastDeckFilled: court.fillPrevDeck ?? null,
       history,
     },
     changed: true,
@@ -467,7 +559,17 @@ function applyEndMatch(state, settings, event) {
       queue,
       courts: state.courts.map((c) =>
         c.id === courtId
-          ? { ...c, status: 'vacant', team1: [], team2: [], fillBumpedPlayerIds: [], slots: [] }
+          ? {
+              ...c,
+              status: 'vacant',
+              team1: [],
+              team2: [],
+              fillBumpedPlayerIds: [],
+              // A finished game does NOT rewind the deck alternation — that
+              // turn was played. Just drop the cancel bookkeeping.
+              fillPrevDeck: null,
+              slots: [],
+            }
           : c,
       ),
       matchHistory: [match, ...state.matchHistory],
@@ -477,27 +579,70 @@ function applyEndMatch(state, settings, event) {
   };
 }
 
+/**
+ * Each racked player's most recent result, scoped to the current session —
+ * the same input `applyFillCourtTx` reads from the database. `matchHistory` is
+ * newest-first and `applyEndMatch` prepends to it, so an offline session's own
+ * games classify its players immediately.
+ */
+function sessionResults(state, ids) {
+  const sessionStart = state.lastSessionResetAt ? Date.parse(state.lastSessionResetAt) : null;
+  const recentMatches = (state.matchHistory ?? [])
+    .filter((m) => sessionStart === null || Date.parse(m.timestamp) >= sessionStart)
+    .map((m) => ({
+      score1: m.score1,
+      score2: m.score2,
+      team1: m.team1.map((p) => p.id),
+      team2: m.team2.map((p) => p.id),
+    }));
+  return recentResults(recentMatches, ids);
+}
+
 function applySkipPlayer(state, settings, event) {
   const { playerId, replacementId, isManager } = event.payload;
-  const queue = state.queue;
-  const index = queue.indexOf(playerId);
-  if (index === -1 || index >= ON_DECK_SIZE || queue.length <= ON_DECK_SIZE) {
+  const rack = state.queue;
+
+  // In deck mode "on deck" means the front four of the paddle's OWN deck, and
+  // the replacement must come from that same deck — promoting a loser into the
+  // winners' game would defeat the mode. The classic rack is the single-bucket
+  // case of the same rule. Mirrors `applySkipPlayerTx`.
+  let bucket = rack;
+  if (settings.splitDeckByResult === true) {
+    const decks = splitDecks(rack, sessionResults(state, rack));
+    // Pin-aware, exactly as `applySkipPlayerTx` is.
+    bucket = bucketOf(playerId, rack, decks, pinsOf(state));
+  }
+
+  const index = bucket.indexOf(playerId);
+  if (index === -1 || index >= ON_DECK_SIZE || bucket.length <= ON_DECK_SIZE) {
     return { state, changed: false };
   }
 
-  let replacementIdx = ON_DECK_SIZE; // auto: first waiting
+  let replacementIdx = ON_DECK_SIZE; // auto: first waiting in this deck
   if (replacementId && isManager && settings.skipPickReplacement) {
-    const idx = queue.indexOf(replacementId);
+    const idx = bucket.indexOf(replacementId);
     if (idx === -1) return { error: MSG_REPLACEMENT_GONE };
     if (idx < ON_DECK_SIZE) return { error: MSG_REPLACEMENT_ON_DECK };
     replacementIdx = idx;
   }
 
   if (settings.skipRestoresPriority) {
-    const onDeckMinusSkipped = queue.slice(0, ON_DECK_SIZE).filter((_, k) => k !== index);
-    const replacement = queue[replacementIdx];
-    const waitingMinusReplacement = queue.slice(ON_DECK_SIZE).filter((id) => id !== replacement);
-    const reordered = [...onDeckMinusSkipped, replacement, playerId, ...waitingMinusReplacement];
+    const onDeckMinusSkipped = bucket.slice(0, ON_DECK_SIZE).filter((_, k) => k !== index);
+    const replacement = bucket[replacementIdx];
+    const waitingMinusReplacement = bucket.slice(ON_DECK_SIZE).filter((id) => id !== replacement);
+    const reorderedBucket = [
+      ...onDeckMinusSkipped,
+      replacement,
+      playerId,
+      ...waitingMinusReplacement,
+    ];
+    // Write the bucket's new member order back into the rack positions it
+    // already occupied, leaving the other deck's paddles exactly where they
+    // are. In classic mode the bucket IS the rack, so this is a plain reorder.
+    const reordered = [...rack];
+    bucket.forEach((id, k) => {
+      reordered[rack.indexOf(id)] = reorderedBucket[k];
+    });
     return {
       state: {
         ...state,
@@ -510,14 +655,16 @@ function applySkipPlayer(state, settings, event) {
   }
 
   // Legacy mode: replacement (if manually picked) takes the freed slot, the
-  // skipped paddle goes to the back with wait fairness reset.
-  const withoutSkipped = queue.filter((id) => id !== playerId);
+  // skipped paddle goes to the back with wait fairness reset. The freed slot is
+  // a RACK position, so resolve it from the rack rather than the bucket.
+  const withoutSkipped = rack.filter((id) => id !== playerId);
   const isManualPick = replacementIdx !== ON_DECK_SIZE;
   let reordered;
   if (isManualPick) {
-    const replacement = queue[replacementIdx];
+    const replacement = bucket[replacementIdx];
     const rest = withoutSkipped.filter((id) => id !== replacement);
-    reordered = [...rest.slice(0, index), replacement, ...rest.slice(index), playerId];
+    const freed = rack.indexOf(playerId);
+    reordered = [...rest.slice(0, freed), replacement, ...rest.slice(freed), playerId];
   } else {
     reordered = [...withoutSkipped, playerId];
   }
@@ -542,6 +689,85 @@ function sameMembers(a, b) {
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * Pin a racked paddle into a short win/lose deck. Deterministic, so the event
+ * carries no outcome; validated here exactly as `applyPinToDeckTx` validates
+ * it server-side, so a replayed batch reaches the same board.
+ */
+function applyPinToDeck(state, settings, event) {
+  const { playerId, deck } = event.payload;
+  if (settings?.splitDeckByResult !== true) return { error: MSG_PIN_INVALID };
+  if (deck !== DECK_WIN && deck !== DECK_LOSE) return { error: MSG_PIN_INVALID };
+  if (!state.queue.includes(playerId)) return { error: MSG_PIN_INVALID };
+
+  const pins = pinsOf(state);
+  const decks = splitDecks(state.queue, sessionResults(state, state.queue));
+  const onDeck = new Set([
+    ...assembleDeck(DECK_WIN, state.queue, decks, pins).four,
+    ...assembleDeck(DECK_LOSE, state.queue, decks, pins).four,
+  ]);
+  if (onDeck.has(playerId)) return { error: MSG_PIN_INVALID };
+  if (assembleDeck(deck, state.queue, decks, pins).four.length >= ON_DECK_SIZE) {
+    return { error: MSG_PIN_INVALID };
+  }
+
+  return {
+    state: {
+      ...state,
+      players: patchPlayers(state.players, {
+        [playerId]: { draftedDeck: deck, draftedLocked: false },
+      }),
+    },
+    changed: true,
+  };
+}
+
+/** Take a hand-placed paddle back out of its deck. Always legal, idempotent. */
+function applyUnpinFromDeck(state, event) {
+  const { playerId } = event.payload;
+  if (typeof playerId !== 'string' || playerId.length === 0) return { state, changed: false };
+  if (!playerById(state, playerId)?.draftedDeck) return { state, changed: false };
+  return {
+    state: { ...state, players: patchPlayers(state.players, { [playerId]: { ...CLEAR_PIN } }) },
+    changed: true,
+  };
+}
+
+/**
+ * Answer the pin-vs-winner contest: `yieldIds` are unpinned, everything still
+ * pinned in that deck is locked so the question isn't re-asked. Mirrors
+ * `applyResolveDeckChallengeTx`.
+ */
+function applyResolveDeckChallenge(state, settings, event) {
+  const { deck, yieldIds } = event.payload;
+  if (settings?.splitDeckByResult !== true) return { state, changed: false };
+  const ids = Array.isArray(yieldIds) ? yieldIds : [];
+
+  const pins = pinsOf(state);
+  const decks = splitDecks(state.queue, sessionResults(state, state.queue));
+  const challenge = deckChallenge(deck, state.queue, decks, pins);
+  // A stale answer is dropped rather than errored: the contest it referred to
+  // is already gone, so there is nothing left to get wrong.
+  if (!challenge) return { state, changed: false };
+  const offered = new Set(challenge.pins);
+  // Distinct, matching `applyResolveDeckChallengeTx`, so a malformed event is
+  // rejected identically on both sides of the sync.
+  if (
+    new Set(ids).size !== ids.length ||
+    ids.length > challenge.challengers.length ||
+    !ids.every((id) => offered.has(id))
+  ) {
+    return { state, changed: false };
+  }
+
+  const patches = {};
+  for (const id of ids) patches[id] = { ...CLEAR_PIN };
+  for (const id of pinnedIn(deck, state.queue, pins)) {
+    if (!ids.includes(id)) patches[id] = { draftedLocked: true };
+  }
+  return { state: { ...state, players: patchPlayers(state.players, patches) }, changed: true };
+}
+
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -565,7 +791,7 @@ export function applyEvent(state, settings, event) {
     case 'shuffleQueue':
       return applyShuffleQueue(state, event);
     case 'fillCourt':
-      return applyFillCourt(state, event);
+      return applyFillCourt(state, settings, event);
     case 'cancelFill':
       return applyCancelFill(state, event);
     case 'editCourtLineup':
@@ -574,6 +800,12 @@ export function applyEvent(state, settings, event) {
       return applyEndMatch(state, settings, event);
     case 'skipPlayer':
       return applySkipPlayer(state, settings, event);
+    case 'pinToDeck':
+      return applyPinToDeck(state, settings, event);
+    case 'unpinFromDeck':
+      return applyUnpinFromDeck(state, event);
+    case 'resolveDeckChallenge':
+      return applyResolveDeckChallenge(state, settings, event);
     default:
       return { error: `Unknown offline event type: ${event.type}` };
   }
@@ -626,7 +858,6 @@ export function resolveCommand(state, settings, command, opts = {}) {
       const court = state.courts.find((c) => c.id === command.courtId);
       if (!court || court.status !== 'vacant') return { error: MSG_COURT_CHANGED };
       if (state.queue.length < 4) return { error: MSG_NOT_ENOUGH };
-      const top4 = state.queue.slice(0, 4);
       // Same ranking as the server's `applyFillCourtTx`: recent losers partner
       // recent winners, then closer-rated, then fewest repeat partnerships —
       // or, when the arena has opted out, fewest repeats alone.
@@ -635,21 +866,38 @@ export function resolveCommand(state, settings, command, opts = {}) {
       // A settings snapshot captured before this feature has no flag at all;
       // treat that as ON, matching the column default.
       const balanced = settings.balancedPairing !== false;
+      // Deck mode defaults OFF for a pre-feature snapshot, matching ITS column
+      // default (opt-in, unlike balancedPairing).
+      const deckMode = settings.splitDeckByResult === true;
       // Session-scoped, mirroring `applyFillCourtTx`: a reset keeps match rows
       // but starts the split's inputs fresh, so results from a previous
       // session must not classify tonight's arrivals. Matches recorded during
       // this offline session are stamped after the boundary and still count.
-      const sessionStart = state.lastSessionResetAt ? Date.parse(state.lastSessionResetAt) : null;
-      const recentMatches = state.matchHistory
-        .filter((m) => sessionStart === null || Date.parse(m.timestamp) >= sessionStart)
-        .map((m) => ({
-          score1: m.score1,
-          score2: m.score2,
-          team1: m.team1.map((p) => p.id),
-          team2: m.team2.map((p) => p.id),
-        }));
-      const ranked = rankMatchups(top4, {
-        results: recentResults(recentMatches, top4),
+      // One results map serves both the deck split and the team split, exactly
+      // as on the server.
+      const results = sessionResults(state, state.queue);
+      // A hand-topped deck names its own four (see `applyFillCourtTx`'s
+      // `manual`): validated the same way, and the rotation still advances as
+      // if that deck took its turn. Deck mode only.
+      const manual =
+        deckMode &&
+        Array.isArray(command.manualPlayers) &&
+        command.manualPlayers.length === 4 &&
+        new Set(command.manualPlayers).size === 4 &&
+        command.manualPlayers.every((id) => state.queue.includes(id)) &&
+        (command.manualDeck === DECK_WIN || command.manualDeck === DECK_LOSE)
+          ? { deck: command.manualDeck, players: command.manualPlayers }
+          : null;
+      // Otherwise deck mode draws from the front of the winners or losers deck,
+      // alternating; classic mode takes the rack's top four.
+      const picked =
+        manual ??
+        (deckMode
+          ? nextDeck(state.queue, results, state.lastDeckFilled ?? null, pinsOf(state))
+          : { deck: null, players: state.queue.slice(0, 4) });
+      const filled = picked.players;
+      const ranked = rankMatchups(filled, {
+        results,
         ratings: new Map(state.players.map((p) => [p.id, p.rating])),
         pairCount: (a, b) => pairCount(state.history, a, b),
         balanced,
@@ -658,7 +906,9 @@ export function resolveCommand(state, settings, command, opts = {}) {
       event = {
         ...base,
         payload: { courtId: command.courtId },
-        outcome: { players: top4, team1: best.team1, team2: best.team2 },
+        // `deck` rides along so a synced replay lands the server's alternation
+        // pointer on exactly the value this device chose.
+        outcome: { players: filled, team1: best.team1, team2: best.team2, deck: picked.deck },
       };
       break;
     }
@@ -732,6 +982,25 @@ export function resolveCommand(state, settings, command, opts = {}) {
           replacementId: command.replacementId ?? null,
           isManager: Boolean(command.isManager),
         },
+        outcome: null,
+      };
+      break;
+    // The three deck-pin commands are fully deterministic — the organizer names
+    // the paddle and the deck — so none of them records an outcome.
+    case 'pinToDeck':
+      event = {
+        ...base,
+        payload: { playerId: command.playerId, deck: command.deck },
+        outcome: null,
+      };
+      break;
+    case 'unpinFromDeck':
+      event = { ...base, payload: { playerId: command.playerId }, outcome: null };
+      break;
+    case 'resolveDeckChallenge':
+      event = {
+        ...base,
+        payload: { deck: command.deck, yieldIds: command.yieldIds ?? [] },
         outcome: null,
       };
       break;

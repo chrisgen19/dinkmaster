@@ -39,9 +39,11 @@ const bit = (value) => (value ? 1 : 0);
  * Build the canonical string for a board + settings. Exported for tests
  * (asserting WHAT is hashed, not just that hashes differ).
  *
- * @param {object} state - getState shape: { players, queue, courts, history }
+ * @param {object} state - getState shape: { players, queue, courts, history,
+ *   lastDeckFilled }
  * @param {object} settings - { targetScore, starveThreshold, emergencyWait,
- *   skipRestoresPriority, skipPickReplacement, balancedPairing }
+ *   skipRestoresPriority, skipPickReplacement, balancedPairing,
+ *   splitDeckByResult }
  */
 export function canonicalBoardString(state, settings) {
   const players = [...state.players]
@@ -87,7 +89,41 @@ export function canonicalBoardString(state, settings) {
   // divergence. Since the migration backfills every arena to ON, the default
   // must hash exactly as it did before, and only the opt-out adds `|0`.
   const legacyRules = `${settings.targetScore}|${settings.starveThreshold}|${settings.emergencyWait}|${bit(settings.skipRestoresPriority)}|${bit(settings.skipPickReplacement)}`;
-  const rules = settings.balancedPairing === false ? `${legacyRules}|0` : legacyRules;
+  const withPairing = settings.balancedPairing === false ? `${legacyRules}|0` : legacyRules;
+
+  // `splitDeckByResult` and the alternation pointer it drives both change WHICH
+  // FOUR a fill stacks, so a device that ran a session under different values
+  // produced a board the server would not have produced. Both are appended by
+  // ABSENCE for the same reason `balancedPairing` is (see above) — but the
+  // defaults are the other way around here: the mode ships OFF, so absence
+  // encodes off and only an arena running decks adds anything. The `d`/`k`
+  // prefixes keep the two unambiguous next to `balancedPairing`'s bare `|0`.
+  //
+  // The pointer is board state rather than a rule, but it belongs in the same
+  // hash: replaying a batch that forked from "winners went last" onto a server
+  // that says "losers went last" alternates the wrong way.
+  const deckMode = settings.splitDeckByResult === true;
+  const withDeck = deckMode
+    ? `${withPairing}|d1${state.lastDeckFilled ? `|k${state.lastDeckFilled}` : ''}`
+    : withPairing;
+
+  // Organizer pins decide WHICH FOUR a deck stacks — they beat the natural
+  // W/L split for their slot — so a device that forked from a differently
+  // pinned board would replay a different court. Hashed here rather than as a
+  // per-player field for the reason spelled out above: appending to the player
+  // line would change the hash of every unchanged board and report a phantom
+  // divergence for every offline session in flight across the deploy. Absence
+  // encodes "nothing pinned", which is every pre-feature board.
+  //
+  // `locked` rides along because it decides whether a challenge exists at all,
+  // and `resolveDeckChallenge` replays against that.
+  const pins = deckMode
+    ? [...state.players]
+        .filter((p) => p.draftedDeck === 'W' || p.draftedDeck === 'L')
+        .sort((a, b) => (a.id < b.id ? -1 : 1))
+        .map((p) => `${p.id}:${p.draftedDeck}${bit(p.draftedLocked)}`)
+    : [];
+  const rules = pins.length > 0 ? `${withDeck}|n${pins.join(',')}` : withDeck;
 
   return `p:${players}\nq:${queue}\nc:${courts}\nh:${partnerships}\ns:${rules}`;
 }

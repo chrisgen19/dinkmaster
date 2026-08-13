@@ -554,6 +554,9 @@ function MatchmakingSection({ arenaId, matchmaking }) {
     matchmaking.skipPickReplacement ?? true,
   );
   const [balancedPairing, setBalancedPairing] = useState(matchmaking.balancedPairing ?? true);
+  const [splitDeckByResult, setSplitDeckByResult] = useState(
+    matchmaking.splitDeckByResult ?? false,
+  );
   const [error, setError] = useState('');
   const [saved, flashSaved, clearSaved] = useSavedFlag();
   const [isPending, startTransition] = useTransition();
@@ -581,6 +584,7 @@ function MatchmakingSection({ arenaId, matchmaking }) {
           skipRestoresPriority,
           skipPickReplacement,
           balancedPairing,
+          splitDeckByResult,
         });
         if (result?.error) return setError(result.error);
         flashSaved();
@@ -678,6 +682,22 @@ function MatchmakingSection({ arenaId, matchmaking }) {
             <span className="block text-sm font-bold text-slate-800">Pair losers with winners</span>
             <span className="block text-xs text-slate-400 mt-0.5">
               When on, each player who lost their most recent game is partnered with someone who won theirs, so a beaten pair isn&apos;t sent straight back out together. Ties go to the closer-rated split, then to the pairing that repeats the fewest partnerships. When off, only repeat partnerships are minimised — the pure Silo-Buster rotation, with no skill input.
+            </span>
+          </span>
+        </label>
+
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={splitDeckByResult}
+            onChange={(e) => setSplitDeckByResult(e.target.checked)}
+            disabled={isPending}
+            className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4"
+          />
+          <span>
+            <span className="block text-sm font-bold text-slate-800">Win vs win, lose vs lose</span>
+            <span className="block text-xs text-slate-400 mt-0.5">
+              When on, the rack carries two on-deck groups instead of one — winners of the last game in one, everyone else in the other — and courts stack from them in turn, so a beaten four isn&apos;t sent straight back out against the four that just rolled them. Players who haven&apos;t played yet count as losers, so the first game of a session is a normal single deck and the winners&apos; group fills in as games finish. Waiting time and the ⏳ badge still order each group.
             </span>
           </span>
         </label>

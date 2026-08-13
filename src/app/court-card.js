@@ -24,6 +24,9 @@ import { formatShortName } from '@/lib/player-display';
  * @param {(playerId: string) => string|null} [props.profileHrefFor] - resolves a
  *   slot's playerId to a profile link (rack rules); null/omitted renders names
  *   as plain text.
+ * @param {'W'|'L'|null} [props.nextDeck] - in an arena running win/lose decks,
+ *   which deck stacks next. Names it on the button so the manager knows what
+ *   they're about to send out; null means the classic top-four stack.
  */
 export function CourtCard({
   court,
@@ -37,6 +40,7 @@ export function CourtCard({
   onFill,
   onRemove,
   profileHrefFor = null,
+  nextDeck = null,
 }) {
   const isPlaying = court.status === 'playing';
 
@@ -199,9 +203,13 @@ export function CourtCard({
           >
             {!canManage
               ? 'View only'
-              : queueLength >= 4
-                ? 'Stack Next 4 Paddles'
-                : 'Need 4 Players in Rack'}
+              : queueLength < 4
+                ? 'Need 4 Players in Rack'
+                : nextDeck === 'W'
+                  ? 'Stack Winners · 4'
+                  : nextDeck === 'L'
+                    ? 'Stack Losers · 4'
+                    : 'Stack Next 4 Paddles'}
           </button>
         )}
       </div>

@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { deriveRackRow, fullName, initials, ON_DECK_SIZE } from './paddle-rack-stack-state';
+import {
+  buildRackSections,
+  deriveRackRow,
+  fullName,
+  initials,
+  ON_DECK_SIZE,
+  pinsFromPlayers,
+} from './paddle-rack-stack-state';
+import { splitDecks } from '@/lib/decks';
 
 const opts = { viewerUserId: 'u-me', starveThreshold: 2, emergencyWait: 4 };
 const player = (over = {}) => ({
@@ -151,5 +159,263 @@ describe('deriveRackRow — profileHref (name → profile link)', () => {
   it('defaults to no link when viewerIsMember is omitted', () => {
     expect(deriveRackRow(player({ userId: 'u-1' }), 0, opts).profileHref).toBeNull();
     expect(deriveRackRow(player({ userId: null }), 0, opts).profileHref).toBeNull();
+  });
+});
+
+describe('deriveRackRow — win/lose decks', () => {
+  // Deck mode makes "on deck" bucket-relative: a paddle at rack position 7 can
+  // be on deck if it is fourth in its own deck.
+  it('reads on-deck from the deck position, not the rack position', () => {
+    const row = deriveRackRow(player(), 6, { ...opts, bucketIndex: 3, bucketLength: 6 });
+    expect(row.isOnDeck).toBe(true);
+    // ...while the badge still counts the real rack.
+    expect(row.rank).toBe(7);
+  });
+
+  it('marks a paddle off-deck once it is fifth in its own deck', () => {
+    expect(deriveRackRow(player(), 4, { ...opts, bucketIndex: 4, bucketLength: 9 }).isOnDeck).toBe(false);
+  });
+
+  it('gates skip on someone waiting in the SAME deck', () => {
+    const canSkipWith = (bucketLength) =>
+      deriveRackRow(player({ userId: 'u-me' }), 0, {
+        ...opts,
+        canManage: true,
+        // A long rack overall...
+        queueLength: 20,
+        bucketIndex: 0,
+        // ...but this deck is exactly four deep, so nobody can take the slot.
+        bucketLength,
+      }).canSkip;
+    expect(canSkipWith(ON_DECK_SIZE)).toBe(false);
+    expect(canSkipWith(ON_DECK_SIZE + 1)).toBe(true);
+  });
+
+  it('falls back to the rack when no bucket is given', () => {
+    // Classic mode passes neither, and must behave exactly as before.
+    const row = deriveRackRow(player({ userId: 'u-me' }), 0, { ...opts, canManage: true, queueLength: 6 });
+    expect(row.isOnDeck).toBe(true);
+    expect(row.canSkip).toBe(true);
+  });
+});
+
+/** Pins map for `deck`, from a list of ids. `id!` marks the pin locked. */
+const pinned = (deck, ids) =>
+  new Map(
+    ids.map((raw) => [
+      raw.replace('!', ''),
+      { deck, locked: raw.endsWith('!') },
+    ]),
+  );
+
+describe('pinsFromPlayers', () => {
+  it('keeps only real pins and carries the lock through', () => {
+    const pins = pinsFromPlayers([
+      { id: 'a', draftedDeck: 'W', draftedLocked: true },
+      { id: 'b', draftedDeck: 'L' },
+      { id: 'c', draftedDeck: null },
+      { id: 'd' },
+      { id: 'e', draftedDeck: 'w' },
+    ]);
+    expect([...pins.keys()]).toEqual(['a', 'b']);
+    expect(pins.get('a')).toEqual({ deck: 'W', locked: true });
+    expect(pins.get('b')).toEqual({ deck: 'L', locked: false });
+  });
+
+  it('is empty for a board that has never pinned anyone', () => {
+    expect(pinsFromPlayers([{ id: 'a' }]).size).toBe(0);
+    expect(pinsFromPlayers(undefined).size).toBe(0);
+  });
+});
+
+describe('buildRackSections', () => {
+  const rack = ['a', 'b', 'c', 'd', 'e', 'f'];
+
+  it('draws one on-deck group and a waiting group without decks', () => {
+    const sections = buildRackSections(rack);
+    expect(sections.map((s) => s.label)).toEqual(['On deck · next court', 'Waiting · 2']);
+    expect(sections[0].rows.map((r) => r.playerId)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('drops the waiting group when the rack is exactly a court', () => {
+    expect(buildRackSections(['a', 'b', 'c', 'd']).map((s) => s.key)).toEqual(['on-deck']);
+  });
+
+  it('carries each row\'s most recent result for the W/L chip', () => {
+    const results = new Map([['a', 'W'], ['b', 'L'], ['c', null]]);
+    const [onDeck] = buildRackSections(rack, { results });
+    expect(onDeck.rows.map((r) => r.lastResult)).toEqual([
+      'W',
+      'L',
+      // No game this session (explicit null, and 'd' is absent from the map
+      // entirely) — both mean no chip rather than a chip reading "nothing yet".
+      null,
+      null,
+    ]);
+  });
+
+  it('leaves every row unlabelled when no results are given', () => {
+    const [onDeck] = buildRackSections(rack);
+    expect(onDeck.rows.every((r) => r.lastResult === null)).toBe(true);
+  });
+
+  it('groups by deck, keeping each row\'s true rack position', () => {
+    // Interleaved rack: winners at 1,3,5,7, losers at 2,4,6,8.
+    const eight = ['w1', 'l1', 'w2', 'l2', 'w3', 'l3', 'w4', 'l4'];
+    const decks = splitDecks(eight, new Map(eight.map((id) => [id, id[0] === 'w' ? 'W' : 'L'])));
+    const sections = buildRackSections(eight, { decks, nextDeck: 'W' });
+
+    expect(sections.map((s) => s.key)).toEqual(['winners', 'losers']);
+    expect(sections[0].rows.map((r) => r.playerId)).toEqual(['w1', 'w2', 'w3', 'w4']);
+    // w3 is third in its deck but FIFTH in the rack — that's what the badge shows.
+    expect(sections[0].rows[2]).toMatchObject({ playerId: 'w3', rackIndex: 4, bucketIndex: 2 });
+    expect(sections[0].isNext).toBe(true);
+    expect(sections[1].isNext).toBe(false);
+  });
+
+  it('reports how many a short deck still needs', () => {
+    const six = ['w1', 'l1', 'w2', 'l2', 'l3', 'l4'];
+    const decks = splitDecks(six, new Map(six.map((id) => [id, id[0] === 'w' ? 'W' : 'L'])));
+    const [winners, losers] = buildRackSections(six, { decks });
+    expect(winners.short).toBe(2);
+    expect(losers.short).toBe(0);
+  });
+
+  describe('hand-topping a short deck', () => {
+    // Two recent winners, four losers: the winners deck can't stack on its own.
+    const six = ['w1', 'l1', 'w2', 'l2', 'l3', 'l4'];
+    const sixDecks = splitDecks(six, new Map(six.map((id) => [id, id[0] === 'w' ? 'W' : 'L'])));
+
+    it('fills the empty slots with the drafted paddles', () => {
+      const [winners] = buildRackSections(six, {
+        decks: sixDecks,
+        pins: pinned('W', ['l3', 'l4']),
+      });
+      expect(winners.rows.map((r) => r.playerId)).toEqual(['w1', 'w2', 'l3', 'l4']);
+      expect(winners.short).toBe(0);
+      expect(winners.rows.map((r) => r.isPinned)).toEqual([false, false, true, true]);
+    });
+
+    it('takes the drafted paddles out of the deck they came from', () => {
+      // l3 and l4 were in the losers deck; they must not appear twice.
+      const [winners, losers] = buildRackSections(six, {
+        decks: sixDecks,
+        pins: pinned('W', ['l3', 'l4']),
+      });
+      expect(losers.rows.map((r) => r.playerId)).toEqual(['l1', 'l2']);
+      const everyone = [...winners.rows, ...losers.rows].map((r) => r.playerId);
+      expect(new Set(everyone).size).toBe(everyone.length);
+    });
+
+    it('takes them out of Waiting too', () => {
+      const eight = [...six, 'l5', 'l6'];
+      const decks = splitDecks(eight, new Map(eight.map((id) => [id, id[0] === 'w' ? 'W' : 'L'])));
+      const sections = buildRackSections(eight, { decks, pins: pinned('W', ['l5', 'l6']) });
+      const waiting = sections.find((s) => s.key === 'waiting');
+      expect(waiting).toBeUndefined();
+    });
+
+    it('offers its own stack button only once hand-completed', () => {
+      const short = buildRackSections(six, { decks: sixDecks })[0];
+      expect(short.canStack).toBe(false);
+
+      const partly = buildRackSections(six, { decks: sixDecks, pins: pinned('W', ['l3']) })[0];
+      expect(partly.short).toBe(1);
+      expect(partly.canStack).toBe(false);
+
+      const full = buildRackSections(six, { decks: sixDecks, pins: pinned('W', ['l3', 'l4']) })[0];
+      expect(full.canStack).toBe(true);
+    });
+
+    it('keeps the pin and drops the fourth natural winner instead', () => {
+      // THE reported bug. A paddle hand-added to the winners deck vanished to
+      // Waiting the moment a real fourth winner turned up, because the old
+      // assembly listed naturals first and sliced the pin off the end. The
+      // winner waits; the organizer is asked (see `deckChallenge`).
+      const seven = ['w1', 'w2', 'w3', 'x', 'w4', 'l1', 'l2'];
+      const decks = splitDecks(
+        seven,
+        new Map([
+          ['w1', 'W'], ['w2', 'W'], ['w3', 'W'], ['w4', 'W'],
+          ['x', 'L'], ['l1', 'L'], ['l2', 'L'],
+        ]),
+      );
+      const [winners] = buildRackSections(seven, { decks, pins: pinned('W', ['x']) });
+      expect(winners.rows.map((r) => r.playerId)).toContain('x');
+      expect(winners.rows.map((r) => r.playerId)).not.toContain('w4');
+    });
+
+    it('draws a deck in true rack order, not the order it was assembled', () => {
+      // `assembleDeck` puts pins first because they win their slots, but the
+      // position badge counts down the real rack — #7 must not be listed above
+      // #1 just because #7 was hand-placed.
+      const [winners] = buildRackSections(six, { decks: sixDecks, pins: pinned('W', ['l4', 'l3']) });
+      expect(winners.rows.map((r) => r.rackIndex)).toEqual([0, 2, 4, 5]);
+    });
+
+    it('leaves a naturally full deck alone — that one stacks from the court', () => {
+      // Otherwise every full deck would sprout a button that bypasses the
+      // W -> L -> W rotation.
+      const eight = ['w1', 'w2', 'w3', 'w4', 'l1', 'l2', 'l3', 'l4'];
+      const decks = splitDecks(eight, new Map(eight.map((id) => [id, id[0] === 'w' ? 'W' : 'L'])));
+      const [winners] = buildRackSections(eight, { decks });
+      expect(winners.short).toBe(0);
+      expect(winners.canStack).toBe(false);
+    });
+
+    it('measures a drafted paddle against the assembled four, not their old bucket', () => {
+      // They ARE on deck now, so the row must read that way; and a four-long
+      // bucket means no Skip — the organizer removes them with the row's ✕
+      // instead, which is the reversal that makes sense for a hand-added
+      // paddle.
+      const [winners] = buildRackSections(six, {
+        decks: sixDecks,
+        pins: pinned('W', ['l3', 'l4']),
+      });
+      const [, , third, fourth] = winners.rows;
+      expect(third).toMatchObject({ playerId: 'l3', bucketIndex: 2, bucketLength: 4 });
+      expect(fourth).toMatchObject({ playerId: 'l4', bucketIndex: 3, bucketLength: 4 });
+    });
+
+    it('caps a deck at four however many are drafted', () => {
+      const [winners] = buildRackSections(six, {
+        decks: sixDecks,
+        pins: pinned('W', ['l1', 'l2', 'l3', 'l4']),
+      });
+      expect(winners.rows).toHaveLength(4);
+    });
+
+    it('ignores a drafted paddle that has left the rack', () => {
+      // They were pulled onto a court (or unracked) between the pick and the
+      // repaint; the slot just goes back to empty.
+      const [winners] = buildRackSections(six, {
+        decks: sixDecks,
+        pins: pinned('W', ['gone', 'l3']),
+      });
+      expect(winners.rows.map((r) => r.playerId)).toEqual(['w1', 'w2', 'l3']);
+      expect(winners.short).toBe(1);
+    });
+
+    it('keeps an empty deck visible while it has slots to fill', () => {
+      // Nobody has won yet, so the winners deck has no rows at all — but it
+      // still has to render, or there is nothing to add the first paddle to.
+      const losersOnly = ['l1', 'l2', 'l3', 'l4'];
+      const decks = { winners: [], losers: losersOnly, winnersDeck: [], losersDeck: losersOnly };
+      const [winners] = buildRackSections(losersOnly, { decks });
+      expect(winners.key).toBe('winners');
+      expect(winners.rows).toEqual([]);
+      expect(winners.short).toBe(4);
+    });
+  });
+
+  it('puts everyone past both decks in one waiting group', () => {
+    const ten = ['w1', 'w2', 'w3', 'w4', 'w5', 'l1', 'l2', 'l3', 'l4', 'l5'];
+    const decks = splitDecks(ten, new Map(ten.map((id) => [id, id[0] === 'w' ? 'W' : 'L'])));
+    const sections = buildRackSections(ten, { decks });
+    const waiting = sections.find((s) => s.key === 'waiting');
+    expect(waiting.label).toBe('Waiting · 2');
+    expect(waiting.rows.map((r) => r.playerId)).toEqual(['w5', 'l5']);
+    // A waiting row's bucket is still its own deck, so its skip gate is right.
+    expect(waiting.rows[0]).toMatchObject({ bucketIndex: 4, bucketLength: 5 });
   });
 });

@@ -32,8 +32,11 @@ import {
   applyFillCourtTx,
   applyMatchDeletionTx,
   applyMatchReversalTx,
+  applyPinToDeckTx,
+  applyResolveDeckChallengeTx,
   applyShuffleQueueTx,
   applySkipPlayerTx,
+  applyUnpinFromDeckTx,
   bumpPartnership,
   groupAverageMetric,
   lockQueue,
@@ -129,7 +132,15 @@ async function removeArenaMember(tx, arenaId, userId) {
     // kept so the user's record survives and a rejoin reclaims it.
     await tx.player.update({
       where: { id: player.id },
-      data: { leftAt: new Date(), queueOrder: null, waitRounds: 0, skipBoosted: false },
+      data: {
+        leftAt: new Date(),
+        queueOrder: null,
+        waitRounds: 0,
+        skipBoosted: false,
+        // A pin dies with the paddle's place on the rack.
+        draftedDeck: null,
+        draftedLocked: false,
+      },
     });
   }
   await tx.arenaMembership.deleteMany({
@@ -334,6 +345,7 @@ export async function updateArenaMatchmaking(
     skipRestoresPriority: skipPriorityInput,
     skipPickReplacement: skipPickInput,
     balancedPairing: balancedPairingInput,
+    splitDeckByResult: splitDeckInput,
   } = {},
 ) {
   const guard = await requireArenaManager(arenaId);
@@ -369,6 +381,10 @@ export async function updateArenaMatchmaking(
   if (balancedPairing === null) {
     return { error: 'Balanced-pairing setting must be true or false.' };
   }
+  const splitDeckByResult = asBool(splitDeckInput);
+  if (splitDeckByResult === null) {
+    return { error: 'Win/lose deck setting must be true or false.' };
+  }
 
   const updated = await prisma.arena.updateMany({
     where: { id: arenaId },
@@ -378,6 +394,12 @@ export async function updateArenaMatchmaking(
       skipRestoresPriority,
       skipPickReplacement,
       balancedPairing,
+      splitDeckByResult,
+      // Turning deck mode OFF drops the alternation pointer. Without this a
+      // manager who switches off mid-session and back on later would resume
+      // from a stale "winners went last" that no longer describes anything
+      // that happened. Idempotent: already null when the mode was off.
+      ...(splitDeckByResult ? {} : { lastDeckFilled: null }),
     },
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
@@ -395,6 +417,28 @@ export async function updateArenaMatchmaking(
     });
   }
 
+  // Same shape of cleanup for the deck alternation. The write above nulls
+  // `Arena.lastDeckFilled`, but any court filled while the mode was on still
+  // carries its own pre-fill copy — and `applyCancelFillTx` restores that copy
+  // unconditionally. Without this, disabling the mode and then cancelling such
+  // a fill puts the stale pointer straight back, and a later re-enable resumes
+  // from it. Idempotent: a no-op when the mode was already off.
+  if (!splitDeckByResult) {
+    await prisma.court.updateMany({
+      where: { arenaId, fillPrevDeck: { not: null } },
+      data: { fillPrevDeck: null },
+    });
+    // Same argument for the organizer's hand placements. They are inert while
+    // the mode is off (nothing reads them, and `applyPinToDeckTx` refuses to
+    // write one), so leaving them looks harmless — but re-enabling the mode
+    // later would resurrect a four assembled under a configuration nobody is
+    // looking at any more, silently and authoritatively.
+    await prisma.player.updateMany({
+      where: { arenaId, draftedDeck: { not: null } },
+      data: { draftedDeck: null, draftedLocked: false },
+    });
+  }
+
   return {
     matchmaking: {
       starveThreshold: starve,
@@ -402,6 +446,7 @@ export async function updateArenaMatchmaking(
       skipRestoresPriority,
       skipPickReplacement,
       balancedPairing,
+      splitDeckByResult,
     },
   };
 }
@@ -700,22 +745,35 @@ export async function shuffleQueue(arenaId) {
  *   Optional and only enforced when it arrives well-formed: a client running
  *   cached JS from an earlier deploy (this is an installable PWA) omits it and
  *   keeps the previous take-whoever-is-on-top behavior rather than breaking.
+ * @param {{players: string[], deck: 'W'|'L'}} [manualFour] - a hand-assembled
+ *   deck (Settings → Matchmaking's win/lose decks only). When a deck is short,
+ *   the organizer tops it up from the rack and stacks that; `deck` names the
+ *   one they were filling so the rotation still advances. The server
+ *   re-validates every id against the live rack under the queue lock, so this
+ *   grants no ability the manager didn't already have — it only chooses WHICH
+ *   racked four go on.
  */
-export async function fillCourt(arenaId, courtId, expectedPlayerIds) {
+export async function fillCourt(arenaId, courtId, expectedPlayerIds, manualFour) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
-  const expected =
-    Array.isArray(expectedPlayerIds) &&
-    expectedPlayerIds.length === ON_DECK_SIZE &&
-    expectedPlayerIds.every((id) => typeof id === 'string' && id.length > 0)
-      ? expectedPlayerIds
+  const wellFormedFour = (ids) =>
+    Array.isArray(ids) &&
+    ids.length === ON_DECK_SIZE &&
+    ids.every((id) => typeof id === 'string' && id.length > 0);
+
+  const expected = wellFormedFour(expectedPlayerIds) ? expectedPlayerIds : undefined;
+  // Ignored unless BOTH halves arrive well-formed; a malformed manual payload
+  // falls back to the ordinary automatic selection rather than failing the tap.
+  const manual =
+    wellFormedFour(manualFour?.players) && ['W', 'L'].includes(manualFour?.deck)
+      ? { players: manualFour.players, deck: manualFour.deck }
       : undefined;
 
   try {
     await prisma.$transaction(async (tx) => {
       await lockQueue(tx, arenaId);
-      await applyFillCourtTx(tx, arenaId, { courtId, expected });
+      await applyFillCourtTx(tx, arenaId, { courtId, expected, manual });
     });
   } catch (err) {
     if (err?.message === 'NOT_ENOUGH') {
@@ -731,6 +789,85 @@ export async function fillCourt(arenaId, courtId, expectedPlayerIds) {
         state: await getState(arenaId),
       };
     }
+    throw err;
+  }
+
+  return { state: await getState(arenaId) };
+}
+
+/**
+ * Pin a racked paddle into a short win/lose deck, so a "winners" court can go
+ * out with only two recent winners on the rack. Manager-only.
+ *
+ * The pin is board state, not a client hint: every manager's rack assembles
+ * the same four, and it survives a reload. It is also AUTHORITATIVE — a real
+ * winner arriving later does not take the slot back on their own; that raises
+ * a challenge for the organizer to answer (see {@link resolveDeckChallenge}).
+ */
+export async function pinToDeck(arenaId, playerId, deck) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockQueue(tx, arenaId);
+      await applyPinToDeckTx(tx, arenaId, { playerId, deck });
+    });
+  } catch (err) {
+    if (err?.message === 'PIN_INVALID') {
+      return {
+        error: 'That paddle can no longer be added to this deck. Please try again.',
+        state: await getState(arenaId),
+      };
+    }
+    throw err;
+  }
+
+  return { state: await getState(arenaId) };
+}
+
+/**
+ * Take a hand-placed paddle back out of its deck (the row's ✕). Manager-only.
+ * Idempotent: unpinning only ever returns the deck to its natural derivation.
+ */
+export async function unpinFromDeck(arenaId, playerId) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  await prisma.$transaction(async (tx) => {
+    await lockQueue(tx, arenaId);
+    await applyUnpinFromDeckTx(tx, arenaId, { playerId });
+  });
+
+  return { state: await getState(arenaId) };
+}
+
+/**
+ * Answer the contest between a deck's pins and the natural members they
+ * displaced: `yieldIds` are the pins the organizer gave up (empty = keep them
+ * all). Manager-only.
+ *
+ * Everything still pinned afterwards is locked, so the same question is not
+ * re-asked each time another finished game returns a winner.
+ */
+export async function resolveDeckChallenge(arenaId, deck, yieldIds) {
+  const guard = await requireArenaManager(arenaId);
+  if (guard.error) return { error: guard.error, state: await getState(arenaId) };
+
+  const ids = Array.isArray(yieldIds)
+    ? yieldIds.filter((id) => typeof id === 'string' && id.length > 0)
+    : [];
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockQueue(tx, arenaId);
+      await applyResolveDeckChallengeTx(tx, arenaId, { deck, yieldIds: ids });
+    });
+  } catch (err) {
+    // The rack moved while the modal was open — another manager stacked the
+    // deck, the winner got skipped, the pin was removed. Repaint and let the
+    // question re-derive rather than acting on an answer to a stale board.
+    if (err?.message === 'CHALLENGE_STALE') return { state: await getState(arenaId) };
     throw err;
   }
 
@@ -1274,6 +1411,10 @@ export async function resetArena(arenaId) {
     await tx.courtSlot.deleteMany({ where: { court: { arenaId } } });
     await tx.partnership.deleteMany({ where: { arenaId } });
     await tx.court.updateMany({ where: { arenaId }, data: { status: 'vacant' } });
+    // The win/lose deck alternation points at a game that no longer exists
+    // once the match history is gone, so a reset arena starts from a clean
+    // pointer rather than "winners went last".
+    await tx.arena.updateMany({ where: { id: arenaId }, data: { lastDeckFilled: null } });
 
     // Clear stats for EVERY player in the arena, departed rows included: a
     // reset wipes the arena's match history, so a later rejoin (which reuses
@@ -1335,11 +1476,23 @@ export async function prepareNextSession(arenaId) {
     await tx.partnership.deleteMany({ where: { arenaId } });
     await tx.player.updateMany({
       where: { arenaId, leftAt: null },
-      data: { queueOrder: null, waitRounds: 0, skipBoosted: false },
+      data: {
+        queueOrder: null,
+        waitRounds: 0,
+        skipBoosted: false,
+        // A new session empties the rack, so last session's deck placements go
+        // with it — otherwise a pin would silently hold a slot on a board full
+        // of players who have not played yet.
+        draftedDeck: null,
+        draftedLocked: false,
+      },
     });
     const updated = await tx.arena.updateMany({
       where: { id: arenaId },
-      data: { lastSessionResetAt: new Date() },
+      // The new session's fills classify off matches after this boundary, so
+      // the deck alternation resets with them — tonight shouldn't open with
+      // "the winners went last" from a week ago.
+      data: { lastSessionResetAt: new Date(), lastDeckFilled: null },
     });
     if (updated.count === 0) arenaGone = true;
   });
@@ -1594,6 +1747,9 @@ export async function syncOfflineEvents(arenaId, input) {
           // fingerprint a legacy-mode arena as if it were balanced, and every
           // strict sync from that arena would report a phantom divergence.
           balancedPairing: true,
+          // Same reason: deck mode changes which four a fill stacks, so it is
+          // hashed too (the pointer it drives comes from the board read below).
+          splitDeckByResult: true,
         },
       });
       if (!arena) throw new Error('ARENA_GONE');

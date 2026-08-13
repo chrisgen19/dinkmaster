@@ -78,6 +78,25 @@ model Arena {
   // and the offline board engine can never disagree about either one.
   balancedPairing Boolean @default(true)
 
+  // Win-vs-win / lose-vs-lose decks. When on, the rack carries TWO on-deck
+  // groups instead of one: a winners deck (players whose most recent game was
+  // a win) and a losers deck (everyone else — a loss, or no result yet, so
+  // session-start arrivals and walk-ins land here). `fillCourt` stacks them in
+  // strict alternation, so a beaten four is never fed straight back to the
+  // four that just rolled them. Default `false` — OPT-IN, following the
+  // `autoResetOnSession` precedent rather than `balancedPairing`'s opt-out:
+  // this visibly changes who plays next, so no existing arena should wake up
+  // to it. The rule lives in `src/lib/decks.js`, shared verbatim by the online
+  // action and the offline board engine.
+  splitDeckByResult Boolean @default(false)
+
+  // Which deck `fillCourt` stacked last: "W", "L", or null (no deck-mode fill
+  // yet, or the last one fell back to the classic top four). Board STATE, not
+  // a setting — it drives the W → L → W alternation, so it ships in getState,
+  // is mirrored by the offline engine, and is part of the sync fingerprint.
+  // `cancelFill` restores it from `Court.fillPrevDeck`.
+  lastDeckFilled String?
+
   // When on, the arena surfaces the "Partnership Matrix" tab (a pairing-count
   // grid). Hidden by default — it's an advanced/diagnostic view — and opt-in
   // per arena from Settings → Match Defaults. Visibility is arena-wide, not
@@ -241,6 +260,15 @@ model Player {
   // top priority on return". The next auto-mix sorts them above the emergency
   // band, then clears the flag. See `Arena.skipRestoresPriority`.
   skipBoosted Boolean  @default(false)
+  // Win/lose decks: the organizer hand-placed this paddle into a deck that was
+  // short of four ("W" | "L" | null). AUTHORITATIVE over the natural W/L
+  // split — a real winner turning up does not silently take the slot back, it
+  // raises a challenge the organizer answers (see `deckChallenge` in
+  // src/lib/decks.js). Cleared when the deck stacks or the paddle leaves the
+  // rack. `draftedLocked` records "keep my pick" so the same question is not
+  // re-asked every time another winner lands.
+  draftedDeck   String?
+  draftedLocked Boolean @default(false)
   rating      Int      @default(1000) // Elo skill rating (Phase 6); displayed DUPR-style. Per-arena.
   leftAt      DateTime? // null = active; set = the member left/was removed (row kept for history)
 
@@ -271,6 +299,12 @@ model Court {
   // exactly those players, not whoever is queued at cancel time. Empty when the
   // court is vacant / was filled before this feature.
   fillBumpedPlayerIds String[] @default([])
+  // `Arena.lastDeckFilled` as it stood BEFORE the fill currently on this court,
+  // so `cancelFill` can rewind the win/lose deck alternation along with
+  // everything else the fill touched. Same lifecycle as `fillBumpedPlayerIds`:
+  // written at fill time, meaningless while the court is vacant. Null when the
+  // arena isn't running deck mode.
+  fillPrevDeck String?
   createdAt DateTime @default(now())
 
   arena Arena       @relation(fields: [arenaId], references: [id], onDelete: Cascade)

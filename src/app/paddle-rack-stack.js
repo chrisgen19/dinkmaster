@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Clock,
   Layers,
+  Plus,
   Shuffle,
   Sparkles,
   TriangleAlert,
@@ -14,16 +15,17 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { deriveRackRow, ON_DECK_SIZE } from './paddle-rack-stack-state';
+import { buildRackSections, deriveRackRow } from './paddle-rack-stack-state';
 
 /** Subtle labeled divider between the on-deck and waiting groups. */
-function GroupLabel({ children, accent = false, className = '' }) {
+function GroupLabel({ children, accent = false, className = '', trailing = null }) {
   return (
     <div className={`flex items-center gap-2 px-1 ${className}`}>
       <span className={`text-[10px] font-bold uppercase tracking-wider ${accent ? 'text-emerald-700' : 'text-slate-400'}`}>
         {children}
       </span>
       <span className={`h-px flex-1 ${accent ? 'bg-emerald-200/70' : 'bg-slate-200'}`} />
+      {trailing}
     </div>
   );
 }
@@ -49,6 +51,13 @@ function GroupLabel({ children, accent = false, className = '' }) {
  * @param {number} props.starveThreshold - wait rounds before the amber wait badge
  * @param {number} props.emergencyWait - wait rounds before the red wait badge
  * @param {boolean} props.skipRestoresPriority - when true, Skip = "back soon, top priority on return" (drives the button label/tooltip)
+ * @param {{winners:string[],losers:string[],winnersDeck:string[],losersDeck:string[]}|null} props.decks - win/lose decks from `splitDecks`; null = the classic single on-deck group
+ * @param {'W'|'L'|null} props.nextDeck - which deck stacks onto the next open court
+ * @param {Map<string, 'W'|'L'|null>|null} props.results - how each racked player's last game went, for the W/L chip
+ * @param {Map<string, {deck:'W'|'L', locked:boolean}>|null} props.pins - the organizer's hand placements (board state, from `pinsFromPlayers`)
+ * @param {(deck: 'W'|'L') => void} props.onAddToDeck - open the picker for an empty slot
+ * @param {(deck: 'W'|'L', playerId: string) => void} props.onRemoveFromDeck - take a hand-added paddle back out
+ * @param {(deck: 'W'|'L', playerIds: string[]) => void} props.onStackDeck - send a hand-completed deck to the first open court
  * @param {string} props.errorMsg - surfaced inline above the list
  */
 export function PaddleRackStack({
@@ -67,6 +76,13 @@ export function PaddleRackStack({
   starveThreshold,
   emergencyWait,
   skipRestoresPriority = true,
+  decks = null,
+  nextDeck = null,
+  results = null,
+  pins = null,
+  onAddToDeck,
+  onRemoveFromDeck,
+  onStackDeck,
   errorMsg,
   // Distinguishes the DOM ids of multiple mounted instances (e.g. the
   // desktop sidebar vs. the mobile block) so they don't collide.
@@ -97,6 +113,11 @@ export function PaddleRackStack({
     setExpandedPlayerId((prev) => (prev === playerId ? null : playerId));
   };
 
+  // Rows are grouped, not flat: one on-deck group classically, or a winners
+  // and a losers deck when the arena runs `splitDeckByResult`. Each row carries
+  // its true rack position, so the badge keeps counting the real rack.
+  const sections = buildRackSections(queue, { decks, nextDeck, results, pins });
+
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       {/* Header */}
@@ -108,7 +129,11 @@ export function PaddleRackStack({
             </span>
             <div className="min-w-0">
               <h3 className="text-sm font-bold text-slate-800">Paddle Rack Stack</h3>
-              <p className="truncate text-xs text-slate-600">Top 4 stack onto the next open court</p>
+              <p className="truncate text-xs text-slate-600">
+                {decks
+                  ? 'Winners and losers stack in turn'
+                  : 'Top 4 stack onto the next open court'}
+              </p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -189,14 +214,43 @@ export function PaddleRackStack({
             <p className="text-xs text-slate-400">Add players to stack their paddles for the next court.</p>
           </div>
         ) : (
-          queue.map((playerId, index) => {
+          sections.map((section, sectionIndex) => (
+            <Fragment key={section.key}>
+              <GroupLabel
+                accent={section.accent}
+                className={sectionIndex > 0 ? 'pt-2' : ''}
+                trailing={
+                  section.isNext ? (
+                    <span className="shrink-0 rounded-full bg-emerald-600 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
+                      Up next
+                    </span>
+                  ) : section.short > 0 ? (
+                    <span className="shrink-0 text-[10px] font-semibold text-slate-400">
+                      needs {section.short} more
+                    </span>
+                  ) : null
+                }
+              >
+                {section.label}
+              </GroupLabel>
+
+              {section.rows.map(({ playerId, rackIndex, bucketIndex, bucketLength, lastResult, isPinned }) => {
             const player = players.find((p) => p.id === playerId);
             if (!player) return null;
 
             const { rank, isOnDeck, isYou, isWalkIn, badge, waitRounds, name, initials, canSkip, profileHref } = deriveRackRow(
               player,
-              index,
-              { viewerUserId, viewerIsMember, starveThreshold, emergencyWait, canManage, queueLength: queue.length },
+              rackIndex,
+              {
+                viewerUserId,
+                viewerIsMember,
+                starveThreshold,
+                emergencyWait,
+                canManage,
+                queueLength: queue.length,
+                bucketIndex,
+                bucketLength,
+              },
             );
             const nextLine = badge === 'next-line';
             const starving = badge !== 'none' && !nextLine;
@@ -207,11 +261,6 @@ export function PaddleRackStack({
 
             return (
               <Fragment key={playerId}>
-                {index === 0 && <GroupLabel accent>On deck · next court</GroupLabel>}
-                {index === ON_DECK_SIZE && (
-                  <GroupLabel className="pt-2">Waiting · {queue.length - ON_DECK_SIZE}</GroupLabel>
-                )}
-
                 <div
                   className={`group relative rounded-xl border transition ${
                     isOnDeck
@@ -264,10 +313,52 @@ export function PaddleRackStack({
                         ) : (
                           <span className="w-full min-w-0 truncate sm:w-auto sm:max-w-full">{name}</span>
                         )}
+                        {lastResult && (
+                          // How their LAST game went. Absent for anyone who
+                          // hasn't played this session — a chip reading
+                          // "nothing yet" would be noise on a fresh rack.
+                          // Sits first so it reads as part of the name.
+                          <span
+                            // emerald-700/slate-700 rather than the lighter
+                            // shades: at 10px this is small text, so both need
+                            // to clear 4.5:1 against their own fill.
+                            className={`grid h-4 w-4 shrink-0 place-items-center rounded text-[10px] font-bold ${
+                              lastResult === 'W'
+                                ? 'bg-emerald-700 text-white'
+                                : 'bg-slate-200 text-slate-700'
+                            }`}
+                            title={
+                              lastResult === 'W'
+                                ? `${name} won their last game`
+                                : `${name} lost their last game`
+                            }
+                            aria-label={
+                              lastResult === 'W' ? 'Won their last game' : 'Lost their last game'
+                            }
+                          >
+                            {lastResult}
+                          </span>
+                        )}
                         {isYou && (
                           <span className="shrink-0 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
                             You
                           </span>
+                        )}
+                        {isPinned && (
+                          // Hand-added to this deck for the next stack only —
+                          // marked so it's clear this paddle isn't here on
+                          // their own result, and so it can be taken back out.
+                          <button
+                            type="button"
+                            onClick={() => onRemoveFromDeck(section.deck, player.id)}
+                            disabled={isPending}
+                            className="inline-flex shrink-0 items-center gap-0.5 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800 transition hover:bg-amber-200 disabled:opacity-40"
+                            title={`Remove ${name} from this deck`}
+                            aria-label={`Remove ${name} from this deck`}
+                          >
+                            Added
+                            <X className="h-2.5 w-2.5" aria-hidden="true" />
+                          </button>
                         )}
                         {isWalkIn && (
                           <span
@@ -383,7 +474,54 @@ export function PaddleRackStack({
                 </div>
               </Fragment>
             );
-          })
+              })}
+
+              {/* Empty slots on a short deck. Optional throughout: the deck
+                  fills itself as games finish, and these just let an organizer
+                  get a court out sooner. Manager-only, and they disappear the
+                  moment the deck reaches four. */}
+              {canManage &&
+                section.deck &&
+                Array.from({ length: section.short }, (_, i) => (
+                  <button
+                    key={`${section.key}-slot-${i}`}
+                    type="button"
+                    onClick={() => onAddToDeck(section.deck)}
+                    disabled={isPending}
+                    className="flex w-full items-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-white/40 p-2.5 text-left transition hover:border-emerald-300 hover:bg-emerald-50/40 active:scale-[0.99] disabled:pointer-events-none disabled:opacity-40 sm:gap-3 sm:p-3"
+                    title={`Add a waiting paddle to the ${section.deck === 'W' ? 'winners' : 'losers'} deck`}
+                    // Both decks can be short at once, so the visible "Add a
+                    // paddle" alone would give every slot the same name.
+                    aria-label={`Add a paddle to the ${section.deck === 'W' ? 'winners' : 'losers'} deck`}
+                  >
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-400">
+                      <Plus className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <span className="text-xs font-semibold text-slate-500">Add a paddle</span>
+                  </button>
+                ))}
+
+              {/* A hand-completed deck gets its own stack button: the organizer
+                  assembled these four, so they say when they go on. A deck that
+                  filled up on its own is stacked from the court card instead,
+                  on the rotation's turn. */}
+              {canManage && section.canStack && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onStackDeck(section.deck, section.rows.map((r) => r.playerId))
+                  }
+                  disabled={isPending}
+                  className="mt-1 w-full rounded-xl bg-emerald-700 px-3 py-2.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-white shadow-sm shadow-emerald-700/20 transition hover:bg-emerald-800 active:scale-[0.99] disabled:pointer-events-none disabled:opacity-40"
+                  title="Send these four to the first open court"
+                  // Both decks can be hand-completed at once, so name the deck.
+                  aria-label={`Stack the ${section.deck === 'W' ? 'winners' : 'losers'} deck onto the next open court`}
+                >
+                  Stack these 4
+                </button>
+              )}
+            </Fragment>
+          ))
         )}
       </div>
     </section>

@@ -22,6 +22,8 @@ import { CourtCard } from './court-card';
  * @param {(playerId: string) => string|null} [props.profileHrefFor] - resolves a
  *   slot's playerId to a profile link (rack rules); null/omitted renders names
  *   as plain text.
+ * @param {'W'|'L'|null} [props.nextDeck] - which win/lose deck stacks next;
+ *   passed through so each card's button can name it.
  */
 export function ArenaCourtsPanel({
   courts,
@@ -36,6 +38,7 @@ export function ArenaCourtsPanel({
   onFillCourt,
   onRemoveCourt,
   profileHrefFor = null,
+  nextDeck = null,
 }) {
   const liveCourtCount = courts.filter((c) => c.status === 'playing').length;
 
@@ -94,6 +97,7 @@ export function ArenaCourtsPanel({
             onFill={onFillCourt}
             onRemove={onRemoveCourt}
             profileHrefFor={profileHrefFor}
+            nextDeck={nextDeck}
           />
         ))}
       </div>
