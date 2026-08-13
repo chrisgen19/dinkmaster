@@ -24,6 +24,16 @@ cost someone real time.
   modules or a `prisma generate`. Twice this has looked exactly like a product
   bug — a correct feature failing, a column the client "couldn't see". Restart
   the dev server before debugging anything that seems impossible.
+- **A slow e2e failure usually means a busy machine, not a slow app.** All the
+  `next dev` specs share ONE server, so that server is the bottleneck and extra
+  Playwright workers only oversubscribe the box. Measured on 12 cores, the same
+  spec took 13s at one worker (cold cache and warm alike) and 38s at six, which
+  pushed steps past the 15s `expect` budget and surfaced as five unrelated specs
+  failing in five different files. `workers` is pinned in `playwright.config.js`
+  for this reason. Before blaming a timeout, check `uptime` — and remember your
+  own `pnpm dev` competes for the same cores.
 - **Commands**: `pnpm test` (units), `pnpm test:e2e` (browser specs, starts its
   own server), `pnpm test:e2e:offline` (service-worker specs; production
-  build, slower). `pnpm lint` before finishing.
+  build, slower). `pnpm lint` before finishing. The e2e configs never reuse a
+  running server, so a stray one on port 3022 (or 3021) aborts the run with
+  `EADDRINUSE` rather than a test failure — kill it and re-run.
