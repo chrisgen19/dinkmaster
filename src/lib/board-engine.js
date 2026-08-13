@@ -725,6 +725,7 @@ function applyPinToDeck(state, settings, event) {
 /** Take a hand-placed paddle back out of its deck. Always legal, idempotent. */
 function applyUnpinFromDeck(state, event) {
   const { playerId } = event.payload;
+  if (typeof playerId !== 'string' || playerId.length === 0) return { state, changed: false };
   if (!playerById(state, playerId)?.draftedDeck) return { state, changed: false };
   return {
     state: { ...state, players: patchPlayers(state.players, { [playerId]: { ...CLEAR_PIN } }) },
@@ -749,7 +750,13 @@ function applyResolveDeckChallenge(state, settings, event) {
   // is already gone, so there is nothing left to get wrong.
   if (!challenge) return { state, changed: false };
   const offered = new Set(challenge.pins);
-  if (ids.length > challenge.challengers.length || !ids.every((id) => offered.has(id))) {
+  // Distinct, matching `applyResolveDeckChallengeTx`, so a malformed event is
+  // rejected identically on both sides of the sync.
+  if (
+    new Set(ids).size !== ids.length ||
+    ids.length > challenge.challengers.length ||
+    !ids.every((id) => offered.has(id))
+  ) {
     return { state, changed: false };
   }
 

@@ -326,6 +326,17 @@ describe('arena server actions — authorization', () => {
         );
       });
 
+      it('refuses an unpin with no playerId instead of clearing every pin', async () => {
+        // Prisma drops an `undefined` filter, so an absent id would turn the
+        // updateMany into "unpin everyone in this arena". Guarded in the
+        // primitive so no caller can reintroduce it.
+        const { applyUnpinFromDeckTx } = await import('@/lib/board-apply');
+        await expect(applyUnpinFromDeckTx(prisma, ARENA, { playerId: undefined })).rejects.toThrow(
+          'BAD_EVENT',
+        );
+        expect(prisma.player.updateMany).not.toHaveBeenCalled();
+      });
+
       it("retires the organizer's deck pins when win/lose decks are switched off", async () => {
         // Pins are inert while the mode is off, so leaving them looks harmless
         // — but re-enabling later would resurrect a four assembled under a

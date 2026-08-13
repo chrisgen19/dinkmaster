@@ -264,6 +264,11 @@ export async function applyPinToDeckTx(tx, arenaId, { playerId, deck }) {
  * to its natural derivation, which is always a legal state.
  */
 export async function applyUnpinFromDeckTx(tx, arenaId, { playerId }) {
+  // Prisma drops an `undefined` filter, so an absent playerId would turn the
+  // `updateMany` below into "unpin EVERY pinned paddle in this arena". Guarded
+  // here rather than at the two call sites so no future caller can reintroduce
+  // it — same hazard the `checkIn`/`checkOut` replay cases guard against.
+  if (typeof playerId !== 'string' || playerId.length === 0) throw new Error('BAD_EVENT');
   await tx.player.updateMany({
     where: { id: playerId, arenaId, leftAt: null, draftedDeck: { not: null } },
     data: CLEAR_PIN,
@@ -316,7 +321,14 @@ export async function applyResolveDeckChallengeTx(tx, arenaId, { deck, yieldIds 
   // Every id must be a pin this challenge actually offered, and the organizer
   // cannot free more slots than there are winners to seat in them.
   const offered = new Set(challenge.pins);
-  if (ids.length > challenge.challengers.length || !ids.every((id) => offered.has(id))) {
+  // Distinct, too: `['p1', 'p1']` against two challengers would pass a bare
+  // length check, free ONE slot, and then lock the pin the organizer meant to
+  // give up along with it.
+  if (
+    new Set(ids).size !== ids.length ||
+    ids.length > challenge.challengers.length ||
+    !ids.every((id) => offered.has(id))
+  ) {
     throw new Error('CHALLENGE_STALE');
   }
 
