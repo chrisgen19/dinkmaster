@@ -61,17 +61,27 @@ export default defineConfig({
   // One on CI, where a runner is typically 2-4 cores: two workers there is the
   // same oversubscription this cap exists to prevent, just at a smaller scale.
   //
-  // Two is a CEILING, not a target. Playwright's own local default is
-  // `ceil(cores / 2)`, which is 1 on a 2-core box (a Codespace, a constrained
-  // container) — so hard-coding 2 there would RAISE concurrency and recreate
-  // the very oversubscription this cap exists to prevent. Take whichever is
-  // lower, and never go below 1.
+  // Two is a CEILING, not a target: take it or Playwright's own default,
+  // whichever is lower, so this can never RAISE concurrency and recreate the
+  // oversubscription it exists to prevent. Two details, both verified against
+  // the installed version rather than assumed:
+  //
+  //   - The default is `workers: '50%'`, which `resolveWorkers` resolves as
+  //     `max(1, floor(cpus * 0.5))` — FLOOR, not ceil. On a 3-core box that is
+  //     1, so `ceil` here would have asked for 2 and overshot.
+  //   - `availableParallelism()`, not `cpus().length`, because only the former
+  //     honours CPU affinity and container quotas. Under `taskset -c 0` on this
+  //     machine `cpus()` still reports 12 while `availableParallelism()`
+  //     reports 1 — the restricted case is exactly where an extra worker hurts
+  //     most, and it is invisible to `cpus()`.
+  //
+  // (`os.availableParallelism()` needs Node 18.14+; package.json requires 20.19+.)
   //
   // Raise either number only with a measured before/after, and remember
   // `pnpm test:e2e:offline` may be running at the same time on its own server
   // (that config needs no cap — it has a single spec file, so it is already
   // effectively one worker).
-  workers: process.env.CI ? 1 : Math.max(1, Math.min(2, Math.ceil(os.cpus().length / 2))),
+  workers: process.env.CI ? 1 : Math.max(1, Math.min(2, Math.floor(os.availableParallelism() / 2))),
   forbidOnly: !!process.env.CI,
   // One retry, so `trace: 'on-first-retry'` below can actually produce a
   // trace — with the default of 0 retries it never fired, and a failure left
