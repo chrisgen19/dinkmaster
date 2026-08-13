@@ -428,6 +428,15 @@ export async function updateArenaMatchmaking(
       where: { arenaId, fillPrevDeck: { not: null } },
       data: { fillPrevDeck: null },
     });
+    // Same argument for the organizer's hand placements. They are inert while
+    // the mode is off (nothing reads them, and `applyPinToDeckTx` refuses to
+    // write one), so leaving them looks harmless — but re-enabling the mode
+    // later would resurrect a four assembled under a configuration nobody is
+    // looking at any more, silently and authoritatively.
+    await prisma.player.updateMany({
+      where: { arenaId, draftedDeck: { not: null } },
+      data: { draftedDeck: null, draftedLocked: false },
+    });
   }
 
   return {

@@ -27,9 +27,8 @@ import { DEFAULT_STARVE_THRESHOLD, DEFAULT_EMERGENCY_WAIT, ON_DECK_SIZE } from '
 import {
   DECK_LOSE,
   DECK_WIN,
-  bucketFor,
+  bucketOf,
   deckChallenge,
-  deckOf,
   hasTwoDecks,
   nextDeck,
   splitDecks,
@@ -738,8 +737,8 @@ export default function Arena({
   // `applySkipPlayerTx` computes server-side, so the picker never offers a
   // paddle the server would refuse.
   const skipBucketFor = useCallback(
-    (playerId) => (decks ? bucketFor(deckOf(playerId, decks), decks) : queue),
-    [decks, queue],
+    (playerId) => (decks ? bucketOf(playerId, queue, decks, pins) : queue),
+    [decks, queue, pins],
   );
 
   // The viewer's own linked player in this arena (null for guests / non-players).

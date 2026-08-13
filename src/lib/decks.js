@@ -71,28 +71,66 @@ export function splitDecks(queue, results) {
 /**
  * Which deck a paddle belongs to, for the rack UI and the skip gate.
  *
+ * A pin OVERRIDES the natural split: a loser the organizer placed in the
+ * winners deck is, for every purpose that asks "which deck are they in", a
+ * member of the winners deck. Answering with their natural deck is how the
+ * skip gate came to measure a hand-placed paddle against a bucket it was no
+ * longer part of.
+ *
  * @param {string} playerId
  * @param {ReturnType<typeof splitDecks>} decks
+ * @param {Map<string, {deck:'W'|'L', locked:boolean}>} [pins]
  * @returns {'W'|'L'|null} null when the paddle isn't in the rack at all
  */
-export function deckOf(playerId, decks) {
-  if (decks.winners.includes(playerId)) return DECK_WIN;
-  if (decks.losers.includes(playerId)) return DECK_LOSE;
-  return null;
+export function deckOf(playerId, decks, pins) {
+  const natural = decks.winners.includes(playerId)
+    ? DECK_WIN
+    : decks.losers.includes(playerId)
+      ? DECK_LOSE
+      : null;
+  // Guard on `natural` so a stale pin for someone already on a court can't
+  // report them as racked.
+  if (natural === null) return null;
+  return pins?.get(playerId)?.deck ?? natural;
 }
 
 /**
- * The full bucket a paddle sits in (not just its front four), which is what
- * skip needs: it promotes the next paddle from the SAME deck.
+ * The ordered membership of one deck: its assembled four first, then everyone
+ * else in that deck still waiting behind them.
+ *
+ * This is the array the skip gate does its arithmetic over — index < 4 is "on
+ * deck", anything past that is a legal replacement — so it has to be the deck
+ * AS ASSEMBLED, pins included. Using the raw `splitDecks` bucket meant a
+ * natural member displaced by a pin still counted as on deck (they could be
+ * skipped, and could be refused as a replacement) even though the rack drew
+ * them under Waiting.
  *
  * @param {'W'|'L'|null} deck
+ * @param {string[]} queue - rack order, index 0 = front
  * @param {ReturnType<typeof splitDecks>} decks
+ * @param {Map<string, {deck:'W'|'L', locked:boolean}>} [pins]
  * @returns {string[]}
  */
-export function bucketFor(deck, decks) {
-  if (deck === DECK_WIN) return decks.winners;
-  if (deck === DECK_LOSE) return decks.losers;
-  return [];
+export function bucketFor(deck, queue, decks, pins) {
+  if (deck !== DECK_WIN && deck !== DECK_LOSE) return [];
+  const { four, natural } = assembleDeck(deck, queue, decks, pins);
+  const seated = new Set(four);
+  return [...four, ...natural.filter((id) => !seated.has(id))];
+}
+
+/**
+ * The ordered deck membership a given paddle sits in. The two halves are
+ * always resolved together — a deck name from one rule and a bucket from
+ * another is exactly the mismatch that broke the skip gate.
+ *
+ * @param {string} playerId
+ * @param {string[]} queue - rack order, index 0 = front
+ * @param {ReturnType<typeof splitDecks>} decks
+ * @param {Map<string, {deck:'W'|'L', locked:boolean}>} [pins]
+ * @returns {string[]}
+ */
+export function bucketOf(playerId, queue, decks, pins) {
+  return bucketFor(deckOf(playerId, decks, pins), queue, decks, pins);
 }
 
 /**

@@ -4,6 +4,7 @@ import {
   DECK_WIN,
   assembleDeck,
   bucketFor,
+  bucketOf,
   deckChallenge,
   deckOf,
   hasTwoDecks,
@@ -20,6 +21,18 @@ const res = (spec = {}) => new Map(Object.entries(spec));
 
 /** Rack of n ids: r1, r2, … so positions read at a glance. */
 const rack = (n) => Array.from({ length: n }, (_, i) => `r${i + 1}`);
+
+/**
+ * Pins map from a compact spec: `{ x: 'W', y: 'L!' }`, where a trailing `!`
+ * marks the pin LOCKED (the organizer was asked and chose to keep it).
+ */
+const pin = (spec = {}) =>
+  new Map(
+    Object.entries(spec).map(([id, v]) => [
+      id,
+      { deck: v.replace('!', ''), locked: v.endsWith('!') },
+    ]),
+  );
 
 describe('splitDecks', () => {
   it('puts recent winners in one bucket and everyone else in the other', () => {
@@ -63,8 +76,9 @@ describe('splitDecks', () => {
   });
 });
 
-describe('deckOf / bucketFor', () => {
-  const decks = splitDecks(['a', 'b'], res({ a: 'W', b: 'L' }));
+describe('deckOf / bucketFor / bucketOf', () => {
+  const pair = ['a', 'b'];
+  const decks = splitDecks(pair, res({ a: 'W', b: 'L' }));
 
   it('names the deck a racked paddle belongs to', () => {
     expect(deckOf('a', decks)).toBe(DECK_WIN);
@@ -75,11 +89,36 @@ describe('deckOf / bucketFor', () => {
     expect(deckOf('playing-right-now', decks)).toBeNull();
   });
 
+  it('lets a pin override the natural split', () => {
+    // A loser the organizer placed in the winners deck IS a winners-deck
+    // member for every purpose that asks. Answering with their natural deck is
+    // how the skip gate came to measure them against a bucket they had left.
+    expect(deckOf('b', decks, pin({ b: 'W' }))).toBe(DECK_WIN);
+  });
+
+  it('ignores a pin for someone who is not racked', () => {
+    expect(deckOf('gone', decks, pin({ gone: 'W' }))).toBeNull();
+  });
+
   it('hands back the full bucket, not just its front four', () => {
-    const big = splitDecks(rack(6), res(Object.fromEntries(rack(6).map((id) => [id, 'W']))));
-    expect(bucketFor(DECK_WIN, big)).toHaveLength(6);
-    expect(bucketFor(DECK_LOSE, big)).toEqual([]);
-    expect(bucketFor(null, big)).toEqual([]);
+    const six = rack(6);
+    const big = splitDecks(six, res(Object.fromEntries(six.map((id) => [id, 'W']))));
+    expect(bucketFor(DECK_WIN, six, big)).toHaveLength(6);
+    expect(bucketFor(DECK_LOSE, six, big)).toEqual([]);
+    expect(bucketFor(null, six, big)).toEqual([]);
+  });
+
+  it('orders the bucket as the deck is ASSEMBLED, not as results split it', () => {
+    // w4 is displaced by the pin, so they are waiting — index 4, not index 3.
+    // The raw split would have called them on deck, letting them be skipped
+    // and refusing them as a replacement, while the rack drew them in Waiting.
+    const queue = ['w1', 'w2', 'w3', 'x', 'w4'];
+    const d = splitDecks(queue, res({ w1: 'W', w2: 'W', w3: 'W', x: 'L', w4: 'W' }));
+    const pins = pin({ x: 'W' });
+    expect(bucketFor(DECK_WIN, queue, d, pins)).toEqual(['x', 'w1', 'w2', 'w3', 'w4']);
+    expect(bucketOf('w4', queue, d, pins)).toEqual(['x', 'w1', 'w2', 'w3', 'w4']);
+    // …and the pinned paddle resolves through the deck they were placed in.
+    expect(bucketOf('x', queue, d, pins)).toEqual(['x', 'w1', 'w2', 'w3', 'w4']);
   });
 });
 
@@ -162,18 +201,6 @@ describe('hasTwoDecks', () => {
     expect(hasTwoDecks(splitDecks(rack(6), res({ r3: 'W' })))).toBe(true);
   });
 });
-
-/**
- * Pins map from a compact spec: `{ x: 'W', y: 'L!' }`, where a trailing `!`
- * marks the pin LOCKED (the organizer was asked and chose to keep it).
- */
-const pin = (spec = {}) =>
-  new Map(
-    Object.entries(spec).map(([id, v]) => [
-      id,
-      { deck: v.replace('!', ''), locked: v.endsWith('!') },
-    ]),
-  );
 
 describe('assembleDeck', () => {
   it('seats the organizer pin ahead of natural members', () => {

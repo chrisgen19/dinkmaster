@@ -21,9 +21,10 @@
 -- leaves the rack for any reason (stacked, checked out, subbed out) — those
 -- are movements the organizer already consented to.
 --
--- Idempotent (`IF NOT EXISTS`) and no UPDATE, matching
+-- Every statement here is idempotent and there is no UPDATE, matching
 -- 20260812140000_add_split_deck_by_result: a re-apply on a partially-skewed
--- database cannot clobber a live arena's pins.
+-- database cannot clobber a live arena's pins. `ADD CONSTRAINT` has no
+-- `IF NOT EXISTS` form in Postgres, hence the two guarded DO blocks below.
 ALTER TABLE "Player"
   ADD COLUMN IF NOT EXISTS "draftedDeck" TEXT;
 
@@ -34,18 +35,38 @@ ALTER TABLE "Player"
 -- drives which four go on court, so an out-of-domain write would not fail, it
 -- would silently drop the pin (nothing matches 'w') and hand the slot back to
 -- the natural member — the exact bug these columns exist to stop.
-ALTER TABLE "Player"
-  ADD CONSTRAINT "Player_draftedDeck_domain_chk"
-    CHECK ("draftedDeck" IS NULL OR "draftedDeck" IN ('W', 'L'));
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'Player_draftedDeck_domain_chk'
+  ) THEN
+    ALTER TABLE "Player"
+      ADD CONSTRAINT "Player_draftedDeck_domain_chk"
+        CHECK ("draftedDeck" IS NULL OR "draftedDeck" IN ('W', 'L'));
+  END IF;
+END $$;
 
 -- A lock with no pin is meaningless state that would survive an unpin and then
 -- silently suppress the next challenge for whoever gets pinned there later.
-ALTER TABLE "Player"
-  ADD CONSTRAINT "Player_draftedLocked_requires_deck_chk"
-    CHECK ("draftedLocked" = false OR "draftedDeck" IS NOT NULL);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'Player_draftedLocked_requires_deck_chk'
+  ) THEN
+    ALTER TABLE "Player"
+      ADD CONSTRAINT "Player_draftedLocked_requires_deck_chk"
+        CHECK ("draftedLocked" = false OR "draftedDeck" IS NOT NULL);
+  END IF;
+END $$;
 
--- Partial index: pins are read on every board state build ("which paddles are
--- pinned in this arena"), but only a handful of rows are ever non-null.
-CREATE INDEX IF NOT EXISTS "Player_arenaId_draftedDeck_idx"
-  ON "Player" ("arenaId", "draftedDeck")
-  WHERE "draftedDeck" IS NOT NULL;
+-- Deliberately NO index on `draftedDeck`.
+--
+-- A partial index (`WHERE "draftedDeck" IS NOT NULL`) is the natural fit, but
+-- Prisma 7 cannot express one in the schema, so it would exist only in raw
+-- SQL — and the next `prisma migrate dev` diffs the schema against the
+-- database, sees an index it does not know about, and emits a DROP for it. An
+-- index that silently deletes itself is worse than no index.
+--
+-- No plain index either: `Player` already carries `@@index([arenaId])`, every
+-- pin read is scoped to one arena, and an arena's roster is dozens of rows.
+-- There is nothing here to optimize yet.

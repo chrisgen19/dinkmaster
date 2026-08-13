@@ -4,9 +4,8 @@ import {
   DECK_LOSE,
   DECK_WIN,
   assembleDeck,
-  bucketFor,
+  bucketOf,
   deckChallenge,
-  deckOf,
   nextDeck,
   pinnedIn,
   splitDecks,
@@ -180,10 +179,18 @@ function applyCheckIn(state, event) {
 function applyCheckOut(state, event) {
   const { playerId } = event.payload;
   if (!state.queue.includes(playerId)) return { state, changed: false };
+  // A pin dies with the paddle's place on the rack, mirroring
+  // `applyCheckOutTx`. Without this a check-out/check-in round trip offline
+  // resurrects the placement locally while replay clears it on the server, and
+  // the two boards then pick different fours. Only touched when a pin exists,
+  // so an unpinned board's player rows keep the shape they arrived with.
+  const pinned = Boolean(playerById(state, playerId)?.draftedDeck);
   return {
     state: {
       ...state,
-      players: patchPlayers(state.players, { [playerId]: { waitRounds: 0, skipBoosted: false } }),
+      players: patchPlayers(state.players, {
+        [playerId]: { waitRounds: 0, skipBoosted: false, ...(pinned ? CLEAR_PIN : {}) },
+      }),
       queue: state.queue.filter((id) => id !== playerId),
     },
     changed: true,
@@ -602,7 +609,8 @@ function applySkipPlayer(state, settings, event) {
   let bucket = rack;
   if (settings.splitDeckByResult === true) {
     const decks = splitDecks(rack, sessionResults(state, rack));
-    bucket = bucketFor(deckOf(playerId, decks), decks);
+    // Pin-aware, exactly as `applySkipPlayerTx` is.
+    bucket = bucketOf(playerId, rack, decks, pinsOf(state));
   }
 
   const index = bucket.indexOf(playerId);

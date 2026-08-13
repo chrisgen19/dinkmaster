@@ -318,7 +318,31 @@ describe('arena server actions — authorization', () => {
 
       it('does NOT wipe skipBoosted when the setting is being turned on', async () => {
         await actions.updateArenaMatchmaking(ARENA, base);
-        expect(prisma.player.updateMany).not.toHaveBeenCalled();
+        // Scoped to the skipBoosted write specifically. `not.toHaveBeenCalled()`
+        // would also assert that NO other cleanup touches Player, which the
+        // deck-pin retirement below legitimately does.
+        expect(prisma.player.updateMany).not.toHaveBeenCalledWith(
+          expect.objectContaining({ where: expect.objectContaining({ skipBoosted: true }) }),
+        );
+      });
+
+      it("retires the organizer's deck pins when win/lose decks are switched off", async () => {
+        // Pins are inert while the mode is off, so leaving them looks harmless
+        // — but re-enabling later would resurrect a four assembled under a
+        // configuration nobody is looking at any more. Same argument the
+        // courts' pointer cleanup above makes.
+        await actions.updateArenaMatchmaking(ARENA, { ...base, splitDeckByResult: false });
+        expect(prisma.player.updateMany).toHaveBeenCalledWith({
+          where: { arenaId: ARENA, draftedDeck: { not: null } },
+          data: { draftedDeck: null, draftedLocked: false },
+        });
+      });
+
+      it('leaves the pins alone while the mode stays on', async () => {
+        await actions.updateArenaMatchmaking(ARENA, { ...base, splitDeckByResult: true });
+        expect(prisma.player.updateMany).not.toHaveBeenCalledWith(
+          expect.objectContaining({ where: expect.objectContaining({ draftedDeck: { not: null } }) }),
+        );
       });
 
       it('clears the courts\' deck pointers when win/lose decks are switched off', async () => {

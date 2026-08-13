@@ -7,7 +7,7 @@
 // from here, while the single source of truth lives in @/lib/matchmaking
 // (shared with the fillCourt / skipPlayer server actions).
 import { ON_DECK_SIZE } from '@/lib/matchmaking';
-import { DECK_LOSE, DECK_WIN, assembleDeck } from '@/lib/decks';
+import { DECK_LOSE, DECK_WIN, assembleDeck, bucketOf } from '@/lib/decks';
 import { profileHref } from '@/lib/player-display';
 
 export { ON_DECK_SIZE };
@@ -208,8 +208,12 @@ export function buildRackSections(
   const onDeckIds = new Set([...winnersFour, ...losersFour]);
   const waiting = queue.filter((id) => !onDeckIds.has(id));
   // A waiting paddle's bucket is still its OWN deck — that's what decides
-  // whether it can skip and who would replace it.
-  const bucketOf = (id) => (decks.winners.includes(id) ? decks.winners : decks.losers);
+  // whether it can skip and who would replace it — but it is the deck AS
+  // ASSEMBLED, so a natural member a pin displaced measures as waiting rather
+  // than on deck. The raw split would have given them `bucketIndex < 4`, and
+  // `deriveRackRow` would then draw an on-deck row, with a Skip button, inside
+  // the Waiting group. Identical rule to the server's skip gate.
+  const bucketOfRow = (id) => bucketOf(id, queue, decks, pins);
 
   const deckSection = (deck, key, label, four) =>
     section(
@@ -228,7 +232,7 @@ export function buildRackSections(
           // can't skip — the organizer takes them back out with the row's ✕
           // instead, which is the reversal that actually makes sense here.
           const pinned = pins?.get(id)?.deck === deck;
-          return row(id, pinned ? sorted : bucketOf(id), pinned);
+          return row(id, pinned ? sorted : bucketOfRow(id), pinned);
         }),
       {
         deck,
@@ -246,6 +250,6 @@ export function buildRackSections(
   return [
     deckSection(DECK_WIN, 'winners', 'Winners · next court', winnersFour),
     deckSection(DECK_LOSE, 'losers', 'Losers · next court', losersFour),
-    section('waiting', `Waiting · ${waiting.length}`, waiting.map((id) => row(id, bucketOf(id)))),
+    section('waiting', `Waiting · ${waiting.length}`, waiting.map((id) => row(id, bucketOfRow(id)))),
   ].filter((s) => s.rows.length > 0 || s.short > 0);
 }

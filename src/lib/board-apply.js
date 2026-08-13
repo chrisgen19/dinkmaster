@@ -4,9 +4,8 @@ import {
   DECK_LOSE,
   DECK_WIN,
   assembleDeck,
-  bucketFor,
+  bucketOf,
   deckChallenge,
-  deckOf,
   nextDeck,
   pinnedIn,
   splitDecks,
@@ -1435,7 +1434,10 @@ export async function applySkipPlayerTx(tx, arenaId, { playerId, replacementId =
   if (arena.splitDeckByResult) {
     const recentMatches = await sessionRecentMatches(tx, arenaId, arena.lastSessionResetAt);
     const decks = splitDecks(rack, recentResults(recentMatches, rack));
-    bucket = bucketFor(deckOf(playerId, decks), decks);
+    // Pin-aware: the deck AS ASSEMBLED, not the raw result split. A paddle the
+    // organizer placed belongs to the deck they were placed in, and a natural
+    // member their pin displaced is waiting, not on deck.
+    bucket = bucketOf(playerId, rack, decks, await readDeckPins(tx, arenaId));
   }
 
   const index = bucket.indexOf(playerId);
@@ -1561,6 +1563,13 @@ export async function readBoardStateTx(tx, arenaId) {
       losses: true,
       rating: true,
       skipBoosted: true,
+      // Hashed by `canonicalBoardString`, so they have to travel with the
+      // board state. Without them the server recomputes an UNPINNED hash while
+      // the client's base fingerprint (built from `getState`, which carries
+      // both) includes the pins — and strict sync reports divergence on a
+      // board that never changed.
+      draftedDeck: true,
+      draftedLocked: true,
     },
   });
   const courts = await tx.court.findMany({
