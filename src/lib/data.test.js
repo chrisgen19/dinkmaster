@@ -14,7 +14,7 @@ vi.mock('@/lib/prisma', () => ({
 }));
 
 import { prisma } from '@/lib/prisma';
-import { DEFAULT_WIN_BY } from './match-defaults';
+import { DEFAULT_TARGET_SCORE, DEFAULT_WIN_BY } from './match-defaults';
 import { getState } from './data';
 
 const ARENA = 'arena-1';
@@ -26,6 +26,7 @@ const arenaRow = (overrides = {}) => ({
   offlineHeldAt: null,
   lastDeckFilled: null,
   winBy: 2,
+  targetScore: 11,
   splitDeckByResult: false,
   ...overrides,
 });
@@ -73,6 +74,55 @@ describe('getState', () => {
       // accepting scorelines the server would refuse.
       prisma.arena.findUnique.mockResolvedValue(null);
       await expect(getState(ARENA)).resolves.toMatchObject({ winBy: DEFAULT_WIN_BY });
+    });
+  });
+
+  describe('targetScore', () => {
+    // Rides the board stream for the same reason `winBy` does, plus one of its
+    // own: `board-fingerprint` hashes it FIRST in the rules string, so a tab
+    // that goes offline holding a stale target strands the whole sync batch as
+    // a divergence rather than just breaking one dialog.
+    it('is selected from the Arena row', async () => {
+      await getState(ARENA);
+      expect(prisma.arena.findUnique).toHaveBeenCalledWith({
+        where: { id: ARENA },
+        select: expect.objectContaining({ targetScore: true }),
+      });
+    });
+
+    it("returns the arena's current target", async () => {
+      prisma.arena.findUnique.mockResolvedValue(arenaRow({ targetScore: 15 }));
+      await expect(getState(ARENA)).resolves.toMatchObject({ targetScore: 15 });
+    });
+
+    it('falls back to the default when the arena row is missing', async () => {
+      prisma.arena.findUnique.mockResolvedValue(null);
+      await expect(getState(ARENA)).resolves.toMatchObject({
+        targetScore: DEFAULT_TARGET_SCORE,
+      });
+    });
+
+    it("does not collide with a match's own recorded target", async () => {
+      // Two different meanings, one name: the top-level value is the rule new
+      // games are judged by, each history row carries what THAT game was played
+      // to. A correction dialog reads the row; the finish dialog reads the top.
+      prisma.arena.findUnique.mockResolvedValue(arenaRow({ targetScore: 15 }));
+      prisma.match.findMany.mockResolvedValue([
+        {
+          id: 'm1',
+          courtName: 'Court 1',
+          score1: 11,
+          score2: 9,
+          targetScore: 11,
+          winBy: 2,
+          editedAt: null,
+          createdAt: new Date('2026-08-14T00:00:00.000Z'),
+          players: [],
+        },
+      ]);
+      const state = await getState(ARENA);
+      expect(state.targetScore).toBe(15);
+      expect(state.matchHistory[0].targetScore).toBe(11);
     });
   });
 
