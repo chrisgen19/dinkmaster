@@ -17,7 +17,26 @@ export function AuthStatus() {
   const { data: session, isPending } = useSession();
   const router = useRouter();
 
-  if (isPending) {
+  // Render the skeleton on the first CLIENT pass too, not just while the
+  // session is pending.
+  //
+  // On the server `useSession` is always pending, so SSR emits the skeleton.
+  // On the client the session store can already be populated by the time the
+  // first render runs (a warm cache, a client-side navigation), so it emits
+  // the signed-in menu instead — and the two disagree. React then discards the
+  // server HTML and regenerates the whole tree, which is not merely a flash:
+  // a tap landing in that window is swallowed, so a manager pressing Stack
+  // gets nothing at all, with no error to explain it.
+  //
+  // Intermittent by nature — it needs the session to resolve before hydration
+  // — which is why it read as a flaky test rather than a bug for so long.
+  // This component sits in the site header, so the mismatch could take out any
+  // page, not just the board. See #173.
+  const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount flag for hydration-safe session rendering
+  useEffect(() => setMounted(true), []);
+
+  if (!mounted || isPending) {
     return <div className="h-9 w-24 rounded-xl bg-slate-100 animate-pulse" />;
   }
 
