@@ -9,6 +9,8 @@
 
 /** Default target score (pickleball game-to). */
 export const DEFAULT_TARGET_SCORE = 11;
+/** Default win-by margin — 2 is standard pickleball, so nothing changes on deploy. */
+export const DEFAULT_WIN_BY = 2;
 /** Default initial state for the Auto-Mix toggle. */
 export const DEFAULT_AUTO_MIX = true;
 /** Default for whether games played outside the schedule still count. */
@@ -22,6 +24,18 @@ export const DEFAULT_SHOW_PARTNERSHIP_MATRIX = false;
 export const MIN_TARGET_SCORE = 1;
 /** Maximum target score — comfortably above any standard game-to. */
 export const MAX_TARGET_SCORE = 99;
+
+// Only two margins are meaningful: standard win-by-2, or sudden death where
+// reaching the target ends it. A margin of 3+ isn't a format anyone plays, and
+// 0 would make ties legal — which the tie check rejects independently.
+/** Sudden death: reaching the target wins, so 11-10 is legal. */
+export const WIN_BY_SUDDEN_DEATH = 1;
+/** Standard pickleball: two-point margin, unbounded deuce. */
+export const WIN_BY_TWO = 2;
+/** Every margin the arena settings accept. */
+export const WIN_BY_OPTIONS = [WIN_BY_SUDDEN_DEATH, WIN_BY_TWO];
+/** True if `n` is a supported win-by margin. */
+export const isValidWinBy = (n) => WIN_BY_OPTIONS.includes(n);
 
 /** Minimum leaderboard size — a board of zero would never render. */
 export const MIN_LEADERBOARD_SIZE = 1;

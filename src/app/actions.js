@@ -9,10 +9,13 @@ import { INVITE_MODES, isInviteMode } from '@/lib/invites';
 import { MAX_WAIT_THRESHOLD, ON_DECK_SIZE } from '@/lib/matchmaking';
 import {
   DEFAULT_TARGET_SCORE,
+  DEFAULT_WIN_BY,
   MIN_TARGET_SCORE,
   MAX_TARGET_SCORE,
   MIN_LEADERBOARD_SIZE,
   MAX_LEADERBOARD_SIZE,
+  WIN_BY_OPTIONS,
+  isValidWinBy,
 } from '@/lib/match-defaults';
 import { RATING_BASELINE } from '@/lib/rating';
 import { validateMatchScore } from '@/lib/scoring';
@@ -460,6 +463,7 @@ export async function updateArenaMatchDefaults(
   arenaId,
   {
     targetScore: targetInput,
+    winBy: winByInput,
     autoMixDefault: autoMixInput,
     leaderboardSize: sizeInput,
     countOffScheduleGames: countOffInput,
@@ -472,6 +476,13 @@ export async function updateArenaMatchDefaults(
   const targetScore = Number(targetInput);
   if (!Number.isInteger(targetScore) || targetScore < MIN_TARGET_SCORE || targetScore > MAX_TARGET_SCORE) {
     return { error: `Target score must be a whole number between ${MIN_TARGET_SCORE} and ${MAX_TARGET_SCORE}.` };
+  }
+
+  // Only the two real formats are accepted, so a hand-rolled call can't set a
+  // margin of 5 and make every subsequent scoreline unrecordable.
+  const winBy = Number(winByInput);
+  if (!isValidWinBy(winBy)) {
+    return { error: `Win-by margin must be ${WIN_BY_OPTIONS.join(' or ')}.` };
   }
 
   const leaderboardSize = Number(sizeInput);
@@ -491,11 +502,11 @@ export async function updateArenaMatchDefaults(
 
   const updated = await prisma.arena.updateMany({
     where: { id: arenaId },
-    data: { targetScore, autoMixDefault, leaderboardSize, countOffScheduleGames, showPartnershipMatrix },
+    data: { targetScore, winBy, autoMixDefault, leaderboardSize, countOffScheduleGames, showPartnershipMatrix },
   });
   if (updated.count === 0) return { error: 'This arena no longer exists.' };
   return {
-    matchDefaults: { targetScore, autoMixDefault, leaderboardSize, countOffScheduleGames, showPartnershipMatrix },
+    matchDefaults: { targetScore, winBy, autoMixDefault, leaderboardSize, countOffScheduleGames, showPartnershipMatrix },
   };
 }
 
@@ -1018,15 +1029,28 @@ export async function editCourtLineup(arenaId, courtId, team1Ids, team2Ids) {
 }
 
 /** Record a finished match's score, update records, and recycle players to the rack. */
-export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
+export async function endMatch(arenaId, courtId, score1, score2, autoMix, winByOverride) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
-  // Mirror the client-side pickleball rules (target, win-by-2, no ties) on the
-  // server so a stale tab or a hand-rolled action call can't write a bad
-  // scoreline into match history / Elo / the weekly leaderboard.
+  // Mirror the client-side pickleball rules (target, win-by margin, no ties)
+  // on the server so a stale tab or a hand-rolled action call can't write a
+  // bad scoreline into match history / Elo / the weekly leaderboard.
+  //
+  // The margin is per-GAME: the dialog seeds its toggle from the arena setting
+  // but a manager can run one sudden-death round without rewriting the rule for
+  // every later game. Absent means "use the arena's", so an older client that
+  // doesn't send one behaves exactly as before; a present-but-nonsense value is
+  // refused rather than quietly falling back, since silently scoring a game by
+  // a rule the manager didn't pick is the failure worth being loud about.
   const target = guard.arena?.targetScore ?? DEFAULT_TARGET_SCORE;
-  const check = validateMatchScore(score1, score2, target);
+  const arenaWinBy = guard.arena?.winBy ?? DEFAULT_WIN_BY;
+  if (winByOverride !== undefined && winByOverride !== null && !isValidWinBy(Number(winByOverride))) {
+    return { error: 'Unrecognized scoring rule.', state: await getState(arenaId) };
+  }
+  const winBy =
+    winByOverride === undefined || winByOverride === null ? arenaWinBy : Number(winByOverride);
+  const check = validateMatchScore(score1, score2, target, winBy);
   if (!check.ok) {
     return {
       error: check.reason || 'Both scores are required.',
@@ -1053,7 +1077,7 @@ export async function endMatch(arenaId, courtId, score1, score2, autoMix) {
       // `target` is the value this scoreline was just validated against, so
       // the match records the rules it was played under — the arena's target
       // can change later, and a correction must be judged by the old one.
-      await applyEndMatchTx(tx, arenaId, { courtId, s1, s2, targetScore: target });
+      await applyEndMatchTx(tx, arenaId, { courtId, s1, s2, targetScore: target, winBy });
 
       // Mix the whole rack on every finish (when enabled and more than one
       // court's worth of players are waiting, so the next four can actually
@@ -1138,7 +1162,7 @@ const CORRECTION_FAILURES = Object.assign(Object.create(null), {
  * `gamesPlayed` and `Partnership` counts are incremented at FILL time, not at
  * finish, so they're unaffected either way.
  */
-export async function updateMatchScore(arenaId, matchId, score1, score2) {
+export async function updateMatchScore(arenaId, matchId, score1, score2, winByOverride) {
   const guard = await requireArenaManager(arenaId);
   if (guard.error) return { error: guard.error, state: await getState(arenaId) };
 
@@ -1152,15 +1176,28 @@ export async function updateMatchScore(arenaId, matchId, score1, score2) {
   // Same rules the entry modal enforces, re-checked server-side so a stale tab
   // or a hand-rolled call can't write an illegal scoreline.
   //
-  // Judged by the target THIS MATCH was played under, not the arena's current
-  // one: a manager who raised the target from 11 to 15 would otherwise be
-  // unable to correct any older 11-point game, and one who lowered it could
-  // rewrite an old game into a score that was never legal for it. Matches
-  // recorded before that was captured fall back to the arena setting, which is
-  // the best guess available for them.
+  // Judged by the target and margin THIS MATCH was played under, not the
+  // arena's current ones: a manager who raised the target from 11 to 15 would
+  // otherwise be unable to correct any older 11-point game, and one who
+  // lowered it could rewrite an old game into a score that was never legal for
+  // it. The margin matters the same way — turning sudden death off must not
+  // strand the 11-10 games played while it was on. Matches recorded before
+  // these were captured fall back to the arena setting, which is the best
+  // guess available for them.
+  //
+  // The margin is correctable too: a game finished under the wrong toggle is a
+  // mis-recording like any other, and refusing to fix it would leave a legal
+  // 11-10 permanently unrecordable. Absent means "keep what the match already
+  // had", so a client that doesn't send one can't blank the rule.
   const target =
     match.targetScore ?? guard.arena?.targetScore ?? DEFAULT_TARGET_SCORE;
-  const check = validateMatchScore(score1, score2, target);
+  const recordedWinBy = match.winBy ?? guard.arena?.winBy ?? DEFAULT_WIN_BY;
+  if (winByOverride !== undefined && winByOverride !== null && !isValidWinBy(Number(winByOverride))) {
+    return { error: 'Unrecognized scoring rule.', state: await getState(arenaId) };
+  }
+  const winBy =
+    winByOverride === undefined || winByOverride === null ? recordedWinBy : Number(winByOverride);
+  const check = validateMatchScore(score1, score2, target, winBy);
   if (!check.ok) {
     return {
       error: check.reason || 'Both scores are required.',
@@ -1171,8 +1208,16 @@ export async function updateMatchScore(arenaId, matchId, score1, score2) {
   const s1 = parseInt(score1, 10);
   const s2 = parseInt(score2, 10);
 
-  if (s1 === match.score1 && s2 === match.score2) {
-    return { state: await getState(arenaId) }; // nothing to correct
+  // Nothing to correct only when the RULE is unchanged too: a manager fixing a
+  // game that was recorded under the wrong margin may leave the scoreline alone
+  // (11-9 is legal either way), and that edit still has to persist.
+  //
+  // Compared against the RESOLVED margin, not the raw column: a pre-column row
+  // holds null, and comparing to that would make every no-op correction of a
+  // legacy match look like a change and stamp `editedAt` on a match nobody
+  // edited.
+  if (s1 === match.score1 && s2 === match.score2 && winBy === recordedWinBy) {
+    return { state: await getState(arenaId) };
   }
 
   // A legacy tie record banked no win/loss and was rated as a draw, so any
@@ -1191,12 +1236,31 @@ export async function updateMatchScore(arenaId, matchId, score1, score2) {
   // `applyEndMatchTx` are the only two. That's what lets the flip path read
   // `match` before taking the lock: the predicate below catches any concurrent
   // change to the values the reversal was computed from.
+  //
+  // `winBy` joins the predicate because a correction can now change the RULE
+  // without changing either score, so the scoreline alone no longer identifies
+  // the row this edit was computed from: one manager switching an 11-9 to
+  // sudden death leaves the score predicate matching, and a second manager
+  // working from the pre-change row would rescore it and silently revert that
+  // margin. Compared as the RAW nullable column (`?? null`, never the resolved
+  // fallback) because that is what the row actually holds — and because Prisma
+  // treats an `undefined` in a `where` as "no condition at all", which would
+  // drop this guard entirely rather than tighten it.
   const writeCorrection = (tx, ratingDelta) =>
     tx.match.updateMany({
-      where: { id: matchId, arenaId, score1: match.score1, score2: match.score2 },
+      where: {
+        id: matchId,
+        arenaId,
+        score1: match.score1,
+        score2: match.score2,
+        winBy: match.winBy ?? null,
+      },
       data: {
         score1: s1,
         score2: s2,
+        // Persisted so a later correction is judged by the rule this edit
+        // settled on, not the one the original finish happened to use.
+        winBy,
         editedAt: new Date(),
         ...(ratingDelta === undefined ? {} : { ratingDelta }),
       },
@@ -1713,7 +1777,15 @@ export async function syncOfflineEvents(arenaId, input) {
   if (!Number.isInteger(targetScore) || targetScore < MIN_TARGET_SCORE || targetScore > MAX_TARGET_SCORE) {
     return { error: 'Invalid sync batch.', state: await getState(arenaId) };
   }
-  const settings = { targetScore };
+  // A log stamped before `winBy` shipped carries no margin at all. Treat that
+  // as the standard rule rather than rejecting the batch, or every offline
+  // session in flight across the deploy would fail to sync and the manager
+  // would have to re-enter the scores by hand.
+  const winBy = rawSettings?.winBy ?? DEFAULT_WIN_BY;
+  if (!isValidWinBy(winBy)) {
+    return { error: 'Invalid sync batch.', state: await getState(arenaId) };
+  }
+  const settings = { targetScore, winBy };
   const deviceLabel =
     typeof rawDeviceLabel === 'string' && rawDeviceLabel.trim()
       ? rawDeviceLabel.trim().slice(0, 80)
@@ -1739,6 +1811,11 @@ export async function syncOfflineEvents(arenaId, input) {
         where: { id: arenaId },
         select: {
           targetScore: true,
+          // Hashed too: omitting it would fingerprint a sudden-death arena as
+          // if it played win-by-2 (absence encodes the standard rule), so
+          // every strict sync from that arena would report a phantom
+          // divergence — the same trap as `balancedPairing` below.
+          winBy: true,
           starveThreshold: true,
           emergencyWait: true,
           skipRestoresPriority: true,

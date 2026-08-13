@@ -34,7 +34,7 @@ import {
   splitDecks,
 } from '@/lib/decks';
 import { recentResults } from '@/lib/pairing';
-import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE, DEFAULT_SHOW_PARTNERSHIP_MATRIX } from '@/lib/match-defaults';
+import { DEFAULT_TARGET_SCORE, DEFAULT_AUTO_MIX, DEFAULT_COUNT_OFF_SCHEDULE, DEFAULT_SHOW_PARTNERSHIP_MATRIX, DEFAULT_WIN_BY } from '@/lib/match-defaults';
 import { computeWeeklyLeaderboard, DEFAULT_LEADERBOARD_SIZE } from '@/lib/leaderboard';
 import { createStateFreshnessGuard } from '@/lib/state-freshness';
 import { saveArenaSnapshot } from '@/lib/offline-store';
@@ -155,6 +155,7 @@ export default function Arena({
   matchmaking: matchmakingProp = { starveThreshold: DEFAULT_STARVE_THRESHOLD, emergencyWait: DEFAULT_EMERGENCY_WAIT, skipRestoresPriority: true, skipPickReplacement: true },
   matchDefaults = {
     targetScore: DEFAULT_TARGET_SCORE,
+    winBy: DEFAULT_WIN_BY,
     autoMixDefault: DEFAULT_AUTO_MIX,
     leaderboardSize: DEFAULT_LEADERBOARD_SIZE,
     countOffScheduleGames: DEFAULT_COUNT_OFF_SCHEDULE,
@@ -203,6 +204,17 @@ export default function Arena({
   // resynced from every server payload, so the board self-heals.
   const [splitDeckByResult, setSplitDeckByResult] = useState(
     initialState.splitDeckByResult ?? matchmakingProp.splitDeckByResult ?? false,
+  );
+  // The arena's win-by margin, held as STATE for exactly the reason above: the
+  // score dialog VALIDATES against it, so a page still holding the old value
+  // either refuses a scoreline the arena now allows (11-10 after a switch to
+  // sudden death, blocked client-side with no way to save it) or offers one the
+  // arena no longer allows (11-10 after a switch back, accepted locally then
+  // refused by the server). Seeded from the prop and resynced from every server
+  // payload, so the board self-heals instead of needing a reload — the prop
+  // itself never refreshes, since SSE reconciles the board, not the settings.
+  const [liveWinBy, setLiveWinBy] = useState(
+    initialState.winBy ?? matchDefaults.winBy ?? DEFAULT_WIN_BY,
   );
   // Arena schedule (powers the "This Week" leaderboard window). Declared up
   // here, before `persistSnapshot`, so the offline snapshot captures the LIVE
@@ -301,6 +313,10 @@ export default function Arena({
     // but a purely local engine state may not, and absence must not read as
     // "mode off" and silently collapse the rack to one group mid-session.
     if ('splitDeckByResult' in state) setSplitDeckByResult(state.splitDeckByResult ?? false);
+    // Guarded the same way: a local engine state has no settings on it, and
+    // absence must not read as "win by 2" and start refusing sudden-death
+    // scorelines mid-session.
+    if ('winBy' in state) setLiveWinBy(state.winBy ?? DEFAULT_WIN_BY);
     // Sync responses arrive through this path too (applySyncedState); they
     // carry `offlineHold: null` after the server cleared it. Engine states
     // never have the key, so a live hold can't be wiped by local play.
@@ -319,6 +335,17 @@ export default function Arena({
     [matchmakingProp, splitDeckByResult],
   );
 
+  // Same treatment for the match defaults, whose one live-streamed member is the
+  // win-by margin. Everything downstream that freezes settings must capture what
+  // the board is ACTUALLY running: the offline snapshot and the engine settings
+  // stamped onto a pending log both read this, and a stale margin on a pending
+  // log is the worse failure — it is hashed into the sync fingerprint, so the
+  // whole batch would come back as a divergence.
+  const liveMatchDefaults = useMemo(
+    () => ({ ...matchDefaults, winBy: liveWinBy }),
+    [matchDefaults, liveWinBy],
+  );
+
   // Save the current board as this arena's IndexedDB snapshot: the offline
   // shell renders it, and an offline session replays its event log over it.
   const persistSnapshot = useCallback(
@@ -331,7 +358,7 @@ export default function Arena({
         viewerRole,
         viewerUserId,
         matchmaking: liveMatchmaking,
-        matchDefaults,
+        matchDefaults: liveMatchDefaults,
         // Extra props the interactive board needs when the offline shell
         // mounts <Arena> from this snapshot (cold offline boot). Server-only
         // data (members, requests, invites) is intentionally omitted; it
@@ -355,7 +382,7 @@ export default function Arena({
       viewerRole,
       viewerUserId,
       liveMatchmaking,
-      matchDefaults,
+      liveMatchDefaults,
       description,
       schedule,
       sessionPrep,
@@ -400,7 +427,7 @@ export default function Arena({
     arenaId,
     canManage,
     offlineBoot,
-    settingsProps: { matchmaking: liveMatchmaking, matchDefaults },
+    settingsProps: { matchmaking: liveMatchmaking, matchDefaults: liveMatchDefaults },
     getBoardState,
     applyLocalState,
     applySyncedState,
@@ -450,6 +477,7 @@ export default function Arena({
       // a needless "the court or queue changed" for the manager.
       setLastDeckFilled(initialState.lastDeckFilled ?? null);
       setSplitDeckByResult(initialState.splitDeckByResult ?? false);
+      setLiveWinBy(initialState.winBy ?? matchDefaults.winBy ?? DEFAULT_WIN_BY);
       setOfflineHold(initialState.offlineHold ?? null);
     }
   }
@@ -1240,12 +1268,12 @@ export default function Arena({
   // Commit a correction. Mirrors the lineup editor's race handling: the dialog
   // stays open on a rejection (winner flip, vanished match) so the manager sees
   // the reason against the scoreline they typed, and closes on success.
-  const handleConfirmCorrectScore = (score1, score2) => {
+  const handleConfirmCorrectScore = (score1, score2, winBy) => {
     if (!matchToCorrect) return;
     const matchId = matchToCorrect.id;
     startTransition(async () => {
       try {
-        const result = await updateMatchScore(arenaId, matchId, score1, score2);
+        const result = await updateMatchScore(arenaId, matchId, score1, score2, winBy);
         if (result?.error) {
           if (result.state) applyResult({ state: result.state });
           setCorrectionError(result.error);
@@ -1338,13 +1366,16 @@ export default function Arena({
     });
   };
 
-  const handleEndMatchWithScore = (courtId, score1, score2) => {
+  // `winBy` is the dialog's per-game choice, seeded from the arena setting. It
+  // rides along on both paths so an offline sudden-death round replays under
+  // the rule the manager picked at the court, not the arena's default.
+  const handleEndMatchWithScore = (courtId, score1, score2, winBy) => {
     setScoreModalOpen(false);
     setSelectedCourtForScore(null);
     if (offline.offlineActive) {
-      return runLocalCommand({ type: 'endMatch', courtId, score1, score2, autoMix });
+      return runLocalCommand({ type: 'endMatch', courtId, score1, score2, autoMix, winBy });
     }
-    run(() => endMatch(arenaId, courtId, score1, score2, autoMix));
+    run(() => endMatch(arenaId, courtId, score1, score2, autoMix, winBy));
   };
 
   // Open the delete confirmation for a recorded match (manager-only). Only
@@ -2297,8 +2328,9 @@ export default function Arena({
           team1={selectedCourtForScore.team1.map(resolveLiveSlot)}
           team2={selectedCourtForScore.team2.map(resolveLiveSlot)}
           targetScore={matchDefaults.targetScore}
+          winBy={liveWinBy}
           submitLabel="Save Score"
-          onSubmit={(s1, s2) => handleEndMatchWithScore(selectedCourtForScore.id, s1, s2)}
+          onSubmit={(s1, s2, wb) => handleEndMatchWithScore(selectedCourtForScore.id, s1, s2, wb)}
           onClose={() => {
             setScoreModalOpen(false);
             setSelectedCourtForScore(null);
@@ -2318,11 +2350,12 @@ export default function Arena({
           team2={matchToCorrect.teams.b.players.map(resolveSnapshotPlayer)}
           initialScore1={String(matchToCorrect.teams.a.score)}
           initialScore2={String(matchToCorrect.teams.b.score)}
-          // The target THIS match was played under — the same value
+          // The rules THIS match was played under — the same values
           // `updateMatchScore` validates against, so the dialog's "First to N"
           // hint can't promise a rule the server then rejects. Matches
-          // recorded before it was captured fall back identically.
+          // recorded before they were captured fall back identically.
           targetScore={matchToCorrect.targetScore ?? matchDefaults.targetScore}
+          winBy={matchToCorrect.winBy ?? liveWinBy}
           submitLabel="Save Correction"
           isPending={isPending}
           error={correctionError}

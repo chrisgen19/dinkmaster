@@ -11,6 +11,8 @@ import {
   MAX_TARGET_SCORE,
   MIN_LEADERBOARD_SIZE,
   MAX_LEADERBOARD_SIZE,
+  WIN_BY_SUDDEN_DEATH,
+  WIN_BY_TWO,
 } from '@/lib/match-defaults';
 import { slugFromSectionId } from './arena-settings-sections';
 import { BackPill } from './back-pill';
@@ -721,6 +723,9 @@ function MatchDefaultsSection({ arenaId, defaults }) {
   // Inputs kept as strings so clearing the field doesn't snap to 0 — parse on
   // save. Same pattern as MatchmakingSection (PR #36 round 2).
   const [targetScore, setTargetScore] = useState(String(defaults.targetScore));
+  // A closed set of two, so this one is a select rather than a number input —
+  // no empty-string state to guard, and the value is always valid.
+  const [winBy, setWinBy] = useState(defaults.winBy ?? WIN_BY_TWO);
   const [autoMixDefault, setAutoMixDefault] = useState(defaults.autoMixDefault);
   const [leaderboardSize, setLeaderboardSize] = useState(String(defaults.leaderboardSize));
   const [countOffScheduleGames, setCountOffScheduleGames] = useState(defaults.countOffScheduleGames);
@@ -749,6 +754,7 @@ function MatchDefaultsSection({ arenaId, defaults }) {
       try {
         const result = await updateArenaMatchDefaults(arenaId, {
           targetScore: target,
+          winBy,
           autoMixDefault,
           leaderboardSize: size,
           countOffScheduleGames,
@@ -778,6 +784,23 @@ function MatchDefaultsSection({ arenaId, defaults }) {
           />
           <span className="block text-[10px] text-slate-400 mt-1">
             Pre-fills both score fields when finishing a match (typically 11).
+          </span>
+        </label>
+
+        <label className="block">
+          <span className={labelClass}>Win by</span>
+          <select
+            value={winBy}
+            onChange={(e) => setWinBy(Number(e.target.value))}
+            className={inputClass}
+          >
+            <option value={WIN_BY_TWO}>2 points — standard (deuce)</option>
+            <option value={WIN_BY_SUDDEN_DEATH}>1 point — sudden death (no deuce)</option>
+          </select>
+          <span className="block text-[10px] text-slate-400 mt-1">
+            {winBy === WIN_BY_SUDDEN_DEATH
+              ? `Reaching ${targetScore || MIN_TARGET_SCORE} wins outright, so ${targetScore || MIN_TARGET_SCORE}-${Math.max(0, Number(targetScore || MIN_TARGET_SCORE) - 1)} is a valid final. Keeps games to a fixed length for timed round robins.`
+              : 'Standard pickleball: at deuce, play continues until one side leads by two, with no upper limit.'}
           </span>
         </label>
 

@@ -41,8 +41,8 @@ const bit = (value) => (value ? 1 : 0);
  *
  * @param {object} state - getState shape: { players, queue, courts, history,
  *   lastDeckFilled }
- * @param {object} settings - { targetScore, starveThreshold, emergencyWait,
- *   skipRestoresPriority, skipPickReplacement, balancedPairing,
+ * @param {object} settings - { targetScore, winBy, starveThreshold,
+ *   emergencyWait, skipRestoresPriority, skipPickReplacement, balancedPairing,
  *   splitDeckByResult }
  */
 export function canonicalBoardString(state, settings) {
@@ -123,7 +123,19 @@ export function canonicalBoardString(state, settings) {
         .sort((a, b) => (a.id < b.id ? -1 : 1))
         .map((p) => `${p.id}:${p.draftedDeck}${bit(p.draftedLocked)}`)
     : [];
-  const rules = pins.length > 0 ? `${withDeck}|n${pins.join(',')}` : withDeck;
+  const withPins = pins.length > 0 ? `${withDeck}|n${pins.join(',')}` : withDeck;
+
+  // `winBy` decides which scorelines `applyEndMatch` accepts, so a device that
+  // recorded 11-10 under sudden death forked from rules the server may no
+  // longer be running — that must surface as divergence, not a silent replay
+  // the server would then reject as BAD_EVENT.
+  //
+  // Appended by ABSENCE like `balancedPairing` and `splitDeckByResult` above:
+  // the migration backfills every arena to 2, so the standard rule must hash
+  // exactly as it did before this field shipped, or every offline session in
+  // flight across the deploy reports a phantom divergence. Only sudden death
+  // adds anything, and the `w` prefix keeps it unambiguous next to `|d1`/`|n`.
+  const rules = settings.winBy === 1 ? `${withPins}|w1` : withPins;
 
   return `p:${players}\nq:${queue}\nc:${courts}\nh:${partnerships}\ns:${rules}`;
 }

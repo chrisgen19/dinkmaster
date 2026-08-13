@@ -193,4 +193,43 @@ describe('boardFingerprint', () => {
       );
     });
   });
+
+  describe('win-by margin', () => {
+    const legacyRules = `s:${SETTINGS.targetScore}|${SETTINGS.starveThreshold}|${SETTINGS.emergencyWait}|1|1`;
+
+    it('adds nothing at the standard margin', () => {
+      // Same absence-encoding contract as the two settings above: the migration
+      // backfills every arena to 2, so win-by-2 — and every pending log stamped
+      // before `winBy` shipped — must hash byte-identically to before, or every
+      // offline session in flight across the deploy reports a phantom
+      // divergence.
+      const standard = { ...SETTINGS, winBy: 2 };
+      expect(canonicalBoardString(baseState(), standard).endsWith(`\n${legacyRules}`)).toBe(true);
+      const { winBy: _omitted, ...preFeature } = standard;
+      expect(boardFingerprint(baseState(), preFeature)).toBe(boardFingerprint(baseState(), standard));
+    });
+
+    it('changes under sudden death', () => {
+      // A device that recorded 11-10 offline forked from rules the server may
+      // no longer run; that must surface as divergence rather than replay into
+      // a BAD_EVENT the manager can't explain.
+      const sudden = { ...SETTINGS, winBy: 1 };
+      expect(boardFingerprint(baseState(), sudden)).not.toBe(boardFingerprint(baseState(), SETTINGS));
+      expect(canonicalBoardString(baseState(), sudden)).toMatch(/\ns:11\|2\|4\|1\|1\|w1$/);
+    });
+
+    it('stays unambiguous next to every other rule suffix', () => {
+      // `|0|d1|kL|w1` — the prefixes are what keep four appended rules readable
+      // as four rules and not as one ambiguous run of numbers.
+      const all = {
+        ...SETTINGS,
+        balancedPairing: false,
+        splitDeckByResult: true,
+        winBy: 1,
+      };
+      expect(canonicalBoardString({ ...baseState(), lastDeckFilled: 'L' }, all)).toMatch(
+        /\ns:11\|2\|4\|1\|1\|0\|d1\|kL\|w1$/,
+      );
+    });
+  });
 });

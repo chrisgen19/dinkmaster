@@ -25,7 +25,11 @@ function arenaIdFromLocation() {
  */
 function buildLocalBoard(snapshot, pending) {
   const settings =
-    pending?.settings ?? { targetScore: snapshot.matchDefaults?.targetScore, ...snapshot.matchmaking };
+    pending?.settings ?? {
+      targetScore: snapshot.matchDefaults?.targetScore,
+      winBy: snapshot.matchDefaults?.winBy,
+      ...snapshot.matchmaking,
+    };
   const { state } = replayEvents(snapshot.state, settings, pending?.events);
   // Report every recorded event as unsynced, not just the ones that replayed
   // for display: if replay stopped early on a mismatch, the un-replayed events
