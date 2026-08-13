@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { defineConfig, devices } from '@playwright/test';
 import { e2eDatabaseUrl } from './e2e/e2e-database.js';
 
@@ -60,11 +61,17 @@ export default defineConfig({
   // One on CI, where a runner is typically 2-4 cores: two workers there is the
   // same oversubscription this cap exists to prevent, just at a smaller scale.
   //
+  // Two is a CEILING, not a target. Playwright's own local default is
+  // `ceil(cores / 2)`, which is 1 on a 2-core box (a Codespace, a constrained
+  // container) — so hard-coding 2 there would RAISE concurrency and recreate
+  // the very oversubscription this cap exists to prevent. Take whichever is
+  // lower, and never go below 1.
+  //
   // Raise either number only with a measured before/after, and remember
   // `pnpm test:e2e:offline` may be running at the same time on its own server
   // (that config needs no cap — it has a single spec file, so it is already
   // effectively one worker).
-  workers: process.env.CI ? 1 : 2,
+  workers: process.env.CI ? 1 : Math.max(1, Math.min(2, Math.ceil(os.cpus().length / 2))),
   forbidOnly: !!process.env.CI,
   // One retry, so `trace: 'on-first-retry'` below can actually produce a
   // trace — with the default of 0 retries it never fired, and a failure left
