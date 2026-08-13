@@ -1,6 +1,12 @@
 import Link from 'next/link';
-import { listArenas, getUserMemberships, getUserPendingRequestArenaIds } from '@/lib/arenas';
-import { partitionArenaDirectory } from '@/lib/arena-directory';
+import {
+  listUserArenas,
+  listPublicArenas,
+  countPublicArenas,
+  getUserMemberships,
+  getUserPendingRequestArenaIds,
+} from '@/lib/arenas';
+import { resolveDirectoryPage } from '@/lib/arena-directory';
 import { getCurrentUser } from '@/lib/session';
 import { AuthStatus } from '../auth-status';
 import { SiteHeader } from '../site-header';
@@ -175,15 +181,78 @@ function EmptyState({ children, icon: Icon = Sparkles }) {
   );
 }
 
-export default async function Page() {
-  const [arenas, user] = await Promise.all([listArenas(), getCurrentUser()]);
-  const [memberships, pendingArenaIds] = user
-    ? await Promise.all([getUserMemberships(user.id), getUserPendingRequestArenaIds(user.id)])
-    : [[], new Set()];
+/**
+ * Prev/next for the public list. Plain links with `?page=`, so paging works
+ * without JavaScript and each page is shareable — this is a server-rendered
+ * directory, not an app view. Hidden entirely when everything fits on one
+ * page, which is the case for most arenas most of the time.
+ */
+function DirectoryPager({ pager, total }) {
+  if (pager.pageCount <= 1) return null;
+
+  const href = (page) => (page === 1 ? '/arenas' : `/arenas?page=${page}`);
+  const step =
+    'inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-bold transition ring-1';
+  const enabled = 'bg-white text-slate-700 ring-slate-200 hover:text-emerald-700 hover:ring-emerald-300';
+  const disabled = 'bg-slate-50 text-slate-300 ring-slate-100 cursor-default';
+
+  return (
+    <nav
+      aria-label="Arena directory pages"
+      className="mt-6 flex items-center justify-between gap-4"
+    >
+      {pager.hasPrev ? (
+        <Link href={href(pager.page - 1)} rel="prev" className={`${step} ${enabled}`}>
+          ← Previous
+        </Link>
+      ) : (
+        <span aria-hidden="true" className={`${step} ${disabled}`}>
+          ← Previous
+        </span>
+      )}
+
+      <p className="text-xs text-slate-500 tabular-nums">
+        Showing <span className="font-bold text-slate-700">{pager.from}–{pager.to}</span> of{' '}
+        <span className="font-bold text-slate-700">{total}</span>
+      </p>
+
+      {pager.hasNext ? (
+        <Link href={href(pager.page + 1)} rel="next" className={`${step} ${enabled}`}>
+          Next →
+        </Link>
+      ) : (
+        <span aria-hidden="true" className={`${step} ${disabled}`}>
+          Next →
+        </span>
+      )}
+    </nav>
+  );
+}
+
+export default async function Page({ searchParams }) {
+  // `searchParams` is a Promise in this Next version (see
+  // node_modules/next/dist/docs/01-app/.../page.md).
+  const [{ page: requestedPage }, user] = await Promise.all([searchParams, getCurrentUser()]);
+
+  const [memberships, pendingArenaIds, yourArenas] = user
+    ? await Promise.all([
+        getUserMemberships(user.id),
+        getUserPendingRequestArenaIds(user.id),
+        listUserArenas(user.id),
+      ])
+    : [[], new Set(), []];
   const roleByArena = new Map(memberships.map((m) => [m.arenaId, m.role]));
-  const { yourArenas, publicArenas } = partitionArenaDirectory(arenas, {
-    userId: user?.id,
-    memberArenaIds: roleByArena.keys(),
+
+  // The public list excludes what's already shown above, then pages. Counting
+  // first so an out-of-range `?page=` can clamp to the last real page rather
+  // than render an empty grid.
+  const excludeIds = yourArenas.map((a) => a.id);
+  const publicTotal = await countPublicArenas({ excludeIds });
+  const pager = resolveDirectoryPage({ total: publicTotal, page: requestedPage });
+  const publicArenas = await listPublicArenas({
+    excludeIds,
+    skip: pager.skip,
+    take: pager.take,
   });
 
   return (
@@ -255,7 +324,7 @@ export default async function Page() {
           <SectionHeading
             eyebrow={user ? 'Open to join' : 'All arenas'}
             title="listed"
-            count={publicArenas.length}
+            count={publicTotal}
           />
           {publicArenas.length === 0 ? (
             <EmptyState icon={MapPin}>
@@ -264,7 +333,10 @@ export default async function Page() {
                 : 'No arenas yet. Sign in to create the first one.'}
             </EmptyState>
           ) : (
-            <ArenaGrid arenas={publicArenas} roleByArena={roleByArena} pendingArenaIds={pendingArenaIds} />
+            <>
+              <ArenaGrid arenas={publicArenas} roleByArena={roleByArena} pendingArenaIds={pendingArenaIds} />
+              <DirectoryPager pager={pager} total={publicTotal} />
+            </>
           )}
         </section>
       </main>
