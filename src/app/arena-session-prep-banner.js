@@ -82,15 +82,31 @@ export function ArenaSessionPrepBanner({
   // scheduled arena. Spectators and unscheduled arenas render null, so a
   // perpetual no-op timer would just be waste.
   const hasSchedule = (schedule?.days?.length ?? 0) > 0;
-  const [now, setNow] = useState(() => new Date());
+  // `null` until mounted, so this renders nothing during SSR and on the first
+  // client pass. The initializer would otherwise run once on the server clock
+  // and again on the client's, and the countdown below is minute-granular
+  // (`formatCountdown`) — so any load where the two straddle a minute boundary
+  // emits "starts in 45 min" on one side and "44" on the other, fails
+  // hydration, and takes the whole page's server HTML with it. Same defect
+  // class as the auth-status skeleton in #173, and the same fix: never derive
+  // rendered output from a clock read before hydration has finished.
+  const [now, setNow] = useState(null);
   useEffect(() => {
     if (!canManage || !hasSchedule) return undefined;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- first clock read, deliberately deferred past hydration
+    setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(t);
   }, [canManage, hasSchedule]);
 
+  // Before the clock is read, report the same "nothing to show" state the
+  // no-schedule case already produces, which every branch below already
+  // handles. `deriveState` would otherwise call `.getTime()` on null.
   const state = useMemo(
-    () => deriveState({ schedule, lastSessionResetAt, autoResetOnSession, now }),
+    () =>
+      now
+        ? deriveState({ schedule, lastSessionResetAt, autoResetOnSession, now })
+        : { kind: 'none', needsReset: false },
     [schedule, lastSessionResetAt, autoResetOnSession, now],
   );
 
