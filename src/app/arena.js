@@ -1240,12 +1240,12 @@ export default function Arena({
   // Commit a correction. Mirrors the lineup editor's race handling: the dialog
   // stays open on a rejection (winner flip, vanished match) so the manager sees
   // the reason against the scoreline they typed, and closes on success.
-  const handleConfirmCorrectScore = (score1, score2) => {
+  const handleConfirmCorrectScore = (score1, score2, winBy) => {
     if (!matchToCorrect) return;
     const matchId = matchToCorrect.id;
     startTransition(async () => {
       try {
-        const result = await updateMatchScore(arenaId, matchId, score1, score2);
+        const result = await updateMatchScore(arenaId, matchId, score1, score2, winBy);
         if (result?.error) {
           if (result.state) applyResult({ state: result.state });
           setCorrectionError(result.error);
@@ -1338,13 +1338,16 @@ export default function Arena({
     });
   };
 
-  const handleEndMatchWithScore = (courtId, score1, score2) => {
+  // `winBy` is the dialog's per-game choice, seeded from the arena setting. It
+  // rides along on both paths so an offline sudden-death round replays under
+  // the rule the manager picked at the court, not the arena's default.
+  const handleEndMatchWithScore = (courtId, score1, score2, winBy) => {
     setScoreModalOpen(false);
     setSelectedCourtForScore(null);
     if (offline.offlineActive) {
-      return runLocalCommand({ type: 'endMatch', courtId, score1, score2, autoMix });
+      return runLocalCommand({ type: 'endMatch', courtId, score1, score2, autoMix, winBy });
     }
-    run(() => endMatch(arenaId, courtId, score1, score2, autoMix));
+    run(() => endMatch(arenaId, courtId, score1, score2, autoMix, winBy));
   };
 
   // Open the delete confirmation for a recorded match (manager-only). Only
@@ -2297,8 +2300,9 @@ export default function Arena({
           team1={selectedCourtForScore.team1.map(resolveLiveSlot)}
           team2={selectedCourtForScore.team2.map(resolveLiveSlot)}
           targetScore={matchDefaults.targetScore}
+          winBy={matchDefaults.winBy}
           submitLabel="Save Score"
-          onSubmit={(s1, s2) => handleEndMatchWithScore(selectedCourtForScore.id, s1, s2)}
+          onSubmit={(s1, s2, wb) => handleEndMatchWithScore(selectedCourtForScore.id, s1, s2, wb)}
           onClose={() => {
             setScoreModalOpen(false);
             setSelectedCourtForScore(null);
@@ -2318,11 +2322,12 @@ export default function Arena({
           team2={matchToCorrect.teams.b.players.map(resolveSnapshotPlayer)}
           initialScore1={String(matchToCorrect.teams.a.score)}
           initialScore2={String(matchToCorrect.teams.b.score)}
-          // The target THIS match was played under — the same value
+          // The rules THIS match was played under — the same values
           // `updateMatchScore` validates against, so the dialog's "First to N"
           // hint can't promise a rule the server then rejects. Matches
-          // recorded before it was captured fall back identically.
+          // recorded before they were captured fall back identically.
           targetScore={matchToCorrect.targetScore ?? matchDefaults.targetScore}
+          winBy={matchToCorrect.winBy ?? matchDefaults.winBy}
           submitLabel="Save Correction"
           isPending={isPending}
           error={correctionError}

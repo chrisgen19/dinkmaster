@@ -125,6 +125,7 @@ export async function getArena(id) {
       balancedPairing: true,
       splitDeckByResult: true,
       targetScore: true,
+      winBy: true,
       autoMixDefault: true,
       leaderboardSize: true,
       countOffScheduleGames: true,

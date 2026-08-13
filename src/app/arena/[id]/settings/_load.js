@@ -49,6 +49,7 @@ export async function loadArenaForSettings(arenaId) {
       },
       matchDefaults: {
         targetScore: arena.targetScore,
+        winBy: arena.winBy,
         autoMixDefault: arena.autoMixDefault,
         leaderboardSize: arena.leaderboardSize,
         countOffScheduleGames: arena.countOffScheduleGames,

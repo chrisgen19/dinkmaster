@@ -11,6 +11,7 @@ import {
   splitDecks,
 } from '@/lib/decks';
 import { computeMatchRatings } from '@/lib/rating';
+import { isValidWinBy } from '@/lib/match-defaults';
 import { validateMatchScore } from '@/lib/scoring';
 import { diffLineup, validateLineup } from '@/lib/court-lineup';
 
@@ -962,7 +963,7 @@ export async function applyEditCourtLineupTx(tx, arenaId, { courtId, team1Ids, t
  *   setting. Callers pass the SAME value they validated with; omitted leaves
  *   the column null ("unknown").
  */
-export async function applyEndMatchTx(tx, arenaId, { courtId, s1, s2, outcome, occurredAt, targetScore }) {
+export async function applyEndMatchTx(tx, arenaId, { courtId, s1, s2, outcome, occurredAt, targetScore, winBy }) {
   const team1Won = s1 > s2;
   const team2Won = s2 > s1;
 
@@ -1022,8 +1023,9 @@ export async function applyEndMatchTx(tx, arenaId, { courtId, s1, s2, outcome, o
       score2: s2,
       ratingDelta,
       // Null when the caller didn't say; readers fall back to the arena's
-      // current target rather than treating the absence as a value.
+      // current settings rather than treating the absence as a value.
       targetScore: targetScore ?? null,
+      winBy: winBy ?? null,
       ...(occurredAt ? { createdAt: occurredAt } : {}),
       players: {
         create: slots.map((s) => ({
@@ -1681,10 +1683,23 @@ export async function applyEventTx(tx, arenaId, settings, event, { occurredAt })
       });
       return;
     case 'endMatch': {
-      // Validate against the BATCH's target score: the score was entered
-      // under the rules the manager saw at the court, and a concurrent
+      // Validate against the BATCH's target score and margin: the score was
+      // entered under the rules the manager saw at the court, and a concurrent
       // settings change shows up as divergence, not silent re-validation.
-      const check = validateMatchScore(payload.score1, payload.score2, settings.targetScore);
+      //
+      // A per-game margin on the event beats the batch's arena-level one, so a
+      // sudden-death round played offline replays under the rule the manager
+      // picked at the court. Validated as a real margin first: the payload is
+      // client-supplied, and an unrecognized value must reject the event rather
+      // than silently widen what counts as a legal scoreline.
+      const eventWinBy = payload.winBy ?? settings.winBy;
+      if (!isValidWinBy(eventWinBy)) throw new Error('BAD_EVENT');
+      const check = validateMatchScore(
+        payload.score1,
+        payload.score2,
+        settings.targetScore,
+        eventWinBy,
+      );
       if (!check.ok) throw new Error('BAD_EVENT');
       await applyEndMatchTx(tx, arenaId, {
         courtId: payload.courtId,
@@ -1692,10 +1707,11 @@ export async function applyEventTx(tx, arenaId, settings, event, { occurredAt })
         s2: parseInt(payload.score2, 10),
         outcome: { recycleOrder: event.outcome?.recycleOrder },
         occurredAt,
-        // The batch's own snapshot — the same target this scoreline was just
-        // validated against, so a replayed match records the rules it was
-        // played under offline, not the arena's setting at sync time.
+        // The batch's own snapshot — the same rules this scoreline was just
+        // validated against, so a replayed match records what it was actually
+        // played under offline, not the arena's settings at sync time.
         targetScore: settings.targetScore,
+        winBy: eventWinBy,
       });
       if (payload.autoMix && event.outcome?.mixedOrder) {
         await applyAutoMixTx(tx, arenaId, { outcome: { mixedOrder: event.outcome.mixedOrder } });

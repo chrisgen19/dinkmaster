@@ -74,7 +74,7 @@ const PLAY = [
   ['updateArenaGeneral', () => actions.updateArenaGeneral(ARENA, { name: 'New' })],
   ['updateArenaSchedule', () => actions.updateArenaSchedule(ARENA, { days: [1, 3, 5] })],
   ['updateArenaMatchmaking', () => actions.updateArenaMatchmaking(ARENA, { starveThreshold: 2, emergencyWait: 4, skipRestoresPriority: true, skipPickReplacement: true, balancedPairing: true })],
-  ['updateArenaMatchDefaults', () => actions.updateArenaMatchDefaults(ARENA, { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false })],
+  ['updateArenaMatchDefaults', () => actions.updateArenaMatchDefaults(ARENA, { targetScore: 11, winBy: 2, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false })],
   ['updateArenaSessions', () => actions.updateArenaSessions(ARENA, { autoResetOnSession: true })],
   ['prepareNextSession', () => actions.prepareNextSession(ARENA)],
   ['createArenaInvite', () => actions.createArenaInvite(ARENA, 'APPROVAL')],
@@ -407,6 +407,7 @@ describe('arena server actions — authorization', () => {
       it('persists valid defaults and coerces "true"/"false" string booleans', async () => {
         const result = await actions.updateArenaMatchDefaults(ARENA, {
           targetScore: '15',
+          winBy: '1',
           autoMixDefault: 'false',
           leaderboardSize: '10',
           countOffScheduleGames: 'true',
@@ -415,26 +416,35 @@ describe('arena server actions — authorization', () => {
         expect(result.error).toBeUndefined();
         expect(prisma.arena.updateMany).toHaveBeenCalledWith({
           where: { id: ARENA },
-          data: { targetScore: 15, autoMixDefault: false, leaderboardSize: 10, countOffScheduleGames: true, showPartnershipMatrix: true },
+          data: { targetScore: 15, winBy: 1, autoMixDefault: false, leaderboardSize: 10, countOffScheduleGames: true, showPartnershipMatrix: true },
         });
       });
 
       it('reports a clean error when the arena no longer exists', async () => {
         prisma.arena.updateMany.mockResolvedValueOnce({ count: 0 });
         const result = await actions.updateArenaMatchDefaults(ARENA, {
-          targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false,
+          targetScore: 11, winBy: 2, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false,
         });
         expect(result.error).toMatch(/no longer exists/i);
       });
 
       it.each([
-        ['a zero target score', { targetScore: 0, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
-        ['a fractional target score', { targetScore: 11.5, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
-        ['an out-of-range target score', { targetScore: MAX_TARGET_SCORE + 1, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
-        ['an out-of-range leaderboard size', { targetScore: 11, autoMixDefault: true, leaderboardSize: MAX_LEADERBOARD_SIZE + 1, countOffScheduleGames: true, showPartnershipMatrix: false }],
-        ['a non-boolean autoMixDefault', { targetScore: 11, autoMixDefault: 'maybe', leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
-        ['a non-boolean countOffScheduleGames', { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: 1, showPartnershipMatrix: false }],
-        ['a non-boolean showPartnershipMatrix', { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: 'maybe' }],
+        ['a zero target score', { targetScore: 0, winBy: 2, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        ['a fractional target score', { targetScore: 11.5, winBy: 2, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        ['an out-of-range target score', { targetScore: MAX_TARGET_SCORE + 1, winBy: 2, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        // Only 1 and 2 are real formats — a margin of 3 would make every
+        // scoreline at this target unrecordable, and 0 would legalize ties.
+        ['a win-by margin above 2', { targetScore: 11, winBy: 3, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        ['a zero win-by margin', { targetScore: 11, winBy: 0, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        ['a fractional win-by margin', { targetScore: 11, winBy: 1.5, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        // Omitted rather than invalid: the settings form always sends every
+        // field, so a missing margin means a malformed caller — and defaulting
+        // it would silently reset a sudden-death arena to win-by-2.
+        ['a missing win-by margin', { targetScore: 11, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        ['an out-of-range leaderboard size', { targetScore: 11, winBy: 2, autoMixDefault: true, leaderboardSize: MAX_LEADERBOARD_SIZE + 1, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        ['a non-boolean autoMixDefault', { targetScore: 11, winBy: 2, autoMixDefault: 'maybe', leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: false }],
+        ['a non-boolean countOffScheduleGames', { targetScore: 11, winBy: 2, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: 1, showPartnershipMatrix: false }],
+        ['a non-boolean showPartnershipMatrix', { targetScore: 11, winBy: 2, autoMixDefault: true, leaderboardSize: 5, countOffScheduleGames: true, showPartnershipMatrix: 'maybe' }],
       ])('rejects %s and writes nothing', async (_label, input) => {
         const result = await actions.updateArenaMatchDefaults(ARENA, input);
         expect(result.error).toBeTruthy();
@@ -488,7 +498,10 @@ describe('arena server actions — authorization', () => {
           // Scoped by the scoreline it was computed against, so a second
           // manager's simultaneous correction is a clean miss.
           where: { id: 'm1', arenaId: ARENA, score1: 11, score2: 5 },
-          data: { score1: 11, score2: 8, editedAt: expect.any(Date) },
+          // `winBy` rides along on every correction: this row predates the
+          // column, so the edit also backfills the margin it was judged by
+          // rather than leaving a corrected match still marked "unknown".
+          data: { score1: 11, score2: 8, winBy: 2, editedAt: expect.any(Date) },
         });
         // No reversal transaction: the winner did not change.
         expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -499,6 +512,32 @@ describe('arena server actions — authorization', () => {
         expect(prisma.match.updateMany).toHaveBeenCalledWith(
           expect.objectContaining({ data: expect.objectContaining({ score1: 13, score2: 11 }) }),
         );
+      });
+
+      it('corrects an 11-10 game when told it was played sudden death', async () => {
+        // The margin is per-game, so a scoreline the arena's default would
+        // reject is still correctable when the caller says which rule applied.
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 10, 1);
+        expect(result.error).toBeUndefined();
+        expect(prisma.match.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ score1: 11, score2: 10, winBy: 1 }),
+          }),
+        );
+      });
+
+      it('still rejects 11-10 when no override is given', async () => {
+        // Falls back to the match's recorded rule (null here -> the arena's
+        // win-by-2), so omitting the field can't widen what is legal.
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 10);
+        expect(result.error).toBe('A game must be won by 2.');
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('refuses an unrecognized margin instead of falling back', async () => {
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 8, 7);
+        expect(result.error).toMatch(/scoring rule/i);
+        expect(prisma.match.updateMany).not.toHaveBeenCalled();
       });
 
       it('no-ops when the scoreline is unchanged', async () => {
@@ -1144,6 +1183,7 @@ describe('arena server actions — authorization', () => {
         const [{ select }] = tx.arena.findUnique.mock.calls[0];
         expect(select).toEqual({
           targetScore: true,
+          winBy: true,
           starveThreshold: true,
           emergencyWait: true,
           skipRestoresPriority: true,
@@ -2035,6 +2075,76 @@ describe('arena server actions — authorization', () => {
       // The target the score was validated against, not the default.
       expect(data.targetScore).toBe(15);
       expect(data.editedAt).toBeUndefined(); // a fresh match is not an edit
+    });
+
+    it('endMatch() honors a per-game sudden-death override on a win-by-2 arena', async () => {
+      // The manager ran one no-deuce round before the courts closed. The 11-10
+      // must record, and the row must remember it was scored that way — the
+      // arena itself stays on win-by-2 for every later game.
+      const slot = (playerId, team) => ({
+        playerId,
+        team,
+        player: { id: playerId, firstName: playerId, lastName: null, rating: 1000 },
+      });
+      const tx = {
+        $executeRaw: vi.fn(),
+        court: {
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          findUnique: vi.fn().mockResolvedValue({ id: 'c1', name: 'Court 1' }),
+        },
+        courtSlot: {
+          findMany: vi
+            .fn()
+            .mockResolvedValue([slot('w1', 1), slot('w2', 1), slot('l1', 2), slot('l2', 2)]),
+          deleteMany: vi.fn(),
+        },
+        player: {
+          aggregate: vi.fn().mockResolvedValue({ _max: { queueOrder: 0 } }),
+          updateMany: vi.fn(),
+          update: vi.fn(),
+        },
+        match: { create: vi.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+      prisma.court.findMany.mockResolvedValue([]);
+      prisma.player.count.mockResolvedValue(0);
+      requireArenaManager.mockResolvedValue({
+        user: { id: 'u1' },
+        arena: { id: ARENA, ownerId: 'u1', targetScore: 11, winBy: 2 },
+        role: ROLES.OWNER,
+      });
+
+      const result = await actions.endMatch(ARENA, 'c1', 11, 10, false, 1);
+
+      expect(result.error).toBeUndefined();
+      const { data } = tx.match.create.mock.calls[0][0];
+      expect(data.score1).toBe(11);
+      expect(data.score2).toBe(10);
+      expect(data.winBy).toBe(1);
+    });
+
+    it('endMatch() rejects 11-10 on a win-by-2 arena with no override', async () => {
+      requireArenaManager.mockResolvedValue({
+        user: { id: 'u1' },
+        arena: { id: ARENA, ownerId: 'u1', targetScore: 11, winBy: 2 },
+        role: ROLES.OWNER,
+      });
+      const result = await actions.endMatch(ARENA, 'c1', 11, 10, false);
+      expect(result.error).toBe('A game must be won by 2.');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('endMatch() refuses an unrecognized margin instead of falling back', async () => {
+      // A hand-rolled call must not be able to smuggle in a rule that widens
+      // what counts as a legal scoreline.
+      requireArenaManager.mockResolvedValue({
+        user: { id: 'u1' },
+        arena: { id: ARENA, ownerId: 'u1', targetScore: 11, winBy: 2 },
+        role: ROLES.OWNER,
+      });
+      const result = await actions.endMatch(ARENA, 'c1', 11, 10, false, 0);
+      expect(result.error).toMatch(/scoring rule/i);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('endMatch() records no delta when the court is not two-a-side', async () => {

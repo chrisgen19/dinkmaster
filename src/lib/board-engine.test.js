@@ -745,6 +745,50 @@ describe('endMatch', () => {
     expect(result.notification).toMatch(/Silo-Buster/);
   });
 
+  it('accepts 11-10 offline when the event carries a sudden-death margin', () => {
+    // The per-game toggle has to survive the offline path too, or a manager who
+    // ran a no-deuce round on a disconnected device could not record it — and
+    // the recorded match must remember the rule for the later sync.
+    const state = filledState();
+    const result = resolveCommand(
+      state,
+      SETTINGS,
+      { type: 'endMatch', courtId: 'c1', score1: '11', score2: '10', autoMix: false, winBy: 1 },
+      opts(7),
+    );
+    expect(result.error).toBeUndefined();
+    const match = result.state.matchHistory[0];
+    expect(match.score1).toBe(11);
+    expect(match.score2).toBe(10);
+    expect(match.winBy).toBe(1);
+  });
+
+  it('falls back to the session rule when the event carries no margin', () => {
+    // SETTINGS deliberately has no `winBy` — it is a pre-feature snapshot, the
+    // shape a pending log stamped before the toggle shipped still carries. Such
+    // an event must keep scoring by standard rules rather than becoming
+    // unreplayable or silently permitting a one-point win.
+    const state = filledState();
+    const sudden = { ...SETTINGS, winBy: 1 };
+    expect(
+      resolveCommand(
+        state,
+        SETTINGS,
+        { type: 'endMatch', courtId: 'c1', score1: '11', score2: '10', autoMix: false },
+        opts(7),
+      ).error,
+    ).toBeTruthy();
+    // ...and the same event under a sudden-death session rule does apply.
+    const result = resolveCommand(
+      state,
+      sudden,
+      { type: 'endMatch', courtId: 'c1', score1: '11', score2: '10', autoMix: false },
+      opts(7),
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.state.matchHistory[0].winBy).toBe(1);
+  });
+
   it('rejects an invalid scoreline and a finished court', () => {
     const state = filledState();
     expect(

@@ -53,6 +53,7 @@ export function holdExpiryDelay(hold, now = Date.now()) {
 export function engineSettings({ matchmaking, matchDefaults }) {
   return {
     targetScore: matchDefaults.targetScore,
+    winBy: matchDefaults.winBy,
     starveThreshold: matchmaking.starveThreshold,
     emergencyWait: matchmaking.emergencyWait,
     skipRestoresPriority: matchmaking.skipRestoresPriority,

@@ -66,10 +66,11 @@ export function toMatch(raw, options = {}) {
         b: { players: raw.team2, score: raw.score2 },
       },
       // Carried through for the arena's correction dialog, which must state
-      // the target this match was played under (null = unknown, caller falls
-      // back to the arena's current setting). Absent from player-shape rows,
+      // the rules this match was played under (null = unknown, caller falls
+      // back to the arena's current settings). Absent from player-shape rows,
       // which are read-only everywhere they're rendered.
       targetScore: raw.targetScore ?? null,
+      winBy: raw.winBy ?? null,
       // When a manager corrected this scoreline (ISO string), so the ledger
       // can mark the row. Null = never edited.
       editedAt: raw.editedAt ?? null,

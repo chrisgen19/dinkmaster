@@ -17,15 +17,26 @@ export const stepScore = (current, delta) => {
 };
 
 /**
- * Validate a pickleball match scoreline against the arena's target score.
- * Standard rules: the winner reaches the target, must win by 2, no ties; no
- * upper cap (deuce can extend to 12-10, 15-13, 21-19, etc.).
+ * Validate a match scoreline against the arena's target score and win-by
+ * margin. Two formats, selected by `winBy`:
+ *
+ *   - `winBy: 2` (default, standard pickleball) — the winner reaches the
+ *     target and leads by two, with NO upper cap, so deuce can extend
+ *     indefinitely: 12-10, 15-13, 21-19, 99-97.
+ *   - `winBy: 1` (sudden death / no deuce) — reaching the target wins
+ *     outright, so 11-10 is a legal final. Because play stops the instant the
+ *     target is reached, the winner lands on it EXACTLY: 12-3 at a target of
+ *     11 is unreachable, and is rejected as a typo rather than accepted as a
+ *     score no one could have played.
+ *
+ * Ties are illegal in both formats. `winBy` defaults to 2 so a caller that
+ * predates the setting keeps standard behaviour.
  *
  * Returns `{ ok, complete, reason }`. `complete` is true once both fields have
  * a digits-only value — the UI stays quiet while the organizer is still
  * typing, and only shows an error chip once both sides are filled in.
  */
-export const validateMatchScore = (s1, s2, targetScore) => {
+export const validateMatchScore = (s1, s2, targetScore, winBy = 2) => {
   if (!isValidScoreInput(s1) || !isValidScoreInput(s2)) {
     return { ok: false, complete: false, reason: '' };
   }
@@ -39,8 +50,14 @@ export const validateMatchScore = (s1, s2, targetScore) => {
   if (winner < targetScore) {
     return { ok: false, complete: true, reason: `Winner must reach ${targetScore}.` };
   }
-  if (winner - loser < 2) {
-    return { ok: false, complete: true, reason: 'A game must be won by 2.' };
+  // Sudden death has an exact winning score, since the game ends on the point
+  // that reaches the target. Checked before the margin test below, which can
+  // never fire at `winBy: 1` (a non-tie always leads by at least one).
+  if (winner > targetScore && winBy < 2) {
+    return { ok: false, complete: true, reason: `Sudden death ends at ${targetScore} — the winner can't score more.` };
+  }
+  if (winner - loser < winBy) {
+    return { ok: false, complete: true, reason: `A game must be won by ${winBy}.` };
   }
   return { ok: true, complete: true, reason: '' };
 };

@@ -117,11 +117,12 @@ export async function getState(arenaId) {
     team2: teamSnapshot(m, 2),
     score1: m.score1,
     score2: m.score2,
-    // The target this match was played under, so the correction dialog states
-    // the rule the server will actually validate against. Null for matches
-    // recorded before it was captured; the client falls back to the arena's
-    // current setting exactly as `updateMatchScore` does.
+    // The target and margin this match was played under, so the correction
+    // dialog states the rules the server will actually validate against. Null
+    // for matches recorded before they were captured; the client falls back to
+    // the arena's current settings exactly as `updateMatchScore` does.
     targetScore: m.targetScore,
+    winBy: m.winBy,
     // Set when a manager corrected this scoreline after the fact; the ledger
     // marks those rows so a rewrite isn't invisible to the people who played.
     // Null for every match that has never been edited.

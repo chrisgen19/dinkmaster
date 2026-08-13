@@ -34,10 +34,15 @@ const onScoreChange = (setter, raw) => {
  * @param {string} [props.initialScore1] - Seed for Team A's field.
  * @param {string} [props.initialScore2] - Seed for Team B's field.
  * @param {number} props.targetScore - Arena's target score (first to N).
+ * @param {number} [props.winBy] - Margin this game is scored by: 2 for standard
+ *   pickleball, 1 for sudden death. Seeds the in-dialog toggle (the arena's
+ *   setting when finishing a court, the match's own value when correcting one),
+ *   and is what `onSubmit` reports back if the manager doesn't change it.
+ *   Defaults to 2.
  * @param {string} [props.submitLabel] - Primary button copy.
  * @param {boolean} [props.isPending] - A mutation is in flight.
  * @param {string} [props.error] - Server-side rejection, shown in the alert slot.
- * @param {(score1: number, score2: number) => void} props.onSubmit
+ * @param {(score1: number, score2: number, winBy: number) => void} props.onSubmit
  * @param {() => void} props.onClose
  */
 export function ScoreEntryModal({
@@ -48,6 +53,7 @@ export function ScoreEntryModal({
   initialScore1 = '',
   initialScore2 = '',
   targetScore,
+  winBy = 2,
   submitLabel = 'Save Score',
   isPending = false,
   error = '',
@@ -56,12 +62,18 @@ export function ScoreEntryModal({
 }) {
   const [score1, setScore1] = useState(initialScore1);
   const [score2, setScore2] = useState(initialScore2);
+  // Per-game override of the arena's margin, seeded from it. A manager running
+  // one sudden-death round before the courts close shouldn't have to leave the
+  // board for Settings — and flipping the arena setting would silently rewrite
+  // the rule for every later game too. State, so it re-seeds on remount via the
+  // same `key` the score fields rely on.
+  const [activeWinBy, setActiveWinBy] = useState(winBy);
 
   // Pull a short label out of the court name for the header tile, e.g.
   // "Court 1" -> "1". Falls back to the first character if no digits.
   const courtBadge = courtName?.match(/\d+/)?.[0] ?? courtName?.charAt(0) ?? '?';
 
-  const validation = validateMatchScore(score1, score2, targetScore);
+  const validation = validateMatchScore(score1, score2, targetScore, activeWinBy);
   const canSubmit = validation.ok && !isPending;
 
   // Escape closes the dialog — conventional keyboard partner to the backdrop
@@ -77,7 +89,7 @@ export function ScoreEntryModal({
 
   const submit = () => {
     if (!canSubmit) return;
-    onSubmit(parseInt(score1, 10), parseInt(score2, 10));
+    onSubmit(parseInt(score1, 10), parseInt(score2, 10), activeWinBy);
   };
 
   const onKeyDownSubmit = (e) => {
@@ -235,8 +247,57 @@ export function ScoreEntryModal({
             </div>
           </div>
 
+          {/* Per-game scoring rule. Seeded from the arena's setting, so the
+              common case is one glance and no interaction; the toggle exists so
+              a manager running a single sudden-death round before the courts
+              close doesn't have to leave the board for Settings. */}
+          <div className="mt-4">
+            <div
+              role="radiogroup"
+              aria-label="Scoring rule for this game"
+              className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-100 border border-slate-200/70"
+            >
+              {[
+                { value: 2, label: 'Win by 2', hint: 'Deuce' },
+                { value: 1, label: 'Sudden death', hint: 'No deuce' },
+              ].map((option) => {
+                const active = activeWinBy === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setActiveWinBy(option.value)}
+                    className={`rounded-lg py-1.5 px-2 transition ${
+                      active
+                        ? 'bg-white shadow-sm text-slate-900'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <span className="block text-[11px] font-extrabold leading-tight">
+                      {option.label}
+                    </span>
+                    <span className="block text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400 mt-0.5">
+                      {option.hint}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {/* Only when this game departs from the arena's rule, so the note
+                means something the manager didn't already choose deliberately
+                in Settings. */}
+            {activeWinBy !== winBy && (
+              <p className="text-[10px] text-amber-700 font-semibold mt-1.5 text-center">
+                This game only — the arena stays on{' '}
+                {winBy < 2 ? 'sudden death' : 'win by 2'}.
+              </p>
+            )}
+          </div>
+
           {/* Hint while typing; red alert for a server rejection, or once both
-              scores are filled but the scoreline is illegal (tie/target/win-by-2). */}
+              scores are filled but the scoreline is illegal (tie/target/margin). */}
           <div className="mt-4">
             {error || (validation.complete && !validation.ok) ? (
               <div
@@ -263,7 +324,10 @@ export function ScoreEntryModal({
               <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200/70 text-slate-500 text-[11px] flex items-center justify-center gap-1.5">
                 <span className="font-bold text-slate-700">First to {targetScore}</span>
                 <span className="text-slate-300" aria-hidden="true">·</span>
-                <span>Win by 2</span>
+                {/* States the margin the validator is ACTUALLY using — the live
+                    toggle value, not the arena default — so the hint can never
+                    promise a rule the Save button then refuses. */}
+                <span>{activeWinBy < 2 ? 'Sudden death — no deuce' : 'Win by 2'}</span>
               </div>
             )}
           </div>

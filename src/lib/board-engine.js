@@ -481,12 +481,15 @@ function applyEditCourtLineup(state, settings, event) {
 }
 
 function applyEndMatch(state, settings, event) {
-  const { courtId, score1, score2, autoMix, matchId } = event.payload;
+  const { courtId, score1, score2, autoMix, matchId, winBy } = event.payload;
   const outcome = event.outcome ?? {};
   const court = state.courts.find((c) => c.id === courtId);
   if (!court || court.status !== 'playing') return { error: MSG_NOT_PLAYING };
 
-  const check = validateMatchScore(score1, score2, settings.targetScore);
+  // A per-game margin recorded at the court wins over the arena's setting; an
+  // event without one predates the toggle and uses the session's rule.
+  const effectiveWinBy = winBy ?? settings.winBy;
+  const check = validateMatchScore(score1, score2, settings.targetScore, effectiveWinBy);
   if (!check.ok) return { error: check.reason || 'Both scores are required.' };
   const s1 = parseInt(score1, 10);
   const s2 = parseInt(score2, 10);
@@ -510,9 +513,10 @@ function applyEndMatch(state, settings, event) {
     score1: s1,
     score2: s2,
     // Mirrors what `applyEndMatchTx` persists on sync, so a match played
-    // offline reads back with the target it was played under rather than
-    // appearing to predate the column.
+    // offline reads back with the rules it was played under rather than
+    // appearing to predate the columns.
     targetScore: settings.targetScore,
+    winBy: effectiveWinBy,
     timestamp: event.occurredAt,
   };
 
@@ -968,6 +972,14 @@ export function resolveCommand(state, settings, command, opts = {}) {
           score1: command.score1,
           score2: command.score2,
           autoMix: Boolean(command.autoMix),
+          // The per-game margin the manager picked in the score dialog. Recorded
+          // on the event (not read from `settings` at replay) so the rule that
+          // was on screen at the court is the rule this match syncs under, even
+          // if the arena's setting has moved on by then. Omitted when the
+          // command doesn't carry one, which keeps a pre-toggle log's shape.
+          ...(command.winBy === undefined || command.winBy === null
+            ? {}
+            : { winBy: command.winBy }),
           matchId: makeId('off_match'),
         },
         outcome: { recycleOrder, mixedOrder },
