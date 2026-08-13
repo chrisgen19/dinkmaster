@@ -495,9 +495,11 @@ describe('arena server actions — authorization', () => {
         const result = await actions.updateMatchScore(ARENA, 'm1', 11, 8);
         expect(result.error).toBeUndefined();
         expect(prisma.match.updateMany).toHaveBeenCalledWith({
-          // Scoped by the scoreline it was computed against, so a second
-          // manager's simultaneous correction is a clean miss.
-          where: { id: 'm1', arenaId: ARENA, score1: 11, score2: 5 },
+          // Scoped by the scoreline AND the margin it was computed against, so
+          // a second manager's simultaneous correction is a clean miss — including
+          // one that changed only the rule and left the scores alone. Null here
+          // because this row predates the column.
+          where: { id: 'm1', arenaId: ARENA, score1: 11, score2: 5, winBy: null },
           // `winBy` rides along on every correction: this row predates the
           // column, so the edit also backfills the margin it was judged by
           // rather than leaving a corrected match still marked "unknown".
@@ -538,6 +540,34 @@ describe('arena server actions — authorization', () => {
         const result = await actions.updateMatchScore(ARENA, 'm1', 11, 8, 7);
         expect(result.error).toMatch(/scoring rule/i);
         expect(prisma.match.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('scopes the write by the margin it read, not just the scoreline', async () => {
+        // A rule-only correction changes no score, so the scoreline alone stops
+        // identifying the row this edit was computed from: without `winBy` in
+        // the predicate, a manager working from the pre-change row could
+        // rescore it and silently revert someone else's margin edit.
+        prisma.match.findUnique.mockResolvedValue({ ...MATCH, winBy: 2 });
+        await actions.updateMatchScore(ARENA, 'm1', 11, 8);
+        expect(prisma.match.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: 'm1', arenaId: ARENA, score1: 11, score2: 5, winBy: 2 },
+          }),
+        );
+      });
+
+      it('persists a rule-only correction that leaves both scores alone', async () => {
+        // 11-5 is legal under either margin, so fixing a game recorded under the
+        // wrong toggle need not touch the scoreline — and that edit still has to
+        // be written rather than treated as a no-op.
+        prisma.match.findUnique.mockResolvedValue({ ...MATCH, winBy: 2 });
+        const result = await actions.updateMatchScore(ARENA, 'm1', 11, 5, 1);
+        expect(result.error).toBeUndefined();
+        expect(prisma.match.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ score1: 11, score2: 5, winBy: 1 }),
+          }),
+        );
       });
 
       it('no-ops when the scoreline is unchanged', async () => {

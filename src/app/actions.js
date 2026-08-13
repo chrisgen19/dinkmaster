@@ -1236,9 +1236,25 @@ export async function updateMatchScore(arenaId, matchId, score1, score2, winByOv
   // `applyEndMatchTx` are the only two. That's what lets the flip path read
   // `match` before taking the lock: the predicate below catches any concurrent
   // change to the values the reversal was computed from.
+  //
+  // `winBy` joins the predicate because a correction can now change the RULE
+  // without changing either score, so the scoreline alone no longer identifies
+  // the row this edit was computed from: one manager switching an 11-9 to
+  // sudden death leaves the score predicate matching, and a second manager
+  // working from the pre-change row would rescore it and silently revert that
+  // margin. Compared as the RAW nullable column (`?? null`, never the resolved
+  // fallback) because that is what the row actually holds — and because Prisma
+  // treats an `undefined` in a `where` as "no condition at all", which would
+  // drop this guard entirely rather than tighten it.
   const writeCorrection = (tx, ratingDelta) =>
     tx.match.updateMany({
-      where: { id: matchId, arenaId, score1: match.score1, score2: match.score2 },
+      where: {
+        id: matchId,
+        arenaId,
+        score1: match.score1,
+        score2: match.score2,
+        winBy: match.winBy ?? null,
+      },
       data: {
         score1: s1,
         score2: s2,

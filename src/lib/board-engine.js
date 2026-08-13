@@ -11,6 +11,7 @@ import {
   splitDecks,
 } from '@/lib/decks';
 import { RATING_BASELINE, computeMatchRatings } from '@/lib/rating';
+import { isValidWinBy } from '@/lib/match-defaults';
 import { validateMatchScore } from '@/lib/scoring';
 import { diffLineup, validateLineup } from '@/lib/court-lineup';
 
@@ -488,6 +489,19 @@ function applyEndMatch(state, settings, event) {
 
   // A per-game margin recorded at the court wins over the arena's setting; an
   // event without one predates the toggle and uses the session's rule.
+  //
+  // An explicit margin has to be one we recognise, and this is the place to say
+  // so: `applyEvent` is the single door for both a fresh command and the replay
+  // of a stored pending log, and the server rejects an unrecognised margin as
+  // BAD_EVENT during sync. Accepting one here would let a match land on the
+  // local board and then vanish on reconnect (best-effort drops it, strict
+  // fails the batch) — the local-versus-server divergence is the real cost,
+  // since an unrecognised margin also silently changes which scorelines pass:
+  // at 0 the "won by" test can never fail, so a tie-breaking 11-10 sails
+  // through on a win-by-2 arena.
+  if (winBy !== undefined && winBy !== null && !isValidWinBy(winBy)) {
+    return { error: 'Unrecognized scoring rule.' };
+  }
   const effectiveWinBy = winBy ?? settings.winBy;
   const check = validateMatchScore(score1, score2, settings.targetScore, effectiveWinBy);
   if (!check.ok) return { error: check.reason || 'Both scores are required.' };

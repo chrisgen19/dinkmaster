@@ -789,6 +789,24 @@ describe('endMatch', () => {
     expect(result.state.matchHistory[0].winBy).toBe(1);
   });
 
+  it('refuses an unrecognized margin instead of recording a match that will not sync', () => {
+    // A margin of 0 makes the "won by" test unfailable, so an 11-10 would pass
+    // local validation on a win-by-2 arena. The server rejects the same event as
+    // BAD_EVENT at sync, so accepting it here would put a match on the local
+    // board that later vanishes on reconnect.
+    const state = filledState();
+    for (const bad of [0, 3, 1.5, '1']) {
+      const result = resolveCommand(
+        state,
+        SETTINGS,
+        { type: 'endMatch', courtId: 'c1', score1: '11', score2: '10', autoMix: false, winBy: bad },
+        opts(7),
+      );
+      expect(result.error).toMatch(/scoring rule/i);
+      expect(result.event).toBeUndefined();
+    }
+  });
+
   it('rejects an invalid scoreline and a finished court', () => {
     const state = filledState();
     expect(

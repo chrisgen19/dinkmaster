@@ -62,12 +62,21 @@ export function ScoreEntryModal({
 }) {
   const [score1, setScore1] = useState(initialScore1);
   const [score2, setScore2] = useState(initialScore2);
-  // Per-game override of the arena's margin, seeded from it. A manager running
-  // one sudden-death round before the courts close shouldn't have to leave the
-  // board for Settings — and flipping the arena setting would silently rewrite
-  // the rule for every later game too. State, so it re-seeds on remount via the
-  // same `key` the score fields rely on.
-  const [activeWinBy, setActiveWinBy] = useState(winBy);
+  // Per-game override of the arena's margin. A manager running one sudden-death
+  // round before the courts close shouldn't have to leave the board for
+  // Settings — and flipping the arena setting would silently rewrite the rule
+  // for every later game too.
+  //
+  // NULL until the organizer actually touches the toggle, which is the point:
+  // `winBy` arrives as a prop of the arena page and is NOT refreshed by board
+  // updates (SSE reconciles the board, not the settings), so it goes stale the
+  // moment another manager changes the arena default. Submitting the seeded
+  // value unconditionally would promote that stale prop into an explicit
+  // per-game override and quietly score every later game from this tab by the
+  // old rule. Untouched means "no override" — the server uses whatever the
+  // arena says right now, exactly as it did before this toggle existed.
+  const [winByChoice, setWinByChoice] = useState(null);
+  const activeWinBy = winByChoice ?? winBy;
 
   // Pull a short label out of the court name for the header tile, e.g.
   // "Court 1" -> "1". Falls back to the first character if no digits.
@@ -89,7 +98,9 @@ export function ScoreEntryModal({
 
   const submit = () => {
     if (!canSubmit) return;
-    onSubmit(parseInt(score1, 10), parseInt(score2, 10), activeWinBy);
+    // `winByChoice`, not `activeWinBy`: undefined tells the caller to fall back
+    // to the server's own current rule rather than pinning this stale seed.
+    onSubmit(parseInt(score1, 10), parseInt(score2, 10), winByChoice ?? undefined);
   };
 
   const onKeyDownSubmit = (e) => {
@@ -268,7 +279,7 @@ export function ScoreEntryModal({
                     type="button"
                     role="radio"
                     aria-checked={active}
-                    onClick={() => setActiveWinBy(option.value)}
+                    onClick={() => setWinByChoice(option.value)}
                     className={`rounded-lg py-1.5 px-2 transition ${
                       active
                         ? 'bg-white shadow-sm text-slate-900'
