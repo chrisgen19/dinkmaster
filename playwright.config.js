@@ -27,8 +27,44 @@ export default defineConfig({
   timeout: 90_000,
   // Generous expect timeout: the first navigation to a route in `next dev`
   // triggers on-demand compilation, which can exceed the 5s default.
+  //
+  // 15s is enough, and the temptation to raise it should be resisted. When five
+  // unrelated specs once blew this budget at the same time, on-demand
+  // compilation looked like the obvious culprit and was NOT the cause — see the
+  // `workers` note below for the measurements. Raising it would have hidden an
+  // oversubscribed machine behind a number that looked merely conservative.
   expect: { timeout: 15_000 },
   fullyParallel: false,
+  // Capped, NOT Playwright's local default of half the cores (6 here). Nine
+  // spec files across six workers means six browsers driving ONE `next dev`
+  // server, and that server is the bottleneck: extra workers do not buy
+  // throughput, they just oversubscribe the machine and stretch every
+  // individual step.
+  //
+  // Measured on a 12-core box, the same create-arena spec:
+  //   1 worker  -> 13s   (cold cache and warm cache both; compilation is NOT
+  //                       the driver, which the `timeout` note above predates)
+  //   6 workers -> 38s   (load average 13+, i.e. fully saturated)
+  //
+  // That ~3x stretch is what pushed steps past the 15s `expect` budget, and it
+  // read as five unrelated specs failing in five different files — each worker
+  // starving the others. A bigger budget would only have hidden it: the work
+  // was not slow, it was starved.
+  //
+  // Two, not one: the suite still overlaps a browser's think-time with another
+  // file's server work, so wall clock stays close to the uncapped run while
+  // leaving headroom on a machine that is also running `pnpm dev`. Capping it
+  // made the suite both steadier AND faster (3.5m vs 4.8m), because the retries
+  // it stopped triggering cost more than the lost parallelism.
+  //
+  // One on CI, where a runner is typically 2-4 cores: two workers there is the
+  // same oversubscription this cap exists to prevent, just at a smaller scale.
+  //
+  // Raise either number only with a measured before/after, and remember
+  // `pnpm test:e2e:offline` may be running at the same time on its own server
+  // (that config needs no cap — it has a single spec file, so it is already
+  // effectively one worker).
+  workers: process.env.CI ? 1 : 2,
   forbidOnly: !!process.env.CI,
   // One retry, so `trace: 'on-first-retry'` below can actually produce a
   // trace — with the default of 0 retries it never fired, and a failure left
