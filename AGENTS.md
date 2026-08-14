@@ -32,6 +32,10 @@ cost someone real time.
   failing in five different files. `workers` is pinned in `playwright.config.js`
   for this reason. Before blaming a timeout, check `uptime` — and remember your
   own `pnpm dev` competes for the same cores.
+- **CI runs `pnpm lint` and `pnpm test` on every PR**, and nothing else. e2e is
+  not in CI yet, so a browser-level regression still only surfaces when someone
+  runs the suite locally. Green checks mean the unit suite and lint passed, not
+  that the feature works in a browser.
 - **Commands**: `pnpm test` (units), `pnpm test:e2e` (browser specs, starts its
   own server), `pnpm test:e2e:offline` (service-worker specs; production
   build, slower). `pnpm lint` before finishing. The e2e configs never reuse a

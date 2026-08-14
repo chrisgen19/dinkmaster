@@ -1,0 +1,63 @@
+# Lint + unit tests on every pull request.
+#
+# Until this existed, nothing ran automatically on any PR: the only checks
+# reporting were CodeRabbit and GitGuardian, neither of which executes a line of
+# this project's code. A PR that failed `pnpm test`, failed `pnpm lint`, or did
+# not compile would show all-green and merge.
+#
+# This is deliberately the CHEAP half. No database, no browser, no secrets — the
+# unit suite mocks Prisma, and `prisma generate` (run by `postinstall`, since
+# `src/generated/prisma` is gitignored) needs no connection string. Verified by
+# running all three with `.env` removed and `DATABASE_URL` unset.
+#
+# e2e is NOT here yet, on purpose. See the notes in `playwright.config.js`: those
+# specs share one `next dev` server, and a runner is typically 2-4 cores, so they
+# need the worker cap that config already applies via `process.env.CI` plus a
+# postgres service and a browser install. A flaky required check is worse than no
+# check, because people learn to re-run it without reading it. Adding e2e is
+# tracked separately.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to the same branch makes the first run's answer irrelevant, so
+# cancel it rather than pay for both. Never cancels on `main`, where each commit
+# is the record for that commit.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: lint + unit tests
+    runs-on: ubuntu-latest
+    # The suite takes seconds; this only exists so a hung install cannot burn a
+    # full hour of runner time.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Before setup-node: `cache: pnpm` below needs pnpm on PATH to locate the
+      # store. The version comes from `packageManager` in package.json, so it
+      # cannot drift from what developers run.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches local development and the Vercel runtime. package.json
+          # requires >=20.19.0; pinning the major here means a Node bump is a
+          # deliberate edit rather than a silent change under the suite.
+          node-version: 24
+          cache: pnpm
+
+      # --frozen-lockfile is itself a check: it fails when package.json and
+      # pnpm-lock.yaml disagree, which is exactly the state that produces "works
+      # on my machine". Also runs `postinstall` -> `prisma generate`.
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint
+
+      - run: pnpm test
