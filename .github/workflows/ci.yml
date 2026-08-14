@@ -1,0 +1,86 @@
+# Lint + unit tests on every pull request.
+#
+# Until this existed, nothing ran automatically on any PR: the only checks
+# reporting were CodeRabbit and GitGuardian, neither of which executes a line of
+# this project's code. A PR that failed `pnpm test`, failed `pnpm lint`, or did
+# not compile would show all-green and merge.
+#
+# This is deliberately the CHEAP half. No database, no browser, no secrets — the
+# unit suite mocks Prisma, and `prisma generate` (run by `postinstall`, since
+# `src/generated/prisma` is gitignored) needs no connection string. Verified by
+# running all three with `.env` removed and `DATABASE_URL` unset.
+#
+# e2e is NOT here yet, on purpose. See the notes in `playwright.config.js`: those
+# specs share one `next dev` server, and a runner is typically 2-4 cores, so they
+# need the worker cap that config already applies via `process.env.CI` plus a
+# postgres service and a browser install. A flaky required check is worse than no
+# check, because people learn to re-run it without reading it. Adding e2e is
+# tracked separately.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege, stated rather than inherited. The repository default is
+# currently `read`, so this grants nothing new today — the point is that the
+# default is one settings toggle away from `write`, and flipping it would
+# silently hand write access to every workflow including this one. Declaring
+# what the job needs makes that impossible to do by accident.
+permissions:
+  contents: read
+
+# A second push to a PR branch makes the first run's answer irrelevant, so cancel
+# it rather than pay for both.
+#
+# Pushes to `main` get a group of their own, keyed by commit. `cancel-in-progress:
+# false` is NOT enough to protect them: it spares the RUNNING job, but GitHub
+# cancels any PENDING run in the group when a newer one arrives. Merge three PRs
+# in quick succession and the middle commit's queued run is discarded before it
+# ever starts, leaving that commit with no CI record — exactly the gap you would
+# want closed when bisecting later. A per-commit group means push runs never
+# collide, so nothing can be superseded.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: lint + unit tests
+    runs-on: ubuntu-latest
+    # The suite takes seconds; this only exists so a hung install cannot burn a
+    # full hour of runner time.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # By default checkout writes the token into .git/config as an auth
+          # header so later git commands work. This job runs none — it installs,
+          # lints and tests — but `pnpm install` does execute lifecycle scripts
+          # (our own `postinstall`, and any dependency build script that gets
+          # allowlisted later), and anything running in the job can read
+          # .git/config. Not storing the credential is free here.
+          persist-credentials: false
+
+      # Before setup-node: `cache: pnpm` below needs pnpm on PATH to locate the
+      # store. The version comes from `packageManager` in package.json, so it
+      # cannot drift from what developers run.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches local development and the Vercel runtime. package.json
+          # requires >=20.19.0; pinning the major here means a Node bump is a
+          # deliberate edit rather than a silent change under the suite.
+          node-version: 24
+          cache: pnpm
+
+      # --frozen-lockfile is itself a check: it fails when package.json and
+      # pnpm-lock.yaml disagree, which is exactly the state that produces "works
+      # on my machine". Also runs `postinstall` -> `prisma generate`.
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint
+
+      - run: pnpm test
