@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import { DEFAULT_WIN_BY } from '@/lib/match-defaults';
+import { DEFAULT_TARGET_SCORE, DEFAULT_WIN_BY } from '@/lib/match-defaults';
 import { nextStateStamp } from '@/lib/state-freshness';
 
 /**
@@ -74,6 +74,15 @@ export async function getState(arenaId) {
         // will refuse — and, without it on every payload, the refusal's own
         // state could not correct the page.
         winBy: true,
+        // The arena's CURRENT target, and not to be confused with the
+        // per-match `targetScore` in the history rows below — that one is
+        // provenance (what a finished game was played to), this one is the
+        // live rule new games are judged by. Ships for the same reason `winBy`
+        // does, and matters more offline: `board-fingerprint` puts it FIRST in
+        // the rules string, so a tab that went offline holding a stale target
+        // hashes a board the server will not reproduce and the whole batch
+        // comes back diverged.
+        targetScore: true,
         // This one IS a setting, and the only matchmaking setting that rides
         // the board stream. It has to, because it decides WHICH FOUR the client
         // names in `fillCourt`'s `expected` guard: a client holding a stale
@@ -187,6 +196,10 @@ export async function getState(arenaId) {
     // dialog validates against the live rule rather than the prop the page was
     // served with (see the select above).
     winBy: arena?.winBy ?? DEFAULT_WIN_BY,
+    // The arena's current target. Named `targetScore` at the top level; the
+    // per-match value of the same name lives on each `matchHistory` row and
+    // means something different (see the select).
+    targetScore: arena?.targetScore ?? DEFAULT_TARGET_SCORE,
     // Advisory "a manager is running the board offline" flag. Both columns
     // are always written together; require both so a half-cleared row can't
     // render a nameless banner. Freshness is judged client-side (a dead

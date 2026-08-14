@@ -216,6 +216,15 @@ export default function Arena({
   const [liveWinBy, setLiveWinBy] = useState(
     initialState.winBy ?? matchDefaults.winBy ?? DEFAULT_WIN_BY,
   );
+  // The arena's target score, held as state for the same reasons as the margin
+  // above — the score dialog validates against it, and a stale value blocks a
+  // legal scoreline or offers one the server refuses. It carries the extra
+  // offline weight: `board-fingerprint` hashes it FIRST in the rules string, so
+  // a tab that goes offline holding a stale target strands the whole batch as a
+  // divergence, not just one dialog.
+  const [liveTargetScore, setLiveTargetScore] = useState(
+    initialState.targetScore ?? matchDefaults.targetScore ?? DEFAULT_TARGET_SCORE,
+  );
   // Arena schedule (powers the "This Week" leaderboard window). Declared up
   // here, before `persistSnapshot`, so the offline snapshot captures the LIVE
   // schedule: `handleSaveSchedule` updates this state without a
@@ -317,6 +326,7 @@ export default function Arena({
     // absence must not read as "win by 2" and start refusing sudden-death
     // scorelines mid-session.
     if ('winBy' in state) setLiveWinBy(state.winBy ?? DEFAULT_WIN_BY);
+    if ('targetScore' in state) setLiveTargetScore(state.targetScore ?? DEFAULT_TARGET_SCORE);
     // Sync responses arrive through this path too (applySyncedState); they
     // carry `offlineHold: null` after the server cleared it. Engine states
     // never have the key, so a live hold can't be wiped by local play.
@@ -342,8 +352,8 @@ export default function Arena({
   // log is the worse failure — it is hashed into the sync fingerprint, so the
   // whole batch would come back as a divergence.
   const liveMatchDefaults = useMemo(
-    () => ({ ...matchDefaults, winBy: liveWinBy }),
-    [matchDefaults, liveWinBy],
+    () => ({ ...matchDefaults, winBy: liveWinBy, targetScore: liveTargetScore }),
+    [matchDefaults, liveWinBy, liveTargetScore],
   );
 
   // Save the current board as this arena's IndexedDB snapshot: the offline
@@ -478,6 +488,9 @@ export default function Arena({
       setLastDeckFilled(initialState.lastDeckFilled ?? null);
       setSplitDeckByResult(initialState.splitDeckByResult ?? false);
       setLiveWinBy(initialState.winBy ?? matchDefaults.winBy ?? DEFAULT_WIN_BY);
+      setLiveTargetScore(
+        initialState.targetScore ?? matchDefaults.targetScore ?? DEFAULT_TARGET_SCORE,
+      );
       setOfflineHold(initialState.offlineHold ?? null);
     }
   }
@@ -2327,7 +2340,7 @@ export default function Arena({
           // get a stable React key (not the array index).
           team1={selectedCourtForScore.team1.map(resolveLiveSlot)}
           team2={selectedCourtForScore.team2.map(resolveLiveSlot)}
-          targetScore={matchDefaults.targetScore}
+          targetScore={liveTargetScore}
           winBy={liveWinBy}
           submitLabel="Save Score"
           onSubmit={(s1, s2, wb) => handleEndMatchWithScore(selectedCourtForScore.id, s1, s2, wb)}
@@ -2354,7 +2367,7 @@ export default function Arena({
           // `updateMatchScore` validates against, so the dialog's "First to N"
           // hint can't promise a rule the server then rejects. Matches
           // recorded before they were captured fall back identically.
-          targetScore={matchToCorrect.targetScore ?? matchDefaults.targetScore}
+          targetScore={matchToCorrect.targetScore ?? liveTargetScore}
           winBy={matchToCorrect.winBy ?? liveWinBy}
           submitLabel="Save Correction"
           isPending={isPending}
