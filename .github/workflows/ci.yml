@@ -31,11 +31,18 @@ on:
 permissions:
   contents: read
 
-# A second push to the same branch makes the first run's answer irrelevant, so
-# cancel it rather than pay for both. Never cancels on `main`, where each commit
-# is the record for that commit.
+# A second push to a PR branch makes the first run's answer irrelevant, so cancel
+# it rather than pay for both.
+#
+# Pushes to `main` get a group of their own, keyed by commit. `cancel-in-progress:
+# false` is NOT enough to protect them: it spares the RUNNING job, but GitHub
+# cancels any PENDING run in the group when a newer one arrives. Merge three PRs
+# in quick succession and the middle commit's queued run is discarded before it
+# ever starts, leaving that commit with no CI record — exactly the gap you would
+# want closed when bisecting later. A per-commit group means push runs never
+# collide, so nothing can be superseded.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
