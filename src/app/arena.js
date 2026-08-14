@@ -878,6 +878,19 @@ export default function Arena({
     // …and the mode itself, so a manager who toggles it mid-session doesn't
     // leave every other open board sending the wrong `expected` four.
     setSplitDeckByResult(state.splitDeckByResult ?? false);
+    // The two scoring rules, for the same reason and by the same contract.
+    // THIS is the path that makes cross-tab streaming work: `applyLocalState`
+    // handles the offline engine, but every SSE frame and every server action
+    // result arrives here. Setting them only there — which is what shipped —
+    // left the dialog validating against the page prop forever, since the
+    // stream that carries the new value never reached a setter.
+    //
+    // Guarded on key presence, not on a `?? DEFAULT`: an action result is a
+    // full getState payload and always carries both, but treating a missing
+    // key as "the default" would let any future partial payload silently
+    // reset a 15-point sudden-death arena to 11 and win-by-2.
+    if ('winBy' in state) setLiveWinBy(state.winBy ?? DEFAULT_WIN_BY);
+    if ('targetScore' in state) setLiveTargetScore(state.targetScore ?? DEFAULT_TARGET_SCORE);
     // Advisory hold rides every server payload; guarded so a local engine
     // state (which never carries the key) can't clear a live hold.
     if ('offlineHold' in state) {
